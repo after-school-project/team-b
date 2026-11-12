@@ -2,6 +2,8 @@
 
 作成日 2026-11-11
 
+更新日 2026-11-12。API設計時の企画者回答を反映。
+
 ## 1. 設計の前提
 
 [技術決定書](./After_School_Project_PoC_技術構成・認証方式決定書_v0.1.md)に従い、Neon PostgreSQL・Drizzle ORM・pgを使用する。本書は論理テーブルと主要な列・制約・トランザクションの設計。認証テーブルは基盤構築で採用版から生成し、実際のマイグレーションで列名・型・既定値を照合する。[画面遷移](./After_School_Project_PoC_画面遷移・状態遷移設計書_v0.1.md)と[共通認可](./After_School_Project_PoC_共通認可条件表_v0.1.md)を取得・更新の契約とする。
@@ -47,7 +49,7 @@ erDiagram
 | profile_reviews | id、user_id FK、revision_id FK、status、version、submitted_at、reviewer_id、decision_reason、decided_at | pending／approved／rejected。1人につきpendingは最大1件。非表示本人の再保存でpendingの審査対象版とversionを更新。過去の確定済み審査は保持 |
 | account_restrictions | id、user_id FK、actor_id FK、action、public_reason、internal_reason、created_at | 停止・解除の理由を別保存し両方必須。本人にはpublic_reasonのみ。内部記録には操作権限を適用 |
 | manager_role_changes | id、user_id FK、actor_id FK、before_app_manager、after_app_manager、created_at | 学校管理者がアプリ管理権限を付与・解除した履歴。学校管理者の追加・退任を扱うUIは設けない |
-| graduation_changes | id、batch_id、user_id FK、actor_id FK、before_role、after_role、before_graduating、after_graduating、created_at | 卒業一括変更・誤変更修正の履歴。対象の利用者ID・投稿・プロフィール版を作り直さない |
+| graduation_changes | id、batch_id、user_id FK、actor_id FK、change_kind、before_role、after_role、before_graduating、after_graduating、created_at | change_kindはgraduation／correction。学校管理者による卒業一括変更と、在校生／卒業生・卒業予定状態の指定修正の履歴。対象の利用者ID・投稿・プロフィール版を作り直さない |
 
 `profiles.current_revision_id`と`profile_reviews.revision_id`は、同じuser_idの版だけを指す複合外部キーで保証する。プロフィールの公開版は、profile_state=publicのときのcurrent_revision。hiddenのときも本人は最新の保存内容を取得できる。
 
@@ -123,7 +125,7 @@ erDiagram
 | 論理テーブル | 主な列 | 制約・扱い |
 |---|---|---|
 | report_targets | id、kind、subject_user_id nullable FK、question_id nullable FK、response_id nullable FK | kindはaccount／profile／question／response。種別に対応した参照を1つだけ設定。プロフィールとアカウントはkindとuser_idの組で識別。お知らせ・イベントを表す種別なし |
-| report_cases | id、target_id FK、status、priority、assignee_id nullable FK、handoff_pending、school_only、version、created_at、closed_at nullable | statusはunhandled／in_progress／closed、priorityはunset／normal／high。原則担当1人。引継ぎ待ちのときだけ担当NULL。対象ごとの未終了案件は最大1件 |
+| report_cases | id、target_id FK、status、priority、assignee_id nullable FK、handoff_pending、school_only、version、created_at、updated_at、closed_at nullable | statusはunhandled／in_progress／closed、priorityはunset／normal／high。原則担当1人。引継ぎ待ちのときだけ担当NULL。対象ごとの未終了案件は最大1件 |
 | reports | id、case_id FK、reporter_id FK、reason_code、detail nullable、created_at | 6理由をCHECK、detailは500文字以内。otherは空白以外の詳細必須。送信後の本人編集・削除なし |
 | report_actions | id、case_id FK、actor_id FK、action_type、before_state、after_state、note、created_at | 状態・優先度・担当・引継ぎ・措置の追記履歴。自動引継ぎにも契機を記録 |
 | evidence_snapshots | id、target_id FK、source_revision、snapshot JSONB、captured_at | 通報対象の必要な表示内容を別保全。通報受領時と証拠に関係する更新・削除前に保存。本人確認情報を公開内容のスナップショットへ混ぜない |
@@ -141,6 +143,8 @@ report_targetsは外部キーと種別・NULL条件を組み合わせて存在�
 通報受領と同時に、同一対象の未終了案件へ統合するか新規案件を作る。初期担当は発行済みの学校管理者を指定する設計判断。初期担当を得られない場合は、学校専用の引継ぎ待ちにして一時未割当とする。どちらの場合も通報自体を失わず、本人には受付完了だけを表示する。
 
 アプリ管理者の管理機能喪失、削除済み証拠への移行、対象者のアプリ管理者化で必要な制限が発生したら、未対応・対応中の担当案件を同じトランザクションで引継ぎ待ちへ移す。案件の対応状態・過去履歴を維持する。school_onlyは一度trueになれば維持し、読取時にも現在の対象者権限を確認する。
+
+対応済み案件は管理者の更新・再開を行わない。同じ対象への後続通報は未終了案件に統合し、なければ新しい案件を作る。引継ぎ待ちを学校管理者が完了させる場合は、実行者をassignee_idに設定し、handoff_pending=false・status=closed・closed_at・version・履歴・監査を同時に確定する。通常の担当再設定だけでは対応状態を変更しない。[API設計書の決定記録](./After_School_Project_PoC_API設計書_v0.1.md)に従う。
 
 ### 通知の生成
 
@@ -180,6 +184,7 @@ report_targetsは外部キーと種別・NULL条件を組み合わせて存在�
 | 本人削除・中止 | 確認・権限・期限の照合、論理削除／中止、pending編集の自動取り下げ、必要な証拠保全・引継ぎ、履歴 |
 | アプリ管理機能喪失 | 管理権限・停止・プロフィール状態の変更、対象となる担当案件の引継ぎ、履歴・監査 |
 | 通報受付 | 対象と通報資格の確認、案件の作成または統合、担当、通報本文、証拠と関連付け、再送キー |
+| 案件完了 | 未終了・表示版・権限の確認、closed_at設定、引継ぎ待ちなら実行した学校管理者を担当に設定、引継ぎ待ち解除、版更新・履歴・監査 |
 | 卒業区分変更 | 変更対象と変更前versionの照合、所属・卒業予定状態の更新、変更履歴・監査。PoCの一括操作は全対象を原子的に確定 |
 
 ロック順序・再送キー・競合時の扱いは共通認可条件表5節に従う。認証ライブラリのユーザー作成とアプリ側の発行準備が分かれる場合、community_users.provisioning_statusがreadyになるまでログイン後の利用を拒否する。
@@ -189,7 +194,7 @@ report_targetsは外部キーと種別・NULL条件を組み合わせて存在�
 | 保存対象 | 期限とPoCでの処理 |
 |---|---|
 | 削除済みお知らせ本体・版 | deleted_atから180日。期限到来後は本人・学校管理者・申請履歴経由を含め本文取得を拒否し、本人一覧から除外 |
-| 通報案件・対応履歴 | 案件の最後の終了から1年。再開した場合は終了日時を再評価する |
+| 通報案件・対応履歴 | closed_atから1年。対応済み案件は再開せず、終了日時を保持する |
 | 削除対象の別保全証拠 | 関連案件がすべて終了してから、最後の終了時刻を基準に180日。未終了案件があれば消去期限を確定しない |
 | 操作ログ | 操作から1年 |
 
