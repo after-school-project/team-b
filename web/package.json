@@ -11,22 +11,34 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "typecheck": "next typegen && tsc --noEmit"
+    "typecheck": "next typegen && tsc --noEmit",
+    "db:generate": "drizzle-kit generate",
+    "db:setup": "tsx scripts/setup-db.ts"
   },
   "dependencies": {
+    "better-auth": "1.7.21",
+    "drizzle-orm": "0.45.4",
     "next": "16.4.6",
+    "pg": "8.23.1",
     "react": "19.3.0",
     "react-dom": "19.3.0"
   },
   "devDependencies": {
     "@types/node": "24.19.2",
+    "@types/pg": "8.23.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "auth": "1.7.21",
+    "drizzle-kit": "0.31.11",
     "eslint": "9.39.5",
     "eslint-config-next": "16.4.6",
+    "tsx": "4.23.15",
     "typescript": "^5"
   },
   "overrides": {
+    "@esbuild-kit/core-utils": {
+      "esbuild": "0.25.12"
+    },
     "@typescript-eslint/typescript-estree": {
       "minimatch": "11.0.1"
     }

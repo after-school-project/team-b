@@ -1,0 +1,63 @@
+name: team-b
+
+services:
+  app:
+    build: ./web
+    init: true
+    ports:
+      - "127.0.0.1:${APP_PORT:-3000}:3000"
+    environment:
+      DATABASE_URL: postgresql://team_b_app:team_b_app_local@db:5432/team_b_dev
+      DATABASE_URL_DIRECT: postgresql://team_b:team_b_local@db:5432/team_b_dev
+      BETTER_AUTH_URL: http://localhost:${APP_PORT:-3000}
+      BETTER_AUTH_SECRET: "${BETTER_AUTH_SECRET:-team-b-compose-local-development-only}"
+      NEXT_TELEMETRY_DISABLED: "1"
+    volumes:
+      - seed-credentials:/app/.seed
+    depends_on:
+      db:
+        condition: service_healthy
+    develop:
+      watch:
+        - action: sync
+          path: ./web/src
+          target: /app/src
+        - action: sync
+          path: ./web/eslint.config.mjs
+          target: /app/eslint.config.mjs
+        - action: rebuild
+          path: ./web/scripts
+        - action: rebuild
+          path: ./web/drizzle
+        - action: rebuild
+          path: ./web/drizzle.config.ts
+        - action: rebuild
+          path: ./web/package.json
+        - action: rebuild
+          path: ./web/package-lock.json
+        - action: rebuild
+          path: ./web/.npmrc
+        - action: rebuild
+          path: ./web/tsconfig.json
+        - action: rebuild
+          path: ./web/next.config.ts
+        - action: rebuild
+          path: ./web/Dockerfile
+
+  db:
+    image: postgres:17.11-alpine
+    environment:
+      POSTGRES_DB: team_b_dev
+      POSTGRES_USER: team_b
+      POSTGRES_PASSWORD: team_b_local
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  postgres-data:
+  seed-credentials:
