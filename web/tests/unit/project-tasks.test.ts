@@ -11,12 +11,12 @@ describe("開発コマンドの実行条件", () => {
 
   it("認証設定が未実装なら生成を開始しない", () => {
     expect(() => prepareTask("auth:generate", root, {}, [], () => false))
-      .toThrow("scripts/auth-schema.config.ts");
+      .toThrow("scripts/auth-schema.ts");
   });
 
   it("設定ファイルと環境変数が揃うまでマイグレーションを開始しない", () => {
     expect(() => prepareTask("db:migrate", root, {}, [], () => false))
-      .toThrow("DIRECT_DATABASE_URL");
+      .toThrow("DATABASE_URL_DIRECT");
   });
 
   it("接続先を追加引数で上書きできない", () => {
@@ -25,7 +25,7 @@ describe("開発コマンドの実行条件", () => {
   });
 
   it("必要条件を満たしたマイグレーションは固定した設定ファイルを使う", () => {
-    const task = prepareTask("db:migrate", root, { DIRECT_DATABASE_URL: "set" }, [], () => true);
+    const task = prepareTask("db:migrate", root, { DATABASE_URL_DIRECT: "set" }, [], () => true);
     expect(task.packageName).toBe("drizzle-kit");
     expect(task.args).toEqual(["migrate", "--config=drizzle.config.ts"]);
   });
@@ -40,5 +40,18 @@ describe("開発コマンドの実行条件", () => {
     }
     expect(message).toContain("まだ実行できません");
     expect(message).not.toContain(secret);
+  });
+
+  it("既存の認証・DBスキーマをそのまま生成コマンドから参照できる", () => {
+    const auth = prepareTask("auth:generate", root, {});
+    const database = prepareTask("db:generate", root, {});
+    expect(auth.args).toContain("scripts/auth-schema.ts");
+    expect(auth.args).toContain("src/db/auth-schema.ts");
+    expect(database.args).toContain("--config=drizzle.config.ts");
+  });
+
+  it("seed単独のコマンドを既存のローカル初期化処理へ接続する", () => {
+    const task = prepareTask("db:seed", root, { DATABASE_URL_DIRECT: "set" });
+    expect(task.args).toEqual(["scripts/setup-db.ts", "--seed-only"]);
   });
 });

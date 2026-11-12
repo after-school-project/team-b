@@ -15,7 +15,7 @@ try {
       console.info(`  npm run ${taskName} — 必要: ${task.requiredFiles.join(", ")}`);
     }
   } else {
-    nextEnv.loadEnvConfig(root);
+    nextEnv.loadEnvConfig(root, process.env.NODE_ENV !== "production");
     const task = prepareTask(name, root, process.env, extraArguments);
     const manifestPath = resolve(root, "node_modules", task.packageName, "package.json");
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {

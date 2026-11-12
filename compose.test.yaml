@@ -1,0 +1,28 @@
+name: team-b-test
+
+services:
+  db:
+    image: postgres:17.11-alpine
+    environment:
+      POSTGRES_DB: team_b_test
+      POSTGRES_USER: team_b_test
+      POSTGRES_PASSWORD: team_b_test_local
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  tests:
+    build: ./web
+    init: true
+    command: ["npm", "run", "test:integration"]
+    environment:
+      NODE_ENV: test
+      TEST_DATABASE_URL: postgresql://team_b_test:team_b_test_local@db:5432/team_b_test
+      NEXT_TELEMETRY_DISABLED: "1"
+    depends_on:
+      db:
+        condition: service_healthy

@@ -30,7 +30,7 @@ describe("DB結合テストの接続先", () => {
     expect(() => requireTestDatabaseUrl({
       NODE_ENV: "test",
       TEST_DATABASE_URL: "postgresql://tester@ep-demo.example.invalid/poc",
-      DIRECT_DATABASE_URL: "postgresql://owner@ep-demo-pooler.example.invalid/poc",
+      DATABASE_URL_DIRECT: "postgresql://owner@ep-demo-pooler.example.invalid/poc",
     })).toThrow("異なるテスト専用DB");
   });
 

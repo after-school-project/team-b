@@ -26,7 +26,7 @@ export function requireTestDatabaseUrl(environment: Readonly<Record<string, stri
   }
 
   const testUrl = parseDatabaseUrl("TEST_DATABASE_URL", environment.TEST_DATABASE_URL);
-  for (const key of ["DATABASE_URL", "DIRECT_DATABASE_URL"]) {
+  for (const key of ["DATABASE_URL", "DATABASE_URL_DIRECT"]) {
     if (environment[key] && databaseIdentity(parseDatabaseUrl(key, environment[key])) === databaseIdentity(testUrl)) {
       throw new Error(`TEST_DATABASE_URL は ${key} と異なるテスト専用DBを指定してください。`);
     }
