@@ -2,6 +2,7 @@
   "name": "web",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "engines": {
     "node": "24.x"
   },
@@ -12,35 +13,62 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "next typegen && tsc --noEmit",
-    "db:generate": "drizzle-kit generate",
-    "db:setup": "tsx scripts/setup-db.ts"
+    "test": "vitest run --config vitest.config.ts",
+    "test:watch": "vitest --config vitest.config.ts",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:e2e": "playwright test",
+    "test:e2e:install": "playwright install chromium",
+    "audit": "npm audit",
+    "audit:runtime": "npm audit --omit=dev",
+    "check": "npm run lint && npm run typecheck && npm run test && npm run build",
+    "auth:generate": "tsx scripts/run-task.ts auth:generate",
+    "db:generate": "tsx scripts/run-task.ts db:generate",
+    "db:migrate": "tsx scripts/run-task.ts db:migrate",
+    "db:setup": "tsx scripts/setup-db.ts",
+    "db:seed": "tsx scripts/run-task.ts db:seed",
+    "account:issue": "tsx scripts/run-task.ts account:issue",
+    "account:reset-password": "tsx scripts/run-task.ts account:reset-password",
+    "vercel": "vercel"
   },
   "dependencies": {
+    "@better-auth/drizzle-adapter": "1.7.21",
     "better-auth": "1.7.21",
     "drizzle-orm": "0.45.4",
     "next": "16.4.6",
     "pg": "8.23.1",
     "react": "19.3.0",
-    "react-dom": "19.3.0"
+    "react-dom": "19.3.0",
+    "server-only": "0.0.1",
+    "zod": "4.6.7"
   },
   "devDependencies": {
+    "@next/env": "16.4.6",
+    "@playwright/test": "1.65.0",
     "@types/node": "24.19.2",
     "@types/pg": "8.23.1",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
     "auth": "1.7.21",
     "drizzle-kit": "0.31.11",
     "eslint": "9.39.5",
     "eslint-config-next": "16.4.6",
     "tsx": "4.23.15",
-    "typescript": "^5"
+    "typescript": "5.9.3",
+    "vercel": "65.14.0",
+    "vitest": "5.1.0"
   },
   "overrides": {
-    "@esbuild-kit/core-utils": {
-      "esbuild": "0.25.12"
-    },
     "@typescript-eslint/typescript-estree": {
       "minimatch": "11.0.1"
-    }
+    },
+    "@esbuild-kit/core-utils": {
+      "esbuild": "0.28.2"
+    },
+    "tar@^7": "7.5.23",
+    "smol-toml@^1": "1.9.1",
+    "js-yaml@^4": "4.3.2",
+    "ajv@^8": "8.20.0",
+    "path-to-regexp@^6": "6.3.0",
+    "path-to-regexp@^8": "8.4.2"
   }
 }

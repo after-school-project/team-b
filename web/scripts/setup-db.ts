@@ -1,8 +1,9 @@
 import { randomBytes, randomUUID } from "node:crypto";
+import nextEnv from "@next/env";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { betterAuth } from "better-auth";
-import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { drizzleAdapter } from "@better-auth/drizzle-adapter";
 import { eq, inArray } from "drizzle-orm";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
@@ -134,6 +135,12 @@ async function seed(db: NodePgDatabase) {
 }
 
 async function setup() {
+  nextEnv.loadEnvConfig(process.cwd(), process.env.NODE_ENV !== "production");
+  const args = process.argv.slice(2);
+  if (args.some((arg) => arg !== "--seed-only") || args.length > 1) {
+    throw new Error("Usage: setup-db.ts [--seed-only]");
+  }
+  const seedOnly = args.includes("--seed-only");
   const connectionString = process.env.DATABASE_URL_DIRECT;
   if (!connectionString) throw new Error("DATABASE_URL_DIRECT is required.");
   const url = new URL(connectionString);
@@ -153,8 +160,10 @@ async function setup() {
   try {
     await client.query("SELECT pg_advisory_lock($1)", [7249352026]);
     const db = drizzle(client);
-    await migrate(db, { migrationsFolder: "./drizzle" });
-    await client.query(await readFile("./scripts/local-db-grants.sql", "utf8"));
+    if (!seedOnly) {
+      await migrate(db, { migrationsFolder: "./drizzle" });
+      await client.query(await readFile("./scripts/local-db-grants.sql", "utf8"));
+    }
     const created = await seed(db);
     console.log(`Development database ready. Created ${created} fixture accounts.`);
   } finally {

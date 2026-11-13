@@ -5,6 +5,13 @@ node_modules
 out
 build
 coverage
+.vitest
+.toolchain-probe-*
+.dependency-lock-*
+test-results
+playwright-report
+playwright/.cache
+playwright/.auth
 .vercel
 next-env.d.ts
 *.tsbuildinfo
