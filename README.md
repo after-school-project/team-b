@@ -47,4 +47,8 @@ docker compose exec app npm run typecheck
 docker compose down
 ```
 
-設計資料は [docs/readme.md](docs/readme.md) にまとまっています。
+## 開発ガイド・設計資料
+
+Issue・PRの作成、ブランチ、コミット、レビュー・マージのルールは[開発・コントリビューションガイド](./CONTRIBUTING.md)を参照してください。
+
+設計資料と詳細ガイドは[ドキュメント案内](./docs/readme.md)にまとまっています。

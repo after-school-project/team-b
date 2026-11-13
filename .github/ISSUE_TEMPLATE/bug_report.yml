@@ -1,0 +1,62 @@
+name: 不具合報告
+description: 再現手順・期待する動作・実際の動作を記録します。
+body:
+  - type: markdown
+    attributes:
+      value: |
+        タイトルは接頭辞を付けず、発生している問題を簡潔に記載してください。
+        書き方はリポジトリの `docs/development/issue-guide.md` を参照してください。
+        原因や修正方針の特定は不要です。ログや画像にも、パスワード・トークン・個人情報を含めないでください。
+  - type: textarea
+    id: summary
+    attributes:
+      label: 不具合の概要
+      description: 何が起き、どの操作や利用者に影響するかを記載します。
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 再現手順と前提条件
+      description: 利用者のロール・状態や必要なデータを含めて記載します。再現手順が不明な場合は、発生時の操作・頻度・分かっている条件を記載してください。
+      placeholder: |
+        前提：未ログインの状態。有効なテストアカウントを使用。
+        1. ログイン画面を開く。
+        2. ログインIDとパスワードを入力する。
+        3. ログインボタンを押す。
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期待する動作
+      description: 本来どうなるべきかを記載します。根拠となる仕様が分かる場合はリンクや節名を添えてください。
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 実際の動作
+      description: 実際に起きたことやエラーメッセージを記載します。
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: 発生環境
+      description: 分かる範囲で記載し、不明な情報は「不明」としてください。
+      placeholder: |
+        - 環境：ローカル / PoC
+        - ブラウザー・バージョン：
+        - OS：
+        - アプリのバージョン・コミット：
+        - 発生日時（タイムゾーンを含む）：
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: ログ・スクリーンショット・補足
+      description: 必要に応じて、機密情報や個人情報を除いたログ・画像、関連Issueなどを添付します。
+    validations:
+      required: false
