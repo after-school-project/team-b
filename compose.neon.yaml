@@ -1,0 +1,24 @@
+name: team-b-neon
+
+# 通常のcompose.yamlと組み合わせず、このファイルだけで実行する。
+# デフォルトは接続確認のみ。適用時は npm run db:neon:migrate を明示する。
+services:
+  migrate:
+    build: ./web
+    init: true
+    command: ["npm", "run", "db:neon:check"]
+    env_file:
+      - path: ./.env.neon.local
+        required: false
+        format: raw
+    environment:
+      NODE_ENV: production
+      NEXT_TELEMETRY_DISABLED: "1"
+      NPM_CONFIG_CACHE: /tmp/npm
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true

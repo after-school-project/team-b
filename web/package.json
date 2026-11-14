@@ -24,6 +24,8 @@
     "auth:generate": "tsx scripts/run-task.ts auth:generate",
     "db:generate": "tsx scripts/run-task.ts db:generate",
     "db:migrate": "tsx scripts/run-task.ts db:migrate",
+    "db:neon:check": "tsx scripts/neon-migrate.ts --check",
+    "db:neon:migrate": "tsx scripts/neon-migrate.ts --apply",
     "db:setup": "tsx scripts/setup-db.ts",
     "db:seed": "tsx scripts/run-task.ts db:seed",
     "account:issue": "tsx scripts/run-task.ts account:issue",
