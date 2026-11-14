@@ -1,7 +1,10 @@
 import { defineConfig } from "drizzle-kit";
-import nextEnv from "@next/env";
+import { createRequire } from "node:module";
+import { resolve } from "node:path";
 
-nextEnv.loadEnvConfig(process.cwd(), process.env.NODE_ENV !== "production");
+// Drizzle Kitの設定ローダーとNode.jsのESMで、CJSの@next/envを同じ形で読む。
+const { loadEnvConfig } = createRequire(resolve(process.cwd(), "package.json"))("@next/env") as typeof import("@next/env");
+loadEnvConfig(process.cwd(), process.env.NODE_ENV !== "production");
 
 export default defineConfig({
   dialect: "postgresql",

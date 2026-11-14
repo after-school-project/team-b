@@ -96,7 +96,18 @@ export const profileReviews = pgTable("profile_reviews", {
     foreignColumns: [profileRevisions.userId, profileRevisions.id],
   }),
   uniqueIndex("profile_reviews_one_pending").on(table.userId).where(sql`${table.status} = 'pending'`),
+  index("profile_reviews_status_date").on(table.status, table.submittedAt, table.id),
+  index("profile_reviews_user_date").on(table.userId, table.submittedAt, table.id),
   check("profile_reviews_status", sql`${table.status} IN ('pending', 'approved', 'rejected')`),
+  check("profile_reviews_decision_metadata", sql`
+    (${table.status} = 'pending' AND ${table.reviewerId} IS NULL
+      AND ${table.decidedAt} IS NULL AND ${table.decisionReason} IS NULL)
+    OR (${table.status} IN ('approved', 'rejected')
+      AND ${table.reviewerId} IS NOT NULL AND ${table.decidedAt} IS NOT NULL)
+  `),
+  check("profile_reviews_rejection_reason", sql`
+    ${table.status} <> 'rejected' OR coalesce(${table.decisionReason} ~ '[^[:space:]]', false)
+  `),
   check("profile_reviews_version", sql`${table.version} > 0`),
 ]);
 
@@ -111,6 +122,7 @@ export const accountRestrictions = pgTable("account_restrictions", {
 }, (table) => [
   check("account_restrictions_action", sql`${table.action} IN ('suspend', 'release')`),
   check("account_restrictions_reasons", sql`btrim(${table.publicReason}) <> '' AND btrim(${table.internalReason}) <> ''`),
+  index("account_restrictions_user_date").on(table.userId, table.createdAt, table.id),
 ]);
 
 export const qaCategories = pgTable("qa_categories", {

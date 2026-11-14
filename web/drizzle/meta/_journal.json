@@ -15,6 +15,13 @@
       "when": 1794463400313,
       "tag": "0001_remaining-poc-tables",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1794633452242,
+      "tag": "0002_harden-profile-reviews",
+      "breakpoints": true
     }
   ]
 }

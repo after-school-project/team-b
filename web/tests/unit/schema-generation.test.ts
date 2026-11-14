@@ -6,7 +6,7 @@ import { expect, it } from "vitest";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 
-it("固定したDrizzle KitでTypeScriptスキーマからDB接続なしでSQLを生成できる", () => {
+it("実際のDrizzle設定を読み込み、DB接続なしでSQLを生成できる", () => {
   const scratch = mkdtempSync(join(root, ".toolchain-probe-"));
   try {
     const schemaPath = join(scratch, "schema.ts");
@@ -17,17 +17,16 @@ it("固定したDrizzle KitでTypeScriptスキーマからDB接続なしでSQL�
       'export const probe = pgTable("toolchain_probe", { id: integer("id").primaryKey() });',
     ].join("\n"));
     writeFileSync(configPath, [
-      'import { defineConfig } from "drizzle-kit";',
-      `export default defineConfig(${JSON.stringify({
-        dialect: "postgresql",
+      `import projectConfig from ${JSON.stringify(resolve(root, "drizzle.config.ts").replaceAll("\\", "/"))};`,
+      `export default { ...projectConfig, ...${JSON.stringify({
         schema: schemaPath.replaceAll("\\", "/"),
         out: outputPath.replaceAll("\\", "/"),
-      })});`,
+      })} };`,
     ].join("\n"));
 
     const result = spawnSync(process.execPath, [
       resolve(root, "node_modules/drizzle-kit/bin.cjs"), "generate", `--config=${configPath}`,
-    ], { cwd: root, encoding: "utf8", timeout: 20_000 });
+    ], { cwd: root, encoding: "utf8", timeout: 20_000, env: { ...process.env, NODE_ENV: "test", DATABASE_URL_DIRECT: "" } });
     expect(result.error).toBeUndefined();
     expect(result.status, result.stdout + result.stderr).toBe(0);
     const migrations = readdirSync(outputPath).filter((name) => name.endsWith(".sql"));
