@@ -3,6 +3,8 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import { afterAll, expect, it } from "vitest";
 import { requireTestDatabaseUrl } from "../../scripts/lib/test-database";
+import { verifyDatabaseRoundTrip } from "../../scripts/lib/poc-database";
+import { Client } from "pg";
 
 const pool = new Pool({
   connectionString: requireTestDatabaseUrl(process.env),
@@ -11,6 +13,18 @@ const pool = new Pool({
   statement_timeout: 5_000,
 });
 const db = drizzle(pool);
+
+it("PoC接続確認の書き込み・読み取り後に一時テーブルが残らない", async () => {
+  const client = new Client({ connectionString: requireTestDatabaseUrl(process.env) });
+  try {
+    await client.connect();
+    await verifyDatabaseRoundTrip(client);
+    // 同じ接続で繰り返しても前回のテーブル・データが残っていない。
+    await verifyDatabaseRoundTrip(client);
+  } finally {
+    await client.end();
+  }
+});
 
 afterAll(async () => { await pool.end(); });
 

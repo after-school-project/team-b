@@ -15,6 +15,7 @@ PoCの開発を進める場合は、実装ロードマップで対象範囲と�
 | [Issue作成ガイド](./development/issue-guide.md) | 開発タスクと不具合報告の使い分け、各入力項目の説明、受入条件と確認方法の記入例をまとめたガイド。Issueの作成時に参照します。 |
 | [PR作成ガイド](./development/pull-request-guide.md) | PRタイトルの命名、本文の書き方、GitHub右側の設定をまとめたガイド。PRの作成時に参照します。レビュー・マージの共通ルールは開発・コントリビューションガイドで確認します。 |
 | [Vercelデプロイの制御](./development/vercel-deployment.md) | Actionsによる変更判定とVercelでのビルド、導入前のSecrets・Variables、再実行・復旧とGit自動デプロイへ戻す手順を確認します。 |
+| [品質チェックとPoC公開環境](./development/quality-and-poc.md) | PR・mainのCI、接続済みVercel・Neonの設定、Productionビルド時のDB読み書き確認と受入確認手順。 |
 | [企画概要 v1.0](./After_School_Project_企画概要_v1.0.md) | プロジェクトの背景、目的、利用者、提供する価値、主要機能、運営方針をまとめた概要。企画全体を把握するときに参照します。 |
 | [仕様検討書・要望書 v0.1](./After_School_Project_仕様検討書_要望書_v0.1.md) | 利用シーン、体験・機能の要望、集約ホーム、DB・技術要望、成功指標、検討経緯と学校協議事項を整理した資料。機能や画面を設ける理由を確認できます。 |
 | [MVP機能要件定義書 v1.1](./After_School_Project_MVP機能要件定義書_v1.1.md) | MVP全体の機能要件、利用者・権限、状態と操作、データ保持、受入条件、未決事項を定義した基準資料。各設計の要件IDを確認するときに参照します。 |
