@@ -85,10 +85,10 @@ docker compose -f compose.neon.yaml run --rm --no-deps migrate npm run poc:verif
 - ブラウザーで既存ProductionがReady、公開SHAが `7e55be7`、PoC公開URLに最小ページが表示されることを確認。
 - Vercel Storageで `after-school-project-db` がAvailable、対象プロジェクトのProductionへ接続されていることを確認。
 - Vercel環境変数一覧で `DATABASE_URL`・`DATABASE_URL_UNPOOLED` がSecret / Productionとして登録済みであることを確認。値は開示・取得していない。
-- 同一覧に `BETTER_AUTH_SECRET`・`BETTER_AUTH_URL` は未登録。マージ前の設定が必要。
+- 利用者による登録後、同一覧で `BETTER_AUTH_SECRET` がSecret / Production、`BETTER_AUTH_URL` がConfig / Productionとして登録済みであることを確認。秘密値は取得していない。
 - ローカルから証明書・ホスト名検証付きTLSでNeonへ接続し、31テーブル・マイグレーション3件、一時テーブルの書き込み・読み取り・後片付けを確認。これはVercelからの実行確認ではない。
 - VercelのDBデータエディターは追加認証が必要だったため、データエディターでの操作は未実施。
-- Vercel上での新しい検証処理の実行、認証設定とローカルとの差異の確認は設定・マージ後に残る。Issue全体の完了とはしない。
+- Vercel上での新しい検証処理の実行と、登録値の検証はレビュー・マージ後に残る。公開環境の切り替えやProductionの秘密値のPreviewへの複製は行っていない。Issue全体の完了とはしない。
 
 | 受入条件 | 確認結果 |
 |---|---|
@@ -98,7 +98,7 @@ docker compose -f compose.neon.yaml run --rm --no-deps migrate npm run poc:verif
 | AC-04 | 既存の公開URLでHTTP 200と日本語の最小ページを確認 |
 | AC-05 | ローカル→Neonは読み書き成功。Vercel→Neonは新しいProductionビルドの実行が残る。業務アプリ実行時の共通接続は #5 |
 | AC-06 | 実際のNeon接続URL・パスワードが追跡ファイル・公開HTML・確認済みCIログに含まれないことを値を表示せず照合。CIでは公開環境のSecretsを使わない |
-| AC-07 | Compose DBとNeonの分離を確認。Productionの認証秘密値は未登録のため、秘密値の分離確認は未完了。実セッションの相互拒否は #6 の実装後 |
+| AC-07 | Compose DBとNeonの分離、認証2変数がProductionのみであることを確認。利用者が新規生成した秘密値を登録済み。長さ・ローカル既定値との差異の検証はProductionビルド時、実セッションの相互拒否は #6 の実装後 |
 
 ## 公式仕様
 
