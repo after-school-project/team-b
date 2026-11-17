@@ -20,3 +20,19 @@ it("tsxからコマンド入口を起動し、設定やDBを変更せずヘル�
   expect(result.stdout).toContain("npm run auth:generate");
   expect(result.stdout).toContain("npm run db:migrate");
 });
+
+it("サーバー起動時に接続情報が不正なら秘密値を表示せず停止する", () => {
+  const secret = "invalid-connection-with-synthetic-secret";
+  const result = spawnSync(process.execPath, [
+    "--conditions=react-server", "--import=tsx", "--input-type=module", "--eval",
+    'import { register } from "./src/instrumentation.ts"; await register();',
+  ], {
+    cwd: root,
+    env: { ...process.env, NEXT_RUNTIME: "nodejs", DATABASE_URL: secret },
+    encoding: "utf8", timeout: 10_000,
+  });
+  expect(result.error).toBeUndefined();
+  expect(result.status).not.toBe(0);
+  expect(result.stderr).toContain("DATABASE_URL、TLS、専用アプリ用ロール");
+  expect(result.stdout + result.stderr).not.toContain(secret);
+});
