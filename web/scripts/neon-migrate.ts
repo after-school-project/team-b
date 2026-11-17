@@ -1,6 +1,6 @@
 import { Client } from "pg";
-import { drizzle } from "drizzle-orm/node-postgres";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
+import { databaseConfig } from "../src/db/config";
+import { migrateDatabase, requireManagementRole } from "./lib/database-management";
 import { neonMigrationMode, neonMigrationTarget } from "./lib/neon-migration";
 
 async function main() {
@@ -9,19 +9,19 @@ async function main() {
   const target = neonMigrationTarget(process.env);
   console.info(`Neon接続先: ${target.host} / ${target.database}`);
   const client = new Client({
-    connectionString: target.connectionString,
+    ...databaseConfig({ DATABASE_URL_DIRECT: target.connectionString }, "DATABASE_URL_DIRECT"),
     connectionTimeoutMillis: 15_000,
     statement_timeout: 60_000,
     application_name: "team-b-neon-migration",
   });
   try {
     await client.connect();
+    await requireManagementRole(client);
     const result = await client.query<{ database: string }>("SELECT current_database() AS database");
     if (result.rows[0].database !== target.database) throw new Error("unexpected_database");
     if (mode === "--apply") {
       // 同じ実行経路からの並行マイグレーションを直列化する。切断時に自動解放。
-      await client.query("SELECT pg_advisory_lock($1)", [7249352026]);
-      await migrate(drizzle(client), { migrationsFolder: "./drizzle" });
+      await migrateDatabase(client);
       console.info("Neonマイグレーションの適用が完了しました（seed・開発用権限設定は実行しません）。");
     }
     const tables = await client.query<{ count: number }>(

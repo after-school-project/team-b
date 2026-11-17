@@ -31,11 +31,11 @@ export const projectTasks = {
     requiredFiles: ["drizzle.config.ts", "src/db/schema.ts"],
   },
   "db:migrate": {
-    packageName: "drizzle-kit",
-    binaryName: "drizzle-kit",
-    args: ["migrate", "--config=drizzle.config.ts"],
+    packageName: "tsx",
+    binaryName: "tsx",
+    args: ["scripts/migrate-db.ts"],
     requiredFiles: [
-      "drizzle.config.ts",
+      "scripts/migrate-db.ts",
       "drizzle/meta/_journal.json",
     ],
     requiredEnv: ["DATABASE_URL_DIRECT"],

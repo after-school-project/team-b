@@ -21,3 +21,21 @@ export async function verifyDatabaseRoundTrip(client: Client): Promise<void> {
     throw error;
   }
 }
+
+// DDL権限のないアプリ用接続。専用行を作り、必ずロールバックして残さない。
+export async function verifyApplicationRoundTrip(client: Client): Promise<void> {
+  const id = randomUUID();
+  await client.query("BEGIN");
+  try {
+    await client.query("SET LOCAL statement_timeout = '5s'");
+    await client.query("INSERT INTO public.qa_categories (id, code, name) VALUES ($1, $2, $3)", [id, `probe_${id}`, "接続確認"]);
+    await client.query("UPDATE public.qa_categories SET name = $1 WHERE id = $2", ["読み書き確認", id]);
+    const result = await client.query<{ name: string }>("SELECT name FROM public.qa_categories WHERE id = $1", [id]);
+    if (result.rows[0]?.name !== "読み書き確認") throw new Error("probe_failed");
+    await client.query("DELETE FROM public.qa_categories WHERE id = $1", [id]);
+  } finally {
+    await client.query("ROLLBACK");
+  }
+  const cleanup = await client.query("SELECT id FROM public.qa_categories WHERE id = $1", [id]);
+  if (cleanup.rowCount !== 0) throw new Error("probe_cleanup_failed");
+}

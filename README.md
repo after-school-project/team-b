@@ -47,6 +47,14 @@ docker compose exec app npm run typecheck
 docker compose down
 ```
 
+通常の停止・再起動ではデータと開発用パスワードを保持します。ローカルDBを明示的に初期状態へ戻す場合は、起動中の環境で次を実行します。手動追加データを消去し、マイグレーション・権限設定・主要サンプルデータを再作成します。開発用パスワードは保持します。
+
+```sh
+docker compose exec app npm run db:reset
+```
+
+リセットは開発Composeの `team_b_dev` 専用です。PoC・本番相当の接続先では実行できません。通常の停止で `--volumes` は付けません。共通DBクライアント、管理用接続、Neonの専用ロール設定、テストとリセットの詳細は [DB接続・権限・ローカル初期化](./docs/development/database.md) を参照してください。
+
 ## 開発ガイド・設計資料
 
 PR・mainの品質チェック、既存Vercel・Neon環境、公開時の接続検証と設定手順は[品質チェックとPoC公開環境](./docs/development/quality-and-poc.md)を参照してください。

@@ -1,7 +1,9 @@
 import { readFileSync } from "node:fs";
 import { Client } from "pg";
 import { neonMigrationTarget } from "./lib/neon-migration";
-import { verifyDatabaseRoundTrip } from "./lib/poc-database";
+import { verifyApplicationRoundTrip, verifyDatabaseRoundTrip } from "./lib/poc-database";
+import { requireApplicationRole } from "../src/db/permissions";
+import { databaseConfig } from "../src/db/config";
 import { productionPocConfig, shouldVerifyProduction } from "./lib/poc-environment";
 
 async function main() {
@@ -18,10 +20,8 @@ async function main() {
     : productionPocConfig(process.env);
   // NeonのTLSはプロキシで終端する。pg_stat_sslはクライアント側TLSの証拠にしない。
   // 証明書とホスト名を検証する接続に固定し、その接続成功を確認する。
-  const tlsUrl = new URL(connectionString);
-  tlsUrl.searchParams.set("sslmode", "verify-full");
   const client = new Client({
-    connectionString: tlsUrl.toString(),
+    ...databaseConfig({ DATABASE_URL: connectionString }),
     connectionTimeoutMillis: 15_000,
     statement_timeout: 5_000,
     query_timeout: 10_000,
@@ -43,8 +43,15 @@ async function main() {
       console.info(`管理用接続: マイグレーション${migrations.rows[0].count}件を確認しました。`);
     }
     phase = "round-trip";
-    await verifyDatabaseRoundTrip(client);
-    console.info("PoC DB確認成功: TLS有効、31テーブル、一時テーブルへの書き込み・読み取り・後片付け成功。");
+    if (databaseOnly) {
+      await verifyDatabaseRoundTrip(client);
+    } else {
+      phase = "application-role";
+      await requireApplicationRole(client);
+      phase = "round-trip";
+      await verifyApplicationRoundTrip(client);
+    }
+    console.info("PoC DB確認成功: TLS有効、31テーブル、書き込み・読み取り・後片付け成功。");
     if (databaseOnly) console.info("ローカルから管理用接続を確認しました。Vercel上のアプリ用接続・認証設定は別途確認が必要です。");
   } catch {
     // ドライバー例外には接続先・SQL・秘密値が含まれる可能性がある。

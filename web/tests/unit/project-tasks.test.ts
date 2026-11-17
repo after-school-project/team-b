@@ -24,10 +24,10 @@ describe("開発コマンドの実行条件", () => {
       .toThrow("追加引数は受け付けません");
   });
 
-  it("必要条件を満たしたマイグレーションは固定した設定ファイルを使う", () => {
+  it("必要条件を満たしたマイグレーションは管理権限を検査する入口を使う", () => {
     const task = prepareTask("db:migrate", root, { DATABASE_URL_DIRECT: "set" }, [], () => true);
-    expect(task.packageName).toBe("drizzle-kit");
-    expect(task.args).toEqual(["migrate", "--config=drizzle.config.ts"]);
+    expect(task.packageName).toBe("tsx");
+    expect(task.args).toEqual(["scripts/migrate-db.ts"]);
   });
 
   it("発行処理のエラーに秘密値を含めない", () => {

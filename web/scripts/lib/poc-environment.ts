@@ -29,6 +29,9 @@ export function productionPocConfig(environment: Environment) {
   if (direct.hostname.split(".")[0].endsWith("-pooler") || identity(database) !== identity(direct)) {
     throw new Error("アプリ用と直接接続用のURLは同じPoC用Neon DBを指定してください。");
   }
+  if (decodeURIComponent(database.username) === decodeURIComponent(direct.username)) {
+    throw new Error("アプリ用と管理用の接続には異なる専用ロールを設定してください。");
+  }
   const secret = environment.BETTER_AUTH_SECRET;
   if (!secret || secret.length < 32 || secret === "team-b-compose-local-development-only") {
     throw new Error("BETTER_AUTH_SECRET にローカルと異なる32文字以上の秘密値を設定してください。");

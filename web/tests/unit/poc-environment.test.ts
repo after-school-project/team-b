@@ -21,6 +21,7 @@ describe("PoC公開環境の設定", () => {
     { DATABASE_URL: environment.DATABASE_URL + "&ssl=false" },
     { DATABASE_URL: environment.DATABASE_URL + "&sslmode=disable" },
     { DATABASE_URL_UNPOOLED: environment.DATABASE_URL },
+    { DATABASE_URL_UNPOOLED: environment.DATABASE_URL_UNPOOLED.replace("owner:", "app:") },
     { DATABASE_URL_UNPOOLED: environment.DATABASE_URL_UNPOOLED.replace("/poc?", "/other?") },
     { BETTER_AUTH_SECRET: undefined },
     { BETTER_AUTH_SECRET: "team-b-compose-local-development-only" },

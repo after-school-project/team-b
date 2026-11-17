@@ -46,7 +46,7 @@ Vercelの [Environment Variables](https://vercel.com/tku-labs/after-school-proje
 | `BETTER_AUTH_SECRET` | Secret | 32文字以上のランダムな値。ローカル開発用と異なる値を使用 |
 | `BETTER_AUTH_URL` | Config | `https://after-school-project-two.vercel.app` |
 
-Neon連携が登録した接続URLを読み出し・複製する必要はありません。管理用のローカルマイグレーションコマンドでは従来どおり `.env.neon.local` の `DATABASE_URL_DIRECT` を使います。
+`DATABASE_URL` はDDL・監査ログ変更権限を持たない専用アプリロールへ切り替えます。管理用直接接続とは別ロールが必要です。切り替え手順は [DB接続・権限・ローカル初期化](./database.md#neonの専用アプリロール) を参照してください。管理用のローカルマイグレーションコマンドでは従来どおり `.env.neon.local` の `DATABASE_URL_DIRECT` を使います。
 
 ProductionのDB接続・秘密値はPreview/DevelopmentやGitHub Actionsへコピーしません。Previewは現時点では最小ページとビルドの確認用です。業務機能でDBが必要になった時点で別のPreview用DB・秘密値を用意してください。
 
@@ -54,9 +54,9 @@ ProductionのDB接続・秘密値はPreview/DevelopmentやGitHub Actionsへコ�
 
 `web/vercel.json` のビルドコマンドは `npm run poc:verify && npm run build` です。
 
-Productionでは、接続URL・HTTPS正規URL・認証秘密値の設定、TLSの実接続、31テーブル、一時テーブルへの書き込み・読み取り・後片付けを確認します。アプリ用の `DATABASE_URL` を使用し、管理用接続で代用しません。どれかが失敗するとビルドへ進みません。URL・秘密値・DBの生例外・行データはログに出力しません。
+Productionでは、接続URL・HTTPS正規URL・認証秘密値の設定、TLSの実接続、31テーブル、アプリロールの権限、専用カテゴリ行への読み書きとロールバックを確認します。アプリ用の `DATABASE_URL` を使用し、管理用接続で代用しません。どれかが失敗するとビルドへ進みません。URL・秘密値・DBの生例外・行データはログに出力しません。
 
-一時テーブルは専用接続のトランザクション内で作り、commitで破棄します。失敗時もrollback・切断で破棄します。業務テーブル・認証セッションの作成や更新、マイグレーション・seedは行いません。接続ロールにはDBのTEMP権限が必要です。通常のアプリ用共通DBクライアントと権限分離の整備は #5 で行います。
+アプリ用の確認は `qa_categories` にUUIDで識別する専用行を作成し、INSERT / UPDATE / SELECT / DELETEの後に必ずrollbackします。既存行・認証セッションは変更せず、マイグレーション・seedは行いません。TEMP権限を含むDDL権限を持つロールや、監査ログを変更できるロールは拒否します。共通DBクライアントと権限分離の詳細は [DBガイド](./database.md) を参照してください。
 
 Previewとローカルビルドではこの確認を省略し、Productionの資格情報を要求しません。したがって、Previewの成功はProductionのDB接続確認を意味しません。
 
