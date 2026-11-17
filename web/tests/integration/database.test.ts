@@ -1,10 +1,9 @@
 import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
-import { Pool } from "pg";
+import { Client, Pool } from "pg";
 import { afterAll, expect, it } from "vitest";
 import { requireTestDatabaseUrl } from "../../scripts/lib/test-database";
 import { verifyDatabaseRoundTrip } from "../../scripts/lib/poc-database";
-import { Client } from "pg";
 
 const pool = new Pool({
   connectionString: requireTestDatabaseUrl(process.env),

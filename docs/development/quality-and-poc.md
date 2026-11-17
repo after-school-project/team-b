@@ -90,7 +90,18 @@ docker compose -f compose.neon.yaml run --rm --no-deps migrate npm run poc:verif
 - VercelのDBデータエディターは追加認証が必要だったため、データエディターでの操作は未実施。
 - Vercel上での新しい検証処理の実行、認証設定とローカルとの差異の確認は設定・マージ後に残る。Issue全体の完了とはしない。
 
+| 受入条件 | 確認結果 |
+|---|---|
+| AC-01 | PRで品質CIが自動実行されることを確認。mainでの初回実行はマージ後に確認する |
+| AC-02 | [lintエラー](https://github.com/after-school-project/team-b/actions/runs/44027434463)と[型エラー](https://github.com/after-school-project/team-b/actions/runs/44027726835)の両方で、該当ステップとワークフロー全体の失敗を確認。検証ファイルは最終差分から削除 |
+| AC-03 | Docker・GitHub Actionsの双方でlockfileからの `npm ci` が成功 |
+| AC-04 | 既存の公開URLでHTTP 200と日本語の最小ページを確認 |
+| AC-05 | ローカル→Neonは読み書き成功。Vercel→Neonは新しいProductionビルドの実行が残る。業務アプリ実行時の共通接続は #5 |
+| AC-06 | 実際のNeon接続URL・パスワードが追跡ファイル・公開HTML・確認済みCIログに含まれないことを値を表示せず照合。CIでは公開環境のSecretsを使わない |
+| AC-07 | Compose DBとNeonの分離を確認。Productionの認証秘密値は未登録のため、秘密値の分離確認は未完了。実セッションの相互拒否は #6 の実装後 |
+
 ## 公式仕様
 
 - [GitHub setup-node](https://github.com/actions/setup-node) — Node.js固定版・npmキャッシュ・lockfileの指定。
 - [Vercel環境変数](https://vercel.com/docs/environment-variables) — Production/Preview/Developmentの分離と再デプロイ。
+- [Neonの接続セキュリティ](https://github.com/neondatabase/website/blob/main/content/docs/security/security-overview.md) — 証明書・ホスト名を検証する `verify-full` 接続を使用。
