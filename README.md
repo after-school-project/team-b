@@ -49,6 +49,8 @@ docker compose down
 
 ## 開発ガイド・設計資料
 
+PR・mainの品質チェック、既存Vercel・Neon環境、公開時の接続検証と設定手順は[品質チェックとPoC公開環境](./docs/development/quality-and-poc.md)を参照してください。
+
 Issue・PRの作成、ブランチ、コミット、レビュー・マージのルールは[開発・コントリビューションガイド](./CONTRIBUTING.md)を参照してください。
 
 設計資料と詳細ガイドは[ドキュメント案内](./docs/readme.md)にまとまっています。

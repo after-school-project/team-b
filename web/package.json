@@ -26,6 +26,7 @@
     "db:migrate": "tsx scripts/run-task.ts db:migrate",
     "db:neon:check": "tsx scripts/neon-migrate.ts --check",
     "db:neon:migrate": "tsx scripts/neon-migrate.ts --apply",
+    "poc:verify": "tsx scripts/verify-poc.ts",
     "db:setup": "tsx scripts/setup-db.ts",
     "db:seed": "tsx scripts/run-task.ts db:seed",
     "account:issue": "tsx scripts/run-task.ts account:issue",
