@@ -38,7 +38,7 @@ export function defineApiRoute<Context = unknown>(
     };
   }
 
-  // Export all seven in route.ts to override Next.js's implicit HEAD, OPTIONS and 405 handlers.
+  // Export all seven supported methods to override Next.js's implicit handlers.
   return {
     GET: wrap("GET"), HEAD: wrap("HEAD"), OPTIONS: wrap("OPTIONS"), POST: wrap("POST"),
     PUT: wrap("PUT"), DELETE: wrap("DELETE"), PATCH: wrap("PATCH"),

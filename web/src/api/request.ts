@@ -130,11 +130,12 @@ export const isoDateTime = z.iso.datetime({ offset: true }).transform((value, co
 });
 export const expectedVersion = z.number().int().min(1);
 export const confirmed = z.literal(true);
-export const title = z.string().trim().refine((value) => value.length > 0 &&
+const storableText = z.string().refine((value) => value.isWellFormed() && !value.includes("\0"));
+export const title = storableText.trim().refine((value) => value.length > 0 &&
   [...value].length <= 100 && !/[\r\n\u2028\u2029]/.test(value));
 
 function bodyText(maxLength: number) {
-  return z.string().transform((value) => value.replace(/\r\n?/g, "\n"))
+  return storableText.transform((value) => value.replace(/\r\n?/g, "\n"))
     .refine((value) => value.trim().length > 0 && [...value].length <= maxLength);
 }
 

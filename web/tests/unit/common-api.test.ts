@@ -4,7 +4,7 @@ import { z } from "zod";
 import { authOrigin, authWebOptions } from "../../src/auth/web-config";
 import { createCursorCodec, listPage, parseListQuery } from "../../src/api/pagination";
 import {
-  expectedVersion, isoDateTime, maxJsonBytes, normalizedPath, parsePathParams,
+  expectedVersion, isoDateTime, longText, maxJsonBytes, normalizedPath, parsePathParams,
   parseQuery, readJson, shortText, title, userId, uuid,
 } from "../../src/api/request";
 import { ApiError, rateLimited } from "../../src/api/response";
@@ -55,6 +55,15 @@ describe("業務 Route Handler", () => {
     expect((await response.json()).error.code).toBe("METHOD_NOT_ALLOWED");
   });
 
+  it.each(["GET", "POST", "PATCH"] as const)("共通APIの業務メソッド %s もルートで未定義なら405にする", async (method) => {
+    const allow = method === "GET" ? "POST" : "GET";
+    const handler = defineApiRoute({ [allow]: () => ({ data: { ok: true } }) }, environment);
+    const response = await handler[method](new Request(url, { method }), {});
+    expect(response.status).toBe(405);
+    expect(response.headers.get("Allow")).toBe(allow);
+    expect((await response.json()).error.code).toBe("METHOD_NOT_ALLOWED");
+  });
+
   it.each([undefined, "", "null", "https://attacker.example", origin + "/", origin + ", https://other.example",
     "http://localhost:3000"])("許可外のOrigin %s を拒否する", async (candidate) => {
     const requestHeaders = new Headers(headers);
@@ -101,6 +110,25 @@ describe("業務 Route Handler", () => {
       "Content-Type": 'Application/JSON; charset="UTF-8"',
     });
     expect((await response.json()).data.nested.name).toBe("名前");
+  });
+
+  it.each([
+    { name: "NUL", character: "\0" },
+    { name: "対応する下位サロゲートのない文字", character: "\uD800" },
+  ])("JSONでエスケープされた $name を含むタイトルや本文を422にする", async ({ character }) => {
+    const textSchema = z.object({ title, body: longText, comment: shortText });
+    const handler = defineApiRoute({
+      POST: async (request) => ({ data: await readJson(request, textSchema) }),
+    }, environment);
+    const invalid = `前${character}後`;
+    const request = new Request(url, {
+      method: "POST", headers, body: JSON.stringify({ title: invalid, body: invalid, comment: invalid }),
+    });
+    const response = await handler.POST(request, {});
+    expect(response.status).toBe(422);
+    const { error } = await response.json();
+    expect(error.code).toBe("VALIDATION_FAILED");
+    expect(error.fields.map(({ path }: { path: string }) => path).sort()).toEqual(["body", "comment", "title"]);
   });
 
   it("Content-LengthにかかわらずUTF-8の実バイト数で128 KiBを上限にする", async () => {

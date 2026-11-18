@@ -14,8 +14,10 @@ export const { GET, HEAD, OPTIONS, POST, PUT, DELETE, PATCH } = defineApiRoute({
 });
 ```
 
+- `Allow` には対象ルートで定義した業務メソッドが入ります。Next.jsが対応する7メソッドが業務APIの405の適用範囲です。`HEAD` のHTTP応答には本文が付きません。
 - `parsePathParams` にNext.jsのデコード済みパス変数とIDのスキーマを渡します。クエリーは `parseQuery` で検証します。
 - 更新のOrigin、Content-Type、再送キーはRoute Handlerの共通処理が確認します。本文は `readJson` で読み、入れ子の各オブジェクトに `z.strictObject` を使います。DB保存と再送照合には、検証・正規化した値を渡します。`isoDateTime` はISO 8601の入力をUTCへ正規化します。
+- タイトルと本文には `title`・`longText`・`shortText` を使います。NUL（U+0000）や単独のUTF-16サロゲートを含む値には、該当フィールドを示す422を返します。
 - 一覧は `parseListQuery` で絞り込みを検証し、認証済み利用者、一覧の識別子、正規化済み条件、並び順を `createCursorCodec` に渡します。署名には環境ごとの `BETTER_AUTH_SECRET` を使用します。毎ページで現在の認可を適用し、同じ絞り込みと認可条件で件数を数えます。`limit + 1` 件まで読み込み、`listPage` で次ページの情報を生成します。
 
 ## 更新と再送
