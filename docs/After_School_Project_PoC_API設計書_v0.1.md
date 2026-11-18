@@ -29,7 +29,7 @@ Server Componentからは同じ認可付きサーバーサービスを直接呼�
 | リクエスト・レスポンス | JSONはUTF-8、`Content-Type: application/json`。プロパティ名はcamelCase。DBのsnake_caseとの変換はサーバー側で行う |
 | キャッシュ | 個人・コミュニティの応答は `Cache-Control: private, no-store`。共有キャッシュへ認可結果を保存しない |
 | 更新の保護 | POST・PATCHに許可したOriginとの完全一致確認とCSRF保護を適用する。JSON Content-Typeを確認し、不明・不一致のOriginを拒否。Originのワイルドカード許可を行わない |
-| メソッド | GETは取得。本文更新はPATCH、作成・審査・削除確認等の業務操作はPOST。未定義のメソッドは405とAllowヘッダーで拒否 |
+| メソッド | GETは取得。本文更新はPATCH、作成・審査・削除確認等の業務操作はPOST。Next.jsのRoute Handlerが扱うGET・HEAD・OPTIONS・POST・PUT・DELETE・PATCHのうち、対象ルートで未定義のメソッドは405とAllowヘッダーで拒否 |
 | 削除 | 本人の削除は `POST .../deletion` とし、版番号と最終確認フラグをJSON本文で受け付ける |
 | 本文サイズ | 業務APIのJSON本文はUTF-8で128 KiBまで。超過は413 |
 | ID | userIdはBetter Authの不透明な文字列（1〜128文字）。その他のアプリIDはUUID。パス値はURLエンコードし、NUL・制御文字・余分な階層を拒否 |
@@ -40,9 +40,11 @@ Server Componentからは同じ認可付きサーバーサービスを直接呼�
 
 PoCの業務更新では、許可Originとの完全一致・JSON限定・Cookie属性をCSRF対策の契約とし、別のCSRFトークン発行APIは設けない。許可Originは環境別の固定設定から取得し、要求のHost値だけで動的に信頼しない。クロスOrigin向けのCORS許可を公開せず、認証API自身の保護はBetter Auth側でも有効にする。ローカル開発のHTTP例外はローカル設定に限定する。
 
+`TRACE` など上記7種以外のメソッドはHTTP入口側の扱いに従う。`HEAD` の405には `Allow` ヘッダーを付け、HTTPの仕様に従って本文は送信しない。[Next.jsの対応メソッド](https://nextjs.org/docs/app/api-reference/file-conventions/route#http-methods)、[RFC 9110のHEAD](https://www.rfc-editor.org/rfc/rfc9110.html#name-head)
+
 ### 成功形式
 
-単一の取得は `data` にDTO、一覧は `data.items` にDTO配列を返す。すべての業務応答にサーバー生成のrequestIdとserverTimeを付ける。
+単一の取得は `data` にDTO、一覧は `data.items` にDTO配列を返す。業務APIのJSON応答にサーバー生成のrequestIdとserverTimeを付ける。
 
 ```json
 {
@@ -146,6 +148,8 @@ qは前後空白を除いた1〜100文字。学科は100文字以内、年度は
 | OptionalProfileField | valueは文字列、visibilityはmembers/self。PATCHでは省略したプロパティを保持する。bio最大1000、occupation最大100、interests最大200文字 |
 
 文字数はUnicodeコードポイントで数え、本文の改行はLFへ正規化する。本文の前後空白を保存時に勝手に除去せず、空白だけかの検証を別に行う。URLはHTTP／HTTPSだけを受け付ける。Markdownの許可構文は画面遷移設計書の初期入力契約に従う。
+
+`Title`・`LongText`・`ShortText` ではNUL（U+0000）と単独のUTF-16サロゲートを422で拒否する。
 
 displayNameは前後空白除去後1〜50文字、改行なし。booleanを文字列から変換しない。クエリーのlimit・年度は10進整数表現だけを受け付け、limitは1〜50。プロフィール年度・学科の未設定はnull。任意プロフィール項目の値は空文字列を許可する。
 
@@ -613,7 +617,8 @@ MutationResult.versionはresourceが示す対象の版とする。複数の対�
 |---|---|
 | 認証入口 | 未認証401、発行／学校確認未完了403。停止中は本人状態案内・ログアウトだけ許可。内部メール・ハッシュを業務DTOへ漏らさない |
 | 認証の許可経路 | SDKの必要経路だけ利用可能。登録・回復・メールログイン等の直接呼出しで学校発行を迂回できない |
-| Cookie・更新保護 | HTTPS Cookieと固定8時間期限を確認。不正／欠落Origin、JSON以外、未知フィールド、過大本文、未定義メソッドを拒否 |
+| Cookie・更新保護 | HTTPS Cookieと固定8時間期限を確認。不正／欠落Origin、JSON以外、未知フィールド、過大本文を拒否 |
+| 入力・HTTPメソッド（Issue #2のAC-03） | タイトル・本文にエスケープしたNULや単独のサロゲートがあればフィールド付きの422を返す。2節に列挙したNext.jsの対応メソッドのうち、対象ルートで未定義のメソッドに405と `Allow` を返す。`HEAD` は本文なしで確認する |
 | 対象の認可 | 本人用ID、他案件の証拠ID、学校専用対象を差し替えても取得・変更できない。403／404の前に固有の状態・版番号を漏らさない |
 | 詳細公開設定 | self項目を一般プロフィール・検索・件数・審査・証拠へ混ぜない。表示名や本文を安全に表示し、Markdownの生HTMLを実行しない |
 | プロフィール非表示 | 検索除外、新規・編集・アプリ管理操作の拒否。本人修正・既存投稿削除・通常閲覧・通報・通知既読は許可。学校管理者は非表示操作対象外 |
