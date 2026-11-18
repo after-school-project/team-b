@@ -76,11 +76,13 @@ docker compose -f compose.neon.yaml run --rm --no-deps migrate npm run poc:verif
 3. [Vercelデプロイ制御の手順](./vercel-deployment.md) に沿ってActionsの要求対象SHAとVercelのデプロイを照合します。品質チェックとデプロイ要求は独立したワークフローです。必須チェックの設定は #4 の対象外です。
 4. VercelのBuild Logsに `PoC DB確認成功` があり、ビルドと公開がReadyになったことを確認します。Actionsの要求成功だけではDB接続・ビルド成功と判断しません。
 5. PoC公開URLで最小ページを確認します。HTML・ログ・Git差分に秘密値が含まれないことを確認します。
-6. ローカルがCompose DB、公開先がNeonで、認証秘密値が別であることを確認します。実際のCookie・セッションの相互拒否は #6 の認証実装後に確認します。現在の最小ページにはログイン機能がありません。
+6. Issue #4 の AC-07 は、ローカルがCompose DB、PoCがNeonを使用し、認証秘密値を共有しないことを確認します。認証実装後は、両環境で発行したセッションCookieが互いの環境で拒否されることを確認します。[Issue #6 の AC-14](https://github.com/after-school-project/team-b/issues/6#受入条件)
 
 環境変数を変更した場合、既存のデプロイへは反映されません。最新mainを `force` 付きで再デプロイする手順と、失敗時の復旧は [Vercelデプロイ制御](./vercel-deployment.md#再実行障害復旧) を参照してください。
 
 ## Issue #4 の確認記録（2026-11-17）
+
+以下はマージ前の確認記録です。マージ後に残っていた項目の結果は次節に記載します。
 
 - ブラウザーで既存ProductionがReady、公開SHAが `7e55be7`、PoC公開URLに最小ページが表示されることを確認。
 - Vercel Storageで `after-school-project-db` がAvailable、対象プロジェクトのProductionへ接続されていることを確認。
@@ -99,6 +101,24 @@ docker compose -f compose.neon.yaml run --rm --no-deps migrate npm run poc:verif
 | AC-05 | ローカル→Neonは読み書き成功。Vercel→Neonは新しいProductionビルドの実行が残る。業務アプリ実行時の共通接続は #5 |
 | AC-06 | 実際のNeon接続URL・パスワードが追跡ファイル・公開HTML・確認済みCIログに含まれないことを値を表示せず照合。CIでは公開環境のSecretsを使わない |
 | AC-07 | Compose DBとNeonの分離、認証2変数がProductionのみであることを確認。利用者が新規生成した秘密値を登録済み。長さ・ローカル既定値との差異の検証はProductionビルド時、実セッションの相互拒否は #6 の実装後 |
+
+## Issue #4 のマージ後確認（2026-11-18・日本時間）
+
+PR #27で品質チェックとPoC環境の設定、PR #28で専用アプリロールによる接続がmainへ反映されています。2026-11-18の確認で、前節に残っていたmainのCIとVercel上のDB検証が成功していることを確認しました。再デプロイや環境変数の変更は行っていません。
+
+| 項目 | 確認結果・証跡 |
+|---|---|
+| 対象コミット | `2d397f19001e381ae6415e04dc31847a93beab0f`（PR #28のマージコミット） |
+| AC-01・AC-03 | [mainのApplication quality](https://github.com/after-school-project/team-b/actions/runs/44126181440)で2ジョブが成功。`npm ci`、lint、typecheck、単体テスト、本番ビルド、PostgreSQL結合テストの各ステップが成功 |
+| デプロイ要求 | [Productionデプロイ要求](https://github.com/after-school-project/team-b/actions/runs/44126181339)が成功。要求だけでなく、次行のVercelの状態も確認 |
+| AC-04 | [Vercelデプロイ詳細](https://vercel.com/tku-labs/after-school-project/4FnC2EWjhrRLr9ZxBhGKfFGWUPRW)で対象SHA、Production / Current、Readyを確認。[公開URL](https://after-school-project-two.vercel.app/)で「After School Project」「学校・在校生・卒業生をつなぐコミュニティ」「ただいま準備中です。」を確認 |
+| AC-05 | 同デプロイのBuild Logsで `npm run poc:verify && npm run build` の実行と「PoC DB確認成功: TLS有効、31テーブル、書き込み・読み取り・後片付け成功。」を確認。これはVercel上から専用アプリロールを使ったINSERT / UPDATE / SELECT / DELETEとロールバックの実行結果 |
+| AC-06 | 確認したビルドログ・公開ページにDB接続文字列や認証秘密値の表示なし。環境変数の秘密値の取得・開示は行っていない。CIは公開環境のSecretsを参照しない構成を維持 |
+| AC-07（環境設定） | `DATABASE_URL`・`DATABASE_URL_UNPOOLED`・`BETTER_AUTH_SECRET` はSecret / Production、`BETTER_AUTH_URL` はConfig / Productionのみであることを確認。Productionの `poc:verify` で、同一Neon DBを指すURLに異なるロールが設定されていること、アプリ用接続のTLS、認証秘密値が32文字以上でCompose既定値と異なること、`BETTER_AUTH_URL` がHTTPSオリジン形式であることを確認した。公開ホストとの一致はこのスクリプトの検証対象外。[環境変数一覧](https://vercel.com/tku-labs/after-school-project/settings/environment-variables)・[検証コード](../../web/scripts/lib/poc-environment.ts) |
+
+AC-02のlint・型エラーの失敗検出は前節の検証済みActionsを参照してください。今回の変更は確認記録のみで、アプリ・CI・DB設定は変更していません。
+
+実セッションの相互拒否は、ログイン機能の実装後に Issue #6 の AC-14 で確認します。両環境でセッションが有効なことを確かめた上で、もう一方の環境のセッション確認APIにCookieを提示し、どちらの方向でも未認証になることを確認します。[Issue #6 の確認方法](https://github.com/after-school-project/team-b/issues/6#確認方法)
 
 ## 公式仕様
 
