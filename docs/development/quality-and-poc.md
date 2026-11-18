@@ -82,6 +82,8 @@ docker compose -f compose.neon.yaml run --rm --no-deps migrate npm run poc:verif
 
 ## Issue #4 の確認記録（2026-11-17）
 
+以下はマージ前の確認記録です。マージ後に残っていた項目の結果は次節に記載します。
+
 - ブラウザーで既存ProductionがReady、公開SHAが `7e55be7`、PoC公開URLに最小ページが表示されることを確認。
 - Vercel Storageで `after-school-project-db` がAvailable、対象プロジェクトのProductionへ接続されていることを確認。
 - Vercel環境変数一覧で `DATABASE_URL`・`DATABASE_URL_UNPOOLED` がSecret / Productionとして登録済みであることを確認。値は開示・取得していない。
@@ -99,6 +101,24 @@ docker compose -f compose.neon.yaml run --rm --no-deps migrate npm run poc:verif
 | AC-05 | ローカル→Neonは読み書き成功。Vercel→Neonは新しいProductionビルドの実行が残る。業務アプリ実行時の共通接続は #5 |
 | AC-06 | 実際のNeon接続URL・パスワードが追跡ファイル・公開HTML・確認済みCIログに含まれないことを値を表示せず照合。CIでは公開環境のSecretsを使わない |
 | AC-07 | Compose DBとNeonの分離、認証2変数がProductionのみであることを確認。利用者が新規生成した秘密値を登録済み。長さ・ローカル既定値との差異の検証はProductionビルド時、実セッションの相互拒否は #6 の実装後 |
+
+## Issue #4 のマージ後確認（2026-11-18・日本時間）
+
+PR #27で品質チェックとPoC環境の設定、PR #28で専用アプリロールによる接続がmainへ反映されています。2026-11-18の確認で、前節に残っていたmainのCIとVercel上のDB検証が成功していることを確認しました。再デプロイや環境変数の変更は行っていません。
+
+| 項目 | 確認結果・証跡 |
+|---|---|
+| 対象コミット | `2d397f19001e381ae6415e04dc31847a93beab0f`（PR #28のマージコミット） |
+| AC-01・AC-03 | [mainのApplication quality](https://github.com/after-school-project/team-b/actions/runs/44126181440)で2ジョブが成功。`npm ci`、lint、typecheck、単体テスト、本番ビルド、PostgreSQL結合テストの各ステップが成功 |
+| デプロイ要求 | [Productionデプロイ要求](https://github.com/after-school-project/team-b/actions/runs/44126181339)が成功。要求だけでなく、次行のVercelの状態も確認 |
+| AC-04 | [Vercelデプロイ詳細](https://vercel.com/tku-labs/after-school-project/4FnC2EWjhrRLr9ZxBhGKfFGWUPRW)で対象SHA、Production / Current、Readyを確認。[公開URL](https://after-school-project-two.vercel.app/)で「After School Project」「学校・在校生・卒業生をつなぐコミュニティ」「ただいま準備中です。」を確認 |
+| AC-05 | 同デプロイのBuild Logsで `npm run poc:verify && npm run build` の実行と「PoC DB確認成功: TLS有効、31テーブル、書き込み・読み取り・後片付け成功。」を確認。これはVercel上から専用アプリロールを使ったINSERT / UPDATE / SELECT / DELETEとロールバックの実行結果 |
+| AC-06 | 確認したビルドログ・公開ページにDB接続文字列や認証秘密値の表示なし。環境変数の秘密値の取得・開示は行っていない。CIは公開環境のSecretsを参照しない構成を維持 |
+| AC-07（環境設定） | [環境変数一覧](https://vercel.com/tku-labs/after-school-project/settings/environment-variables)で `DATABASE_URL`・`DATABASE_URL_UNPOOLED`・`BETTER_AUTH_SECRET` はSecret / Production、`BETTER_AUTH_URL` はConfig / Productionのみであることを確認。Productionの `poc:verify` 成功により、同一Neon DBへの別ロール、TLS、32文字以上かつCompose既定値と異なる認証秘密値、HTTPS正規URLの設定検証も通過 |
+
+AC-02のlint・型エラーの失敗検出は前節の検証済みActionsを参照してください。今回の変更は確認記録のみで、アプリ・CI・DB設定は変更していません。
+
+AC-07の実際のCookie・セッションの相互拒否は、ログイン機能がないため引き続き未実施です。環境設定の分離とは区別し、#6の認証実装後に確認してください。この記録だけで実セッションの相互拒否まで検証済みとはしません。
 
 ## 公式仕様
 
