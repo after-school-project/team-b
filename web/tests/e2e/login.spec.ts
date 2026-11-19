@@ -365,3 +365,74 @@ for (const signOutFailure of [
     expect(signOutRequests).toBe(2);
   });
 }
+
+test("自動ログアウトに失敗したあと再読み込みしても、利用状態を確認できなければログアウトを試せる", async ({ page }) => {
+  // 認証後の利用状態APIは、再読み込み後も 503 を返し続ける。
+  await mockSuccessfulSignIn(page, { status: 503, body: '{"error":{"code":"TEMPORARILY_UNAVAILABLE"}}' });
+  let signOutRequests = 0;
+  await page.route("**/api/auth/sign-out", async (route) => {
+    signOutRequests += 1;
+    if (signOutRequests === 1) {
+      await route.fulfill({ status: 503, contentType: "application/json", body: "{}" });
+      return;
+    }
+    await route.fulfill({ status: 200, contentType: "application/json", body: '{"success":true}' });
+  });
+  await page.goto("/login");
+  await submitValidCredentials(page);
+  await expect(page.getByRole("main").getByRole("alert")).toHaveText(logoutError);
+
+  await page.reload();
+  await expect(page.getByRole("main").getByRole("status")).toHaveText("利用状態を確認できませんでした。");
+  await expect(page.getByLabel("ログインID")).toBeVisible();
+  await page.getByRole("button", { name: "ログアウト" }).click();
+
+  await expect(page.getByRole("main").getByRole("status")).toHaveCount(0);
+  await expect(page.getByLabel("ログインID")).toBeVisible();
+  expect(signOutRequests).toBe(2);
+});
+
+test("利用状態を確認できない案内からのログアウトに失敗したら、エラーと案内を残す", async ({ page }) => {
+  await page.route("**/api/v1/me", (route) => route.abort());
+  await page.route("**/api/auth/sign-out", (route) =>
+    route.fulfill({ status: 503, contentType: "application/json", body: "{}" }),
+  );
+  await page.goto("/login");
+
+  await expect(page.getByRole("main").getByRole("status")).toHaveText("利用状態を確認できませんでした。");
+  await page.getByRole("button", { name: "ログアウト" }).click();
+  await expect(page.getByRole("main").getByRole("alert")).toHaveText(logoutError);
+  await expect(page.getByRole("button", { name: "ログアウト" })).toBeEnabled();
+});
+
+for (const status of [401, 429]) {
+  test(`利用状態の確認中に送信した認証が${status}で失敗したら、確認を再開して停止案内を表示する`, async ({ page }) => {
+    let meRequests = 0;
+    let releaseFirstCheck = () => {};
+    const firstCheckReleased = new Promise<void>((resolve) => {
+      releaseFirstCheck = resolve;
+    });
+    await page.route("**/api/v1/me", async (route) => {
+      meRequests += 1;
+      // 入口表示時の確認は、フォームを送信するまで応答しない。
+      if (meRequests === 1) await firstCheckReleased;
+      await route.fulfill({ status: 200, contentType: "application/json", body: suspendedBody }).catch(() => {});
+    });
+    let signInRequests = 0;
+    await page.route("**/api/auth/sign-in/username", (route) => {
+      signInRequests += 1;
+      return route.fulfill({ status, contentType: "application/json", body: "{}" });
+    });
+    const firstCheck = page.waitForRequest("**/api/v1/me");
+    await page.goto("/login");
+    await firstCheck;
+
+    await submitValidCredentials(page);
+    await expect(page.getByRole("main").getByRole("status")).toHaveText("このアカウントは利用停止中です。");
+    await expect(page.getByText("学校から利用停止の案内があります。")).toBeVisible();
+    await expect(page.getByRole("button", { name: "ログアウト" })).toBeVisible();
+    expect(signInRequests).toBe(1);
+    expect(meRequests).toBe(2);
+    releaseFirstCheck();
+  });
+}

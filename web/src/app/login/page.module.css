@@ -185,6 +185,16 @@
   white-space: pre-wrap;
 }
 
+/* 利用状態を確認できない場合に、フォームの上へ出すログアウトの案内。 */
+.sessionNotice {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-bottom: var(--space-6);
+  padding-bottom: var(--space-6);
+  border-bottom: 1px solid var(--color-border);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .primaryButton,
   .secondaryButton,

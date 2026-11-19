@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import styles from "./page.module.css";
 
@@ -120,35 +120,46 @@ export default function LoginForm({ returnTo }: LoginFormProps) {
   const [publicReason, setPublicReason] = useState("");
   const [view, setView] = useState<View>("form");
   const [loggingOut, setLoggingOut] = useState(false);
+  /** 利用状態を取得できず、セッションが残っている可能性がある（フォームと合わせてログアウトの導線を出す）。 */
+  const [sessionUnknown, setSessionUnknown] = useState(false);
+  /** 進行中の既存セッション確認。完了すると null に戻る。 */
   const sessionCheck = useRef<AbortController | null>(null);
 
-  // 入口の表示時に既存セッションの利用状態を確認する（停止案内を再読み込みしてもログアウト導線を残す）。
-  useEffect(() => {
+  /** 既存セッションの利用状態を確認し、停止中・利用準備中は案内とログアウト、有効なら戻り先へ移動する。 */
+  const checkExistingSession = useCallback(() => {
     const controller = new AbortController();
     sessionCheck.current = controller;
 
     fetchAccess(controller.signal)
+      .catch((): Access => ({ kind: "unknown" }))
       .then((access) => {
         if (controller.signal.aborted) return;
         if (access.kind === "active") {
           router.replace(returnTo);
         } else if (access.kind === "not-ready") {
+          setFormError("");
           setView("not-ready");
         } else if (access.kind === "suspended") {
+          setFormError("");
           setPublicReason(access.publicReason);
           setView("suspended");
+        } else {
+          // 未認証ならフォームだけ。確認できない場合は、残ったセッションを失効できるようにログアウトも出す。
+          setSessionUnknown(access.kind === "unknown");
         }
-        // 未認証・確認できない場合はログインフォームのまま。ログインすると新しいセッションに置き換わる。
-      })
-      .catch(() => {
-        // 通信できない場合もログインフォームのまま。
       })
       .finally(() => {
         if (sessionCheck.current === controller) sessionCheck.current = null;
       });
 
-    return () => controller.abort();
+    return controller;
   }, [returnTo, router]);
+
+  // 入口の表示時に確認する（停止案内やログアウトの再試行を再読み込みしても導線を残す）。
+  useEffect(() => {
+    const controller = checkExistingSession();
+    return () => controller.abort();
+  }, [checkExistingSession]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -159,10 +170,18 @@ export default function LoginForm({ returnTo }: LoginFormProps) {
     if (Object.keys(errors).length > 0) return;
 
     submitting.current = true;
-    // 入口表示時の確認結果で、これから行うログインの結果を上書きしない。
+    // 確認中の結果で、これから行うログインの結果を上書きしない。認証に失敗したら確認をやり直す。
+    const interruptedCheck = sessionCheck.current !== null;
     sessionCheck.current?.abort();
     setView("checking");
     let signedIn = false;
+
+    function failBeforeSignIn(message: string) {
+      setView("form");
+      setFormError(message);
+      // 認証に失敗しても既存のセッションは残るため、中断した確認を再開する。
+      if (interruptedCheck) checkExistingSession();
+    }
 
     async function failAfterSignIn() {
       if (await requestSignOut()) {
@@ -183,17 +202,16 @@ export default function LoginForm({ returnTo }: LoginFormProps) {
       });
 
       if (signInResponse.status === 401 || signInResponse.status === 429) {
-        setView("form");
-        setFormError(authenticationError);
+        failBeforeSignIn(authenticationError);
         return;
       }
       if (!signInResponse.ok) {
-        setView("form");
-        setFormError(processingError);
+        failBeforeSignIn(processingError);
         return;
       }
 
       signedIn = true;
+      setSessionUnknown(false);
       setPassword("");
       setPasswordVisible(false);
       const access = await fetchAccess();
@@ -222,8 +240,7 @@ export default function LoginForm({ returnTo }: LoginFormProps) {
       if (signedIn) {
         await failAfterSignIn();
       } else {
-        setView("form");
-        setFormError(processingError);
+        failBeforeSignIn(processingError);
       }
     } finally {
       submitting.current = false;
@@ -241,6 +258,7 @@ export default function LoginForm({ returnTo }: LoginFormProps) {
       setUsername("");
       setPassword("");
       setPublicReason("");
+      setSessionUnknown(false);
       setView("form");
       router.replace("/login");
     } finally {
@@ -293,89 +311,111 @@ export default function LoginForm({ returnTo }: LoginFormProps) {
             <p className={styles.reason}>ログアウトしてから、もう一度ログインしてください。</p>,
           )
         ) : (
-          // method="post": JavaScript が動く前に送信されても、認証情報を URL に含めない。
-          <form className={styles.form} method="post" onSubmit={submit} noValidate aria-labelledby="login-title">
-            {fieldErrorCount > 1 && (
-              <p className={styles.summary} role="alert">
-                {fieldErrorCount}件の入力内容を確認してください。
-              </p>
+          <>
+            {sessionUnknown && (
+              <section className={styles.sessionNotice} aria-labelledby="session-notice-title">
+                <div role="status">
+                  <h2 id="session-notice-title" className={styles.noticeTitle}>
+                    利用状態を確認できませんでした。
+                  </h2>
+                </div>
+                <p className={styles.reason}>
+                  ログイン中のアカウントがある場合は、ログアウトしてからもう一度お試しください。
+                </p>
+                <button
+                  className={styles.secondaryButton}
+                  type="button"
+                  onClick={signOut}
+                  disabled={loggingOut || checking}
+                >
+                  {loggingOut ? "ログアウト中..." : "ログアウト"}
+                </button>
+              </section>
             )}
-
-            <div className={styles.field}>
-              <label className={styles.label} htmlFor="username">
-                ログインID<span className={styles.required}>必須</span>
-              </label>
-              <input
-                className={styles.input}
-                autoComplete="username"
-                autoCapitalize="none"
-                spellCheck={false}
-                id="username"
-                name="username"
-                type="text"
-                value={username}
-                aria-invalid={Boolean(fieldErrors.username)}
-                aria-describedby={fieldErrors.username ? "username-error" : undefined}
-                disabled={checking}
-                onChange={(event) => {
-                  setUsername(event.target.value);
-                  setFieldErrors((current) => ({ ...current, username: undefined }));
-                }}
-              />
-              {fieldErrors.username && (
-                <p className={styles.fieldError} id="username-error">
-                  {fieldErrors.username}
+            {/* method="post": JavaScript が動く前に送信されても、認証情報を URL に含めない。 */}
+            <form className={styles.form} method="post" onSubmit={submit} noValidate aria-labelledby="login-title">
+              {fieldErrorCount > 1 && (
+                <p className={styles.summary} role="alert">
+                  {fieldErrorCount}件の入力内容を確認してください。
                 </p>
               )}
-            </div>
-
-            <div className={styles.field}>
-              <label className={styles.label} htmlFor="password">
-                パスワード<span className={styles.required}>必須</span>
-              </label>
-              <div className={styles.passwordRow}>
+  
+              <div className={styles.field}>
+                <label className={styles.label} htmlFor="username">
+                  ログインID<span className={styles.required}>必須</span>
+                </label>
                 <input
                   className={styles.input}
-                  autoComplete="current-password"
-                  id="password"
-                  name="password"
-                  type={passwordVisible ? "text" : "password"}
-                  value={password}
-                  aria-invalid={Boolean(fieldErrors.password)}
-                  aria-describedby={fieldErrors.password ? "password-error" : undefined}
+                  autoComplete="username"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  id="username"
+                  name="username"
+                  type="text"
+                  value={username}
+                  aria-invalid={Boolean(fieldErrors.username)}
+                  aria-describedby={fieldErrors.username ? "username-error" : undefined}
                   disabled={checking}
                   onChange={(event) => {
-                    setPassword(event.target.value);
-                    setFieldErrors((current) => ({ ...current, password: undefined }));
+                    setUsername(event.target.value);
+                    setFieldErrors((current) => ({ ...current, username: undefined }));
                   }}
                 />
-                <button
-                  className={styles.toggleButton}
-                  type="button"
-                  aria-controls="password"
-                  disabled={checking}
-                  onClick={() => setPasswordVisible((visible) => !visible)}
-                >
-                  {passwordVisible ? "非表示" : "表示"}
-                </button>
+                {fieldErrors.username && (
+                  <p className={styles.fieldError} id="username-error">
+                    {fieldErrors.username}
+                  </p>
+                )}
               </div>
-              {fieldErrors.password && (
-                <p className={styles.fieldError} id="password-error">
-                  {fieldErrors.password}
+  
+              <div className={styles.field}>
+                <label className={styles.label} htmlFor="password">
+                  パスワード<span className={styles.required}>必須</span>
+                </label>
+                <div className={styles.passwordRow}>
+                  <input
+                    className={styles.input}
+                    autoComplete="current-password"
+                    id="password"
+                    name="password"
+                    type={passwordVisible ? "text" : "password"}
+                    value={password}
+                    aria-invalid={Boolean(fieldErrors.password)}
+                    aria-describedby={fieldErrors.password ? "password-error" : undefined}
+                    disabled={checking}
+                    onChange={(event) => {
+                      setPassword(event.target.value);
+                      setFieldErrors((current) => ({ ...current, password: undefined }));
+                    }}
+                  />
+                  <button
+                    className={styles.toggleButton}
+                    type="button"
+                    aria-controls="password"
+                    disabled={checking}
+                    onClick={() => setPasswordVisible((visible) => !visible)}
+                  >
+                    {passwordVisible ? "非表示" : "表示"}
+                  </button>
+                </div>
+                {fieldErrors.password && (
+                  <p className={styles.fieldError} id="password-error">
+                    {fieldErrors.password}
+                  </p>
+                )}
+              </div>
+  
+              {formError && (
+                <p className={styles.formError} role="alert">
+                  {formError}
                 </p>
               )}
-            </div>
-
-            {formError && (
-              <p className={styles.formError} role="alert">
-                {formError}
-              </p>
-            )}
-
-            <button className={styles.primaryButton} type="submit" disabled={checking}>
-              {checking ? "確認中..." : "ログイン"}
-            </button>
-          </form>
+  
+              <button className={styles.primaryButton} type="submit" disabled={checking}>
+                {checking ? "確認中..." : "ログイン"}
+              </button>
+            </form>
+          </>
         )}
       </div>
     </main>
