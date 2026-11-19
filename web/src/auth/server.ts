@@ -15,10 +15,18 @@ const loginBody = z.strictObject({
 async function createAuthServer() {
   const webOptions = authWebOptions();
   const { db } = await import("@/db/client");
+  const options = authOptions(drizzleAdapter(db, { provider: "pg", schema }));
 
   return betterAuth({
-    ...authOptions(drizzleAdapter(db, { provider: "pg", schema })),
+    ...options,
     ...webOptions,
+    rateLimit: {
+      ...options.rateLimit,
+      customRules: {
+        // 共用回線での検証用暫定値。PoCの正式な上限はチームで決定する。
+        "/sign-in/username": { window: 10, max: 30 },
+      },
+    },
     // SDK database errors may contain SQL parameters with authentication secrets.
     logger: { disabled: true },
     hooks: {

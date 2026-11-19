@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { drizzle } from "drizzle-orm/node-postgres";
+import { Pool } from "pg";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { seedDevelopmentData } from "../../scripts/development-seed";
 import { migrateDatabase } from "../../scripts/lib/database-management";
@@ -15,15 +16,17 @@ const loginPath = "/sign-in/username";
 const sessionPath = "/get-session";
 const logoutPath = "/sign-out";
 let target: Awaited<ReturnType<typeof isolatedDatabase>>;
+let pool: Pool;
 let credentialsDir: string;
 let credentials: Record<string, string>;
 
 vi.mock("server-only", () => ({}));
-vi.mock("../../src/db/client", () => ({ db: drizzle(target.client) }));
+vi.mock("../../src/db/client", () => ({ db: drizzle(pool) }));
 
 beforeAll(async () => {
   target = await isolatedDatabase();
   await migrateDatabase(target.client);
+  pool = new Pool({ connectionString: target.url.toString() });
   credentialsDir = await mkdtemp(join(tmpdir(), "team-b-auth-test-"));
   vi.stubEnv("BETTER_AUTH_URL", origin);
   vi.stubEnv("BETTER_AUTH_SECRET", randomBytes(32).toString("hex"));
@@ -33,6 +36,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   vi.unstubAllEnvs();
+  await pool?.end();
   if (credentialsDir) await rm(credentialsDir, { recursive: true, force: true });
   await target?.dispose();
 });
@@ -117,7 +121,16 @@ it("未認証・期限切れをnullとし、停止中の利用者はログアウ
   expect((await target.client.query("SELECT 1 FROM session WHERE user_id = $1", [suspended.userId])).rowCount).toBe(0);
 });
 
-it("資格情報の失敗を同一応答にし、DB保存の回数制限ではRetry-Afterを返す", async () => {
+it.each(["連続", "同時"])("同一IPから異なる架空アカウントが4件%sログインできる", async (mode) => {
+  const usernames = ["poc_school", "poc_s001", "poc_s002", "poc_staff"];
+  if (mode === "同時") {
+    await Promise.all(usernames.map((username) => logIn(username, "192.0.2.15")));
+  } else {
+    for (const username of usernames) await logIn(username, "192.0.2.14");
+  }
+});
+
+it("資格情報の失敗を同一応答にし、同一IPの31件目はRetry-After付きの429を返す", async () => {
   const ip = "192.0.2.11";
   const wrongPassword = randomBytes(18).toString("hex");
   const missing = await send(loginPath, { ip, body: { username: "missing_id", password: wrongPassword } });
@@ -127,16 +140,17 @@ it("資格情報の失敗を同一応答にし、DB保存の回数制限ではRe
   expect(await missing.json()).toEqual(await wrong.json());
   expect(missing.headers.getSetCookie()).toHaveLength(0);
   expect(wrong.headers.getSetCookie()).toHaveLength(0);
-  let limited = wrong;
-  for (let attempt = 0; attempt < 4 && limited.status !== 429; attempt++) {
-    limited = await send(loginPath, { ip, body: { username: "missing_id", password: wrongPassword } });
+  const body = { username: "missing_id", password: wrongPassword };
+  for (let accepted = 2; accepted < 30; accepted++) {
+    expect((await send(loginPath, { ip, body })).status).toBe(401);
   }
+  const limited = await send(loginPath, { ip, body });
   expect(limited.status).toBe(429);
   expect(limited.headers.get("Retry-After")).toMatch(/^\d+$/);
   expect(limited.headers.getSetCookie()).toHaveLength(0);
   expect((await target.client.query(
-    "SELECT 1 FROM rate_limit WHERE key LIKE $1 AND count >= 2", ["%192.0.2.11%"],
-  )).rowCount).toBeGreaterThan(0);
+    "SELECT 1 FROM rate_limit WHERE key LIKE $1 AND count = 30", ["%192.0.2.11%"],
+  )).rowCount).toBe(1);
 });
 
 it.each([null, "https://other.example", "https://school.example/"])(
