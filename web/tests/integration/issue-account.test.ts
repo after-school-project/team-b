@@ -1,5 +1,6 @@
 import { verifyPassword } from "better-auth/crypto";
 import { spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -38,7 +39,11 @@ afterAll(async () => {
 async function issueAccount(input: typeof fixture, output: string) {
   const inputFile = join(directory, "input.json");
   await writeFile(inputFile, JSON.stringify(input), { mode: 0o600 });
-  return spawnSync("npm", ["run", "account:issue", "--", "--input", inputFile, "--output", output], {
+  return runAccountTask("account:issue", "--input", inputFile, "--output", output);
+}
+
+function runAccountTask(task: string, ...args: string[]) {
+  return spawnSync("npm", ["run", task, "--", ...args], {
     encoding: "utf8",
     timeout: 10_000,
     env: {
@@ -63,10 +68,11 @@ async function account(username: string) {
     private_real_name: string;
     school_reference: string;
     display_name: string;
+    current_revision_id: string;
   }>(`
     SELECT u.id, u.email_verified, a.password, c.base_role,
       c.app_manager, c.school_manager, c.eligibility_status, c.provisioning_status,
-      i.private_real_name, i.school_reference, r.display_name
+      i.private_real_name, i.school_reference, r.display_name, p.current_revision_id
     FROM "user" u
     JOIN account a ON a.user_id = u.id AND a.provider_id = 'credential'
     JOIN community_users c ON c.user_id = u.id
@@ -135,5 +141,73 @@ it.each([
   const result = await issueAccount({ ...fixture, ...override }, output);
   expect(result.status).toBe(1);
   expect(result.stderr).toContain("発行情報の形式");
+  await expect(readFile(output)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("再発行は対象の旧パスワードと全セッションだけを無効にする", async () => {
+  const username = "issue33_reset";
+  const originalFile = join(directory, "before-reset.json");
+  expect((await issueAccount({ ...fixture, username }, originalFile)).status).toBe(0);
+  const { password: oldPassword } = JSON.parse(await readFile(originalFile, "utf8")) as { password: string };
+  const { password: oldHash, ...before } = await account(username);
+
+  const otherUserId = randomUUID();
+  await database.client.query('INSERT INTO "user" (id, name, email) VALUES ($1, $2, $3)',
+    [otherUserId, "別の利用者", "other_reset@example.invalid"]);
+  const targetSessions = [randomUUID(), randomUUID()];
+  const otherSession = randomUUID();
+  for (const [id, userId] of [
+    ...targetSessions.map((id) => [id, before.id]),
+    [otherSession, otherUserId],
+  ]) {
+    await database.client.query(`
+      INSERT INTO "session" (id, user_id, token, expires_at, updated_at)
+      VALUES ($1, $2, $3, now() + interval '1 hour', now())
+    `, [id, userId, randomUUID()]);
+  }
+  const sessionIds = async () => (await database.client.query<{ id: string }>(
+    'SELECT id FROM "session" WHERE user_id IN ($1, $2) ORDER BY id', [before.id, otherUserId],
+  )).rows.map(({ id }) => id);
+
+  const categoryId = randomUUID();
+  await database.client.query("INSERT INTO qa_categories (id, code, name) VALUES ($1, 'reset_test', 'テスト')",
+    [categoryId]);
+  await database.client.query(`
+    INSERT INTO qa_questions (author_id, category_id, title, body_markdown, author_label)
+    VALUES ($1, $2, '架空の質問', '本文', '架空の職員')
+  `, [before.id, categoryId]);
+  const posts = async () => (await database.client.query(
+    "SELECT * FROM qa_questions WHERE author_id = $1", [before.id],
+  )).rows;
+  const beforePosts = await posts();
+  expect(beforePosts).toHaveLength(1);
+
+  const failed = runAccountTask("account:reset-password", "--username", username, "--output", originalFile);
+  expect(failed.status).toBe(1);
+  expect((await account(username)).password === oldHash).toBe(true);
+  expect(await sessionIds()).toEqual([...targetSessions, otherSession].sort());
+
+  const output = join(directory, "reset.json");
+  const reset = runAccountTask("account:reset-password", "--username", username, "--output", output);
+  expect(reset.status).toBe(0);
+  const issued = JSON.parse(await readFile(output, "utf8")) as { username: string; password: string };
+  expect(issued.username).toBe(username);
+  expect(typeof issued.password === "string" && /^[A-Za-z0-9_-]{24}$/.test(issued.password)).toBe(true);
+  const logs = reset.stdout + reset.stderr + failed.stdout + failed.stderr;
+  expect(logs.includes(oldPassword) || logs.includes(issued.password)).toBe(false);
+
+  const { password: newHash, ...after } = await account(username);
+  expect(newHash !== issued.password && await verifyPassword({ hash: newHash, password: issued.password })).toBe(true);
+  expect(await verifyPassword({ hash: newHash, password: oldPassword })).toBe(false);
+  expect(await sessionIds()).toEqual([otherSession]);
+  expect(after).toEqual(before);
+  expect(await posts()).toEqual(beforePosts);
+});
+
+it("未発行のログインIDに対して受渡用ファイルを作らない", async () => {
+  const output = join(directory, "missing-reset.json");
+  const result = runAccountTask("account:reset-password", "--username", "issue33_missing", "--output", output);
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain("再発行できる学校発行アカウントが見つかりません");
   await expect(readFile(output)).rejects.toMatchObject({ code: "ENOENT" });
 });
