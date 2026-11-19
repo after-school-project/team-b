@@ -172,35 +172,54 @@ it("送信された actorId・所属・権限では判定結果が変わらな�
   expect(post.headers.get("Allow")).toBe("GET");
 });
 
+function entryRoute(userId: string) {
+  const execute = vi.fn(async () => ({
+    status: 200 as const, resource: { type: "user", id: userId }, version: 1, state: "updated",
+  }));
+  const route = defineApiRoute({
+    PATCH: (_request, _context, input) => commitMutation(drizzle(pool), {
+      actorId: userId, body: {}, request: input,
+      authorizeEntry: authorizeActiveEntry(userId),
+      authorizeReplay: async () => {},
+      execute,
+    }),
+  }, { BETTER_AUTH_URL: origin });
+  const send = () => route.PATCH(new Request(origin + "/api/v1/test", {
+    method: "PATCH", body: "{}",
+    headers: { Origin: origin, "Content-Type": "application/json", "Idempotency-Key": randomUUID() },
+  }), {});
+  return { execute, send };
+}
+
+/** 別の接続が holderPid のロックを待ち始めるまで待つ。 */
+async function waitUntilBlockedBy(holderPid: number) {
+  const deadline = Date.now() + 1_500;
+  while (Date.now() < deadline) {
+    const { rows: [row] } = await target.client.query<{ blocked: number }>(
+      "SELECT count(*)::int AS blocked FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))", [holderPid],
+    );
+    if (row.blocked > 0) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error("更新が停止処理のロックを待つ状態になりませんでした。");
+}
+
 it("更新の入口確認は停止とロックで直列化され、停止確定後の更新を拒否する", async () => {
   const { userId } = await logIn("poc_a001");
   const holder = new Client({ connectionString: target.url.toString() });
   await holder.connect();
   try {
+    const { rows: [{ pid }] } = await holder.query<{ pid: number }>("SELECT pg_backend_pid() AS pid");
     await holder.query("BEGIN");
     await holder.query("UPDATE community_users SET account_status = 'suspended' WHERE user_id = $1", [userId]);
     await holder.query(`
       INSERT INTO account_restrictions (user_id, actor_id, action, public_reason, internal_reason)
       VALUES ($1, $1, 'suspend', '理由', '内部理由')`, [userId]);
 
-    const execute = vi.fn(async () => ({
-      status: 200 as const, resource: { type: "user", id: userId }, version: 1, state: "updated",
-    }));
-    const route = defineApiRoute({
-      PATCH: (_request, _context, input) => commitMutation(drizzle(pool), {
-        actorId: userId, body: {}, request: input,
-        authorizeEntry: authorizeActiveEntry(userId),
-        authorizeReplay: async () => {},
-        execute,
-      }),
-    }, { BETTER_AUTH_URL: origin });
-    const pending = route.PATCH(new Request(origin + "/api/v1/test", {
-      method: "PATCH", body: "{}",
-      headers: { Origin: origin, "Content-Type": "application/json", "Idempotency-Key": randomUUID() },
-    }), {});
-
-    // 停止処理が実行者の行を保持している間、更新は入口確認の前で待つ。
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    const { execute, send } = entryRoute(userId);
+    const pending = send();
+    // 停止処理が実行者の行を保持している間、更新は入口確認の前の行ロックで待つ。
+    await waitUntilBlockedBy(pid);
     await holder.query("COMMIT");
     const response = await pending;
     expect(response.status).toBe(403);
@@ -209,5 +228,23 @@ it("更新の入口確認は停止とロックで直列化され、停止確定�
   } finally {
     await holder.query("ROLLBACK").catch(() => {});
     await holder.end();
+  }
+});
+
+it("停止理由の記録が欠けていても業務APIは403で拒否し、/meだけが不整合を500にする", async () => {
+  const { userId, cookie } = await logIn("poc_staff_mgr");
+  await update("UPDATE community_users SET account_status = 'suspended' WHERE user_id = $1", userId);
+
+  const { execute, send } = entryRoute(userId);
+  const response = await send();
+  expect(response.status).toBe(403);
+  expect((await response.json()).error.code).toBe("ACCOUNT_SUSPENDED");
+  expect(execute).not.toHaveBeenCalled();
+
+  const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    expect(await me(cookie)).toMatchObject({ status: 500, body: { error: { code: "INTERNAL_ERROR", fields: [] } } });
+  } finally {
+    consoleError.mockRestore();
   }
 });

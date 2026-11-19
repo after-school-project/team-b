@@ -1,6 +1,6 @@
 import { defineApiRoute } from "@/api/route";
 import { parseQuery } from "@/api/request";
-import { resolveRequestAccess, toMeState } from "@/auth/access";
+import { resolveMeState } from "@/auth/access";
 
 export const runtime = "nodejs";
 
@@ -8,6 +8,6 @@ export const runtime = "nodejs";
 export const { GET, HEAD, OPTIONS, POST, PUT, DELETE, PATCH } = defineApiRoute({
   async GET(request) {
     parseQuery(new URL(request.url), {});
-    return { data: toMeState(await resolveRequestAccess(request.headers)) };
+    return { data: await resolveMeState(request.headers) };
   },
 });

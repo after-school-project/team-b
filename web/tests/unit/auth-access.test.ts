@@ -41,7 +41,7 @@ describe("管理エリアの入口", () => {
 
 describe("利用状態による拒否", () => {
   it("停止中を ACCOUNT_SUSPENDED で拒否する", () => {
-    expect(code(() => requireActive({ access: "suspended", userId: "u1", publicReason: "理由" })))
+    expect(code(() => requireActive({ access: "suspended", userId: "u1" })))
       .toBe("ACCOUNT_SUSPENDED");
     expect(requireActive({ access: "active", viewer: viewer() })).toEqual(viewer());
   });
@@ -69,7 +69,11 @@ describe("MeState への投影", () => {
   });
 
   it("停止中は本人向け理由だけを返す", () => {
-    expect(toMeState({ session, state: { access: "suspended", userId: "u1", publicReason: "規約違反のため" } }))
+    expect(toMeState({ session, state: { access: "suspended", userId: "u1" } }, "規約違反のため"))
       .toStrictEqual({ access: "suspended", publicReason: "規約違反のため" });
+  });
+
+  it("停止中に本人向け理由がなければ推測で補わない", () => {
+    expect(() => toMeState({ session, state: { access: "suspended", userId: "u1" } })).toThrow();
   });
 });

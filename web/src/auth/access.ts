@@ -33,7 +33,7 @@ export type Viewer = {
 
 export type AccessState =
   | { access: "active"; viewer: Viewer }
-  | { access: "suspended"; userId: string; publicReason: string };
+  | { access: "suspended"; userId: string };
 
 export type RequestAccess = { session: AuthSession; state: AccessState };
 
@@ -63,16 +63,8 @@ export async function loadAccessState(reader: AccessReader, userId: string): Pro
     throw new ApiError("ACCOUNT_NOT_READY");
   }
 
-  if (user.accountStatus === "suspended") {
-    const [restriction] = await reader.select({ publicReason: accountRestrictions.publicReason })
-      .from(accountRestrictions)
-      .where(and(eq(accountRestrictions.userId, userId), eq(accountRestrictions.action, "suspend")))
-      .orderBy(desc(accountRestrictions.createdAt), desc(accountRestrictions.id))
-      .limit(1);
-    // 停止は本人向け理由と同時に記録する契約。記録がなければ不整合として扱い、理由を推測で補わない。
-    if (!restriction) throw new Error("停止中の利用者に本人向けの停止理由がありません。");
-    return { access: "suspended", userId, publicReason: restriction.publicReason };
-  }
+  // 業務APIは停止状態だけで拒否する。本人向けの理由は /me だけが loadPublicSuspensionReason で読む。
+  if (user.accountStatus === "suspended") return { access: "suspended", userId };
 
   return {
     access: "active",
@@ -85,6 +77,20 @@ export async function loadAccessState(reader: AccessReader, userId: string): Pro
       roles: { schoolManager: user.schoolManager, appManager: user.appManager },
     },
   };
+}
+
+/**
+ * 停止中の本人へ示す最新の停止理由を読む。内部理由は読まない。
+ * 停止は本人向け理由と同時に記録する契約のため、記録がなければ不整合として扱い、理由を推測で補わない。
+ */
+export async function loadPublicSuspensionReason(reader: AccessReader, userId: string): Promise<string> {
+  const [restriction] = await reader.select({ publicReason: accountRestrictions.publicReason })
+    .from(accountRestrictions)
+    .where(and(eq(accountRestrictions.userId, userId), eq(accountRestrictions.action, "suspend")))
+    .orderBy(desc(accountRestrictions.createdAt), desc(accountRestrictions.id))
+    .limit(1);
+  if (!restriction) throw new Error("停止中の利用者に本人向けの停止理由がありません。");
+  return restriction.publicReason;
 }
 
 /** リクエストのセッションから利用者を特定し、最新の利用状態を返す。 */
@@ -155,10 +161,14 @@ export type MeState =
   }
   | { access: "suspended"; publicReason: string };
 
-/** API設計書 §4 の MeState へ投影する。停止中は本人向け理由だけを返す。 */
-export function toMeState({ session, state }: RequestAccess): MeState {
+/**
+ * API設計書 §4 の MeState へ投影する。停止中は本人向け理由だけを返す。
+ * 停止中の場合は loadPublicSuspensionReason で読んだ理由を渡す。
+ */
+export function toMeState({ session, state }: RequestAccess, publicReason?: string): MeState {
   if (state.access === "suspended") {
-    return { access: "suspended", publicReason: state.publicReason };
+    if (publicReason === undefined) throw new Error("停止中の MeState には本人向けの停止理由が必要です。");
+    return { access: "suspended", publicReason };
   }
   const { viewer } = state;
   return {
@@ -172,4 +182,14 @@ export function toMeState({ session, state }: RequestAccess): MeState {
     capabilities: { canEnterAdmin: canEnterAdmin(viewer), canWriteContent: canWriteContent(viewer) },
     sessionExpiresAt: session.session.expiresAt.toISOString(),
   };
+}
+
+/** API-COM-01 の本体。停止中だけ本人向けの停止理由を追加で読む。 */
+export async function resolveMeState(headers: Headers, reader?: AccessReader): Promise<MeState> {
+  const database = reader ?? await defaultReader();
+  const access = await resolveRequestAccess(headers, database);
+  const publicReason = access.state.access === "suspended"
+    ? await loadPublicSuspensionReason(database, access.state.userId)
+    : undefined;
+  return toMeState(access, publicReason);
 }
