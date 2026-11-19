@@ -1,4 +1,4 @@
-<!-- タイトルは type: #Issue番号 変更内容 の形式で記載します。 -->
+<!-- タイトルは type: #Issue番号 変更内容 の形式で記載します。関連 Issue がない場合は type: 変更内容 とします。 -->
 <!-- 書き方は docs/development/pull-request-guide.md を参照してください。 -->
 
 ## 概要
