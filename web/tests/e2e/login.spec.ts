@@ -16,6 +16,15 @@ async function submitValidCredentials(page: Page) {
 }
 
 /**
+ * ホームへの移動要求を待つ。ホーム自体はサーバー側の認可で表示可否を判定し、
+ * モックした認証では実セッションがないためログイン画面へ戻される。ここでは画面が戻り先へ移動したことだけを確認する。
+ * 実セッションでホームまで表示できることは home.spec.ts で確認する（seed のパスワードを画面に入力しない形で行う）。
+ */
+function homeNavigation(page: Page) {
+  return page.waitForRequest((request) => request.method() === "GET" && new URL(request.url()).pathname === "/");
+}
+
+/**
  * 認証成功と、認証後の利用状態APIをモックする。
  * 入口の表示時の確認（認証前）は 401 を返し、認証後は `me` を返す。
  */
@@ -145,9 +154,10 @@ for (const target of ["/", undefined, "/not-implemented", "//example.com", "/api
     await mockSuccessfulSignIn(page, { status: 200, body: '{"data":{"access":"active"}}' });
     const query = target === undefined ? "" : `?returnTo=${encodeURIComponent(target)}`;
     await page.goto(`/login${query}`);
+    const navigated = homeNavigation(page);
     await submitValidCredentials(page);
 
-    await expect(page).toHaveURL("/");
+    await navigated;
   });
 }
 
@@ -332,9 +342,10 @@ test("既存セッションが有効なときは、入口の表示時に戻り�
   await page.route("**/api/v1/me", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: '{"data":{"access":"active"}}' }),
   );
+  const navigated = homeNavigation(page);
   await page.goto("/login");
 
-  await expect(page).toHaveURL("/");
+  await navigated;
 });
 
 for (const signOutFailure of [

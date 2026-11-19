@@ -23,6 +23,62 @@ docker compose -p team-b-quality -f compose.test.yaml down
 
 通常開発用のComposeと異なるプロジェクト名にしてください。テストDBはtmpfs上にあり、停止時に破棄されます。
 
+### ホストでのE2E
+
+E2E（[Playwright設定](../../web/playwright.config.ts)）は品質CIでは実行しません。`web/` で、ポート3100にビルド済みアプリを起動して確認します。アプリはホストから接続できる初期化済みDBとアプリ用ロールを必要とします。開発Composeの `db` はホストにポートを公開しないため、E2E専用の使い捨てDBをホストの `127.0.0.1:5432` に起動して初期化します。開発Composeの `team_b_dev` とは別のDBで、通常開発のデータには触れません。
+
+[home.spec.ts](../../web/tests/e2e/home.spec.ts) は seed の利用者で実セッションを作るため、そのDBを初期化したときに生成された seed の認証情報を使います。ホストで `npm run db:setup` を実行すると、Git対象外の `web/.seed/accounts.json` に生成されます。この既定の場所なら `E2E_ACCOUNTS_FILE` は不要です。別のDBの認証情報は、そのDBのパスワードと一致しないため使えません。
+
+`db:setup` はローカルの `team_b_dev`・管理ロール `team_b`・ポート5432だけを受け付けます（[DB開発ガイド](database.md)）。ホストの5432番を使用中の場合は、そのサービスを停止してから実行してください。以下は bash の例です。管理ロールのパスワードは任意の開発用の値、アプリ用ロールのパスワードは [local-db-grants.sql](../../web/scripts/local-db-grants.sql) の開発用の値に置き換えます。
+
+```sh
+# 1. E2E専用の使い捨てDBを起動する。起動に失敗したときに docker logs で原因を確認できるよう、--rm は付けない
+docker run -d --name team-b-e2e-db -e POSTGRES_DB=team_b_dev -e POSTGRES_USER=team_b \
+  -e POSTGRES_PASSWORD='<管理ロールの開発用パスワード>' -p 127.0.0.1:5432:5432 postgres:17.11-alpine
+
+# 2. 接続情報を設定する
+cd web
+export DATABASE_URL_DIRECT='postgresql://team_b:<管理ロールの開発用パスワード>@127.0.0.1:5432/team_b_dev'
+export DATABASE_URL='postgresql://team_b_app:<アプリ用ロールの開発用パスワード>@127.0.0.1:5432/team_b_dev'
+export BETTER_AUTH_URL='https://127.0.0.1:3100'
+export BETTER_AUTH_SECRET='<32文字以上の開発用の値>'
+
+# 3. TCP接続の受付を最大60秒待つ。docker run は受付前に戻り、db:setup は再試行しないため。
+#    コンテナが終了した場合や時間内に準備できない場合は、原因の確認方法を表示して失敗する
+wait_for_e2e_db() {
+  local deadline=$((SECONDS + 60))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    if [ "$(docker inspect -f '{{.State.Running}}' team-b-e2e-db 2>/dev/null)" != true ]; then
+      echo "E2E用DBのコンテナが起動していません。docker logs team-b-e2e-db で原因を確認してください。" >&2
+      return 1
+    fi
+    docker exec team-b-e2e-db pg_isready -q -h 127.0.0.1 -U team_b -d team_b_dev && return 0
+    sleep 1
+  done
+  echo "E2E用DBが60秒以内に接続を受け付けませんでした。docker logs team-b-e2e-db で原因を確認してください。" >&2
+  return 1
+}
+
+# 4. DBの準備ができた場合だけ、マイグレーション・権限設定・seed（web/.seed/accounts.json の生成）とE2Eを実行する
+npm run test:e2e:install   # 初回のみ
+wait_for_e2e_db && npm run db:setup && npm run test:e2e
+
+# 5. 終了後（失敗時も）にDBを破棄する
+docker rm -f team-b-e2e-db
+```
+
+| 環境変数 | 設定値 |
+|---|---|
+| `DATABASE_URL_DIRECT` | `db:setup` だけが使う管理ロールの接続 |
+| `DATABASE_URL` | E2Eで起動するアプリのアプリ用ロールの接続 |
+| `BETTER_AUTH_SECRET` | 32文字以上の開発用の値 |
+| `BETTER_AUTH_URL` | `https://127.0.0.1:3100`。本番ビルドはHTTPSの正規オリジンだけを受け付けます。E2Eは同じオリジンを `Origin` に送ります |
+| `E2E_ACCOUNTS_FILE` | `accounts.json` のパス。既定は `web/.seed/accounts.json` です。ファイルがない場合、実セッションのテストは失敗し、この変数の確認を案内します |
+
+`web/.seed/accounts.json` が残っている場合、`db:setup` はそのパスワードを再利用してアカウントを作成します。そのため、DBを作り直しても同じファイルを使えます。
+
+実セッションのテストは、パスワードを画面に入力せず要求コンテキストからサインインし、トレース・スクリーンショット・動画を無効にします。失敗時のレポートにパスワードを残さないためです。`web/.seed/` と `web/test-results/` はコミットしないでください。
+
 ## 接続済みの公開環境
 
 | 項目 | 接続先・設定 |
