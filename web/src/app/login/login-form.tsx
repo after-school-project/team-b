@@ -263,6 +263,7 @@ export default function LoginForm({ returnTo }: LoginFormProps) {
       }
       setUsername("");
       setPassword("");
+      setPasswordVisible(false);
       setPublicReason("");
       setSessionUnknown(false);
       setView("form");

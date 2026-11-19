@@ -476,3 +476,22 @@ test("ログアウトの処理中はログインを送信せず、完了後に�
   await expect(page.getByRole("main").getByRole("alert")).toHaveText(authenticationError);
   expect(signInRequests).toBe(1);
 });
+
+test("ログアウト後はパスワードの表示設定を初期化する", async ({ page }) => {
+  await page.route("**/api/v1/me", (route) => route.abort());
+  await page.route("**/api/auth/sign-out", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: '{"success":true}' }),
+  );
+  await page.goto("/login");
+  await expect(page.getByRole("main").getByRole("status")).toHaveText("利用状態を確認できませんでした。");
+  const password = page.getByLabel("パスワード");
+  await password.fill("correct-horse-battery");
+  await page.getByRole("button", { name: "表示", exact: true }).click();
+  await expect(password).toHaveAttribute("type", "text");
+
+  await page.getByRole("button", { name: "ログアウト" }).click();
+  await expect(page.getByRole("main").getByRole("status")).toHaveCount(0);
+  await expect(password).toHaveValue("");
+  await expect(password).toHaveAttribute("type", "password");
+  await expect(page.getByRole("button", { name: "表示", exact: true })).toBeVisible();
+});
