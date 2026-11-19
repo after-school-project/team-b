@@ -50,7 +50,7 @@ After School Project は、学校・在校生・卒業生をつなぐコミュ�
 
 - ローカル検証には開発用または使い捨てのテスト DB を使う。`db:reset` は開発 Compose の `team_b_dev` を消去する操作なので、明示的にリセットを依頼された場合だけ使う。Neon へのマイグレーション、Vercel のデプロイや設定変更は対象環境と作業範囲が明示された場合に行う。接続文字列、トークン、認証シークレット、seed のパスワード、実利用者データは Git・ログ・チャット・Issue・PR に含めない。[DB 開発ガイド](docs/development/database.md) · [品質チェックと PoC 公開環境](docs/development/quality-and-poc.md)
 - 公開版からの差分はパス単位で判定される。現行ルールではルートの `AGENTS.md` もデプロイ判定の対象。公開確認を行う場合は GitHub Actions の要求結果に加え、Vercel で対象 SHA の `Ready` と公開反映を確認する。[Vercel デプロイ制御](docs/development/vercel-deployment.md)
-- ブランチは原則 `codex/<Issue番号>-<変更の要約>`。提出は PR 経由とし、コミットは `type: 変更内容`、PR タイトルは `type: #Issue番号 変更内容` で日本語の変更内容を書く。PR 本文には受入条件に対応する確認内容と結果を記載し、未実施の項目には理由を添える。[CONTRIBUTING](CONTRIBUTING.md) · [PR 作成ガイド](docs/development/pull-request-guide.md) · [PR テンプレート](.github/pull_request_template.md)
+- ブランチは原則 `<type>/<Issue番号>-<変更の要約>`（例: `feat/12-login`）。`<type>` はコミットと同じ種別を使い、要約は短い英小文字とハイフンで書く。提出は PR 経由とし、コミットは `type: 変更内容`、PR タイトルは `type: #Issue番号 変更内容` で日本語の変更内容を書く。PR 本文には受入条件に対応する確認内容と結果を記載し、未実施の項目には理由を添える。[CONTRIBUTING](CONTRIBUTING.md) · [PR 作成ガイド](docs/development/pull-request-guide.md) · [PR テンプレート](.github/pull_request_template.md)
 
 ## 作業完了時の報告
 
