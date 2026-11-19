@@ -41,7 +41,7 @@ for (const status of [401, 429]) {
     await page.goto("/login");
     await submitValidCredentials(page);
 
-    await expect(page.getByRole("alert")).toHaveText(authenticationError);
+    await expect(page.getByRole("main").getByRole("alert")).toHaveText(authenticationError);
     await expect(page.getByText("sensitive SDK detail")).toHaveCount(0);
     await expect(page.getByLabel("ログインID")).toHaveValue("poc_s001");
   });
@@ -52,7 +52,7 @@ test("認証APIの通信障害は共通の処理エラーを表示する", async
   await page.goto("/login");
   await submitValidCredentials(page);
 
-  await expect(page.getByRole("alert")).toHaveText(processingError);
+  await expect(page.getByRole("main").getByRole("alert")).toHaveText(processingError);
 });
 
 test("認証APIのサーバーエラーは共通の処理エラーを表示する", async ({ page }) => {
@@ -62,7 +62,7 @@ test("認証APIのサーバーエラーは共通の処理エラーを表示す�
   await page.goto("/login");
   await submitValidCredentials(page);
 
-  await expect(page.getByRole("alert")).toHaveText(processingError);
+  await expect(page.getByRole("main").getByRole("alert")).toHaveText(processingError);
   await expect(page.getByText("private server detail")).toHaveCount(0);
 });
 
@@ -79,17 +79,21 @@ for (const credentials of [
     await page.getByLabel("パスワード").fill(credentials.password);
     await page.getByRole("button", { name: "ログイン" }).click();
 
-    await expect(page.getByRole("alert")).toHaveText(authenticationError);
+    await expect(page.getByRole("main").getByRole("alert")).toHaveText(authenticationError);
   });
 }
 
 test("送信中は二重送信を防ぎ、入力どおりの値だけを認証APIへ送る", async ({ page }) => {
   let requests = 0;
   let requestBody: unknown;
+  let releaseResponse = () => {};
+  const responseReleased = new Promise<void>((resolve) => {
+    releaseResponse = resolve;
+  });
   await page.route("**/api/auth/sign-in/username", async (route) => {
     requests += 1;
     requestBody = route.request().postDataJSON();
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    await responseReleased;
     await route.fulfill({ status: 401, contentType: "application/json", body: "{}" });
   });
   await page.goto("/login");
@@ -99,8 +103,10 @@ test("送信中は二重送信を防ぎ、入力どおりの値だけを認証AP
 
   const submitButton = page.getByRole("button", { name: "確認中..." });
   await expect(submitButton).toBeDisabled();
-  await submitButton.evaluate((button: HTMLButtonElement) => button.click());
-  await expect(page.getByRole("alert")).toHaveText(authenticationError);
+  // ボタンの無効化に頼らず、フォーム送信を直接再実行しても送信されないことを確認する。
+  await page.locator("form").evaluate((form: HTMLFormElement) => form.requestSubmit());
+  releaseResponse();
+  await expect(page.getByRole("main").getByRole("alert")).toHaveText(authenticationError);
   expect(requests).toBe(1);
   expect(requestBody).toEqual({ username: "poc_s001", password: " password 123 " });
 });
@@ -154,9 +160,96 @@ test("ACCOUNT_NOT_READYは利用準備中の案内を同じ入口に表示する
   await page.goto("/login");
   await submitValidCredentials(page);
 
-  await expect(page.getByRole("status")).toHaveText("このアカウントは利用準備中です。");
+  await expect(page.getByRole("main").getByRole("status")).toHaveText("このアカウントは利用準備中です。");
   await expect(page).toHaveURL("/login");
   await expect(page.getByText("private detail")).toHaveCount(0);
+});
+
+test("利用準備中の案内からログアウトしてフォームへ戻れる", async ({ page }) => {
+  await mockSuccessfulSignIn(page);
+  await page.route("**/api/v1/me", (route) =>
+    route.fulfill({ status: 403, contentType: "application/json", body: '{"error":{"code":"ACCOUNT_NOT_READY"}}' }),
+  );
+  let signOutRequests = 0;
+  await page.route("**/api/auth/sign-out", async (route) => {
+    signOutRequests += 1;
+    await route.fulfill({ status: 200, contentType: "application/json", body: '{"success":true}' });
+  });
+  await page.goto("/login");
+  await submitValidCredentials(page);
+
+  await page.getByRole("button", { name: "ログアウト" }).click();
+  await expect(page.getByLabel("ログインID")).toHaveValue("");
+  await expect(page).toHaveURL("/login");
+  expect(signOutRequests).toBe(1);
+});
+
+for (const me of [
+  { name: "サーバーエラー", status: 503, body: '{"error":{"code":"TEMPORARILY_UNAVAILABLE"}}' },
+  { name: "JSON以外の応答", status: 200, body: "<html></html>" },
+  { name: "空のpublicReason", status: 200, body: '{"data":{"access":"suspended","publicReason":" "}}' },
+  { name: "未知のaccess", status: 200, body: '{"data":{"access":"unknown"}}' },
+]) {
+  test(`利用状態APIの${me.name}ではセッションを破棄して処理エラーを表示する`, async ({ page }) => {
+    await mockSuccessfulSignIn(page);
+    await page.route("**/api/v1/me", (route) =>
+      route.fulfill({ status: me.status, contentType: "application/json", body: me.body }),
+    );
+    let signOutRequests = 0;
+    await page.route("**/api/auth/sign-out", async (route) => {
+      signOutRequests += 1;
+      await route.fulfill({ status: 200, contentType: "application/json", body: '{"success":true}' });
+    });
+    await page.goto("/login");
+    await submitValidCredentials(page);
+
+    await expect(page.getByRole("main").getByRole("alert")).toHaveText(processingError);
+    await expect(page.getByLabel("ログインID")).toBeVisible();
+    expect(signOutRequests).toBe(1);
+  });
+}
+
+test("複数の入力エラーはフォーム上部にも件数を案内する", async ({ page }) => {
+  await page.goto("/login");
+  await page.getByRole("button", { name: "ログイン" }).click();
+
+  await expect(page.getByText("2件の入力内容を確認してください。")).toBeVisible();
+  await page.getByLabel("ログインID").fill("poc_s001");
+  await page.getByRole("button", { name: "ログイン" }).click();
+  await expect(page.getByText("2件の入力内容を確認してください。")).toHaveCount(0);
+  await expect(page.getByText("パスワードを入力してください")).toBeVisible();
+});
+
+test("パスワードの表示・非表示を切り替えられる", async ({ page }) => {
+  await page.goto("/login");
+  const password = page.getByLabel("パスワード");
+  await password.fill("correct-horse-battery");
+
+  await expect(password).toHaveAttribute("type", "password");
+  await page.getByRole("button", { name: "表示", exact: true }).click();
+  await expect(password).toHaveAttribute("type", "text");
+  await page.getByRole("button", { name: "非表示" }).click();
+  await expect(password).toHaveAttribute("type", "password");
+});
+
+test("パスワードの文字数は認証サーバーと同じUTF-16単位で数える", async ({ page }) => {
+  let requests = 0;
+  await page.route("**/api/auth/sign-in/username", (route) => {
+    requests += 1;
+    return route.fulfill({ status: 401, contentType: "application/json", body: "{}" });
+  });
+  await page.goto("/login");
+  await page.getByLabel("ログインID").fill("poc_s001");
+
+  await page.getByLabel("パスワード").fill("😀".repeat(65));
+  await page.getByRole("button", { name: "ログイン" }).click();
+  await expect(page.getByText("パスワードは12〜128文字で入力してください。")).toBeVisible();
+  expect(requests).toBe(0);
+
+  await page.getByLabel("パスワード").fill("😀".repeat(64));
+  await page.getByRole("button", { name: "ログイン" }).click();
+  await expect(page.getByRole("main").getByRole("alert")).toHaveText(authenticationError);
+  expect(requests).toBe(1);
 });
 
 test("利用状態APIの401では認証エラーとログインフォームを表示する", async ({ page }) => {
@@ -167,7 +260,7 @@ test("利用状態APIの401では認証エラーとログインフォームを�
   await page.goto("/login");
   await submitValidCredentials(page);
 
-  await expect(page.getByRole("alert")).toHaveText(authenticationError);
+  await expect(page.getByRole("main").getByRole("alert")).toHaveText(authenticationError);
   await expect(page.getByLabel("ログインID")).toBeVisible();
   await expect(page).toHaveURL("/login");
 });

@@ -1,5 +1,10 @@
+import type { Metadata } from "next";
+import { resolveReturnTo } from "@/auth/return-to";
 import LoginForm from "./login-form";
-import { resolveReturnTo } from "./return-to";
+
+export const metadata: Metadata = {
+  title: "ログイン | After School Project",
+};
 
 type LoginPageProps = {
   searchParams: Promise<{ returnTo?: string | string[] }>;
