@@ -20,7 +20,7 @@ type: #Issue番号 変更内容
 - `fix: #15 ログインエラーを修正`
 - `docs: #18 API設計書を更新`
 
-`type`は[コミットメッセージの種類](../../CONTRIBUTING.md#commit-messages)と同じ分類（`feat`、`fix`、`docs`、`refactor`、`test`、`chore`）を使用します。各コミットではIssue番号は任意ですが、PRタイトルには関連Issueの番号を記載します。
+`type`は[コミットメッセージの種類](../../CONTRIBUTING.md#commit-messages)と同じ分類（`feat`、`fix`、`docs`、`refactor`、`test`、`chore`）を使用します。各コミットではIssue番号は任意ですが、PRタイトルには関連Issueの番号を記載します。関連Issueがない場合は、Issue番号を省略して`type: 変更内容`とし、本文に関連Issueがないことを記載します。
 
 ## 3. PR本文の書き方
 
