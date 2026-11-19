@@ -23,6 +23,32 @@ docker compose -p team-b-quality -f compose.test.yaml down
 
 通常開発用のComposeと異なるプロジェクト名にしてください。テストDBはtmpfs上にあり、停止時に破棄されます。
 
+### ホストでのE2E
+
+E2E（[Playwright設定](../../web/playwright.config.ts)）は品質CIでは実行しません。`web/` で、ポート3100にビルド済みアプリを起動して確認します。実行環境から接続できる初期化済みローカルDBとアプリ用ロールが必要です（[DB開発ガイド](database.md)）。
+
+[home.spec.ts](../../web/tests/e2e/home.spec.ts) は seed の利用者で実セッションを作るため、seed の認証情報ファイルを使います。Composeは `accounts.json` をコンテナの名前付きボリュームに生成します。内容を端末に出力せず、Git対象外の `web/.seed/` へコピーします。ホストで `npm run db:setup` を実行した場合は、同じ場所に生成済みです。
+
+```sh
+mkdir -p web/.seed
+docker compose cp app:/app/.seed/accounts.json web/.seed/accounts.json
+```
+
+| 環境変数 | 設定値 |
+|---|---|
+| `DATABASE_URL` | 初期化済みローカルDBへのアプリ用ロールの接続 |
+| `BETTER_AUTH_SECRET` | 32文字以上の開発用の値 |
+| `BETTER_AUTH_URL` | `https://127.0.0.1:3100`。本番ビルドはHTTPSの正規オリジンだけを受け付けます。E2Eは同じオリジンを `Origin` に送ります |
+| `E2E_ACCOUNTS_FILE` | `accounts.json` のパス。既定は `web/.seed/accounts.json` で、既定の場所なら省略できます。ファイルがない場合、実セッションのテストは失敗します |
+
+```sh
+cd web
+npm run test:e2e:install   # 初回のみ
+npm run test:e2e
+```
+
+実セッションのテストは、パスワードを画面に入力せず要求コンテキストからサインインし、トレース・スクリーンショット・動画を無効にします。失敗時のレポートにパスワードを残さないためです。`web/.seed/` と `web/test-results/` はコミットしないでください。
+
 ## 接続済みの公開環境
 
 | 項目 | 接続先・設定 |
