@@ -2,6 +2,7 @@ import { hashPassword } from "better-auth/crypto";
 import { and, eq } from "drizzle-orm";
 import { parseArgs } from "node:util";
 import { account, session, user } from "../../src/db/auth-schema";
+import { auditLogs } from "../../src/db/moderation-schema";
 import { communityUsers } from "../../src/db/schema";
 import { schoolUsernamePattern, withAccountCredentials } from "../lib/account-credentials";
 
@@ -40,6 +41,12 @@ async function main() {
     await tx.update(account).set({ password: await hashPassword(password) })
       .where(eq(account.id, credential.id));
     await tx.delete(session).where(eq(session.userId, credential.userId));
+    await tx.insert(auditLogs).values({
+      systemAction: true,
+      actionType: "account.password_reset",
+      targetType: "user",
+      targetId: credential.userId,
+    });
   });
   console.info("パスワードを再発行しました。指定した受渡用ファイルを確認してください。");
 }

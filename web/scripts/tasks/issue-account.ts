@@ -7,13 +7,15 @@ import { z } from "zod";
 import { authOptions } from "../../src/auth/options";
 import { authOrigin } from "../../src/auth/web-config";
 import * as authSchema from "../../src/db/auth-schema";
+import { auditLogs } from "../../src/db/moderation-schema";
 import { communityUsers, identityRecords, profileRevisions, profiles } from "../../src/db/schema";
 import { schoolUsernamePattern, withAccountCredentials } from "../lib/account-credentials";
 
 const nonBlank = z.string().trim().min(1);
 const issuanceInput = z.strictObject({
   username: z.string().regex(schoolUsernamePattern),
-  displayName: nonBlank,
+  displayName: nonBlank.refine((value) =>
+    value.isWellFormed() && !/[\0\r\n\u2028\u2029]/.test(value) && [...value].length <= 50),
   baseRole: z.enum(["student", "alumni", "staff"]),
   schoolManager: z.boolean(),
   appManager: z.boolean(),
@@ -42,7 +44,9 @@ async function main() {
   const outputPath = values.output;
   const input = issuanceInput.safeParse(JSON.parse(await readFile(values.input, "utf8")));
   if (!input.success) {
-    throw new IssueAccountError("発行情報の形式、所属と管理権限の組み合わせ、学校確認の有無を確認してください。");
+    throw new IssueAccountError(
+      "発行情報の形式、表示名（前後の空白を除いて1〜50文字・改行不可）、所属と管理権限、学校確認の有無を確認してください。",
+    );
   }
   const {
     username, displayName, privateRealName, schoolReference, verificationNote,
@@ -78,6 +82,12 @@ async function main() {
 
     await tx.update(communityUsers).set({ provisioningStatus: "ready" })
       .where(eq(communityUsers.userId, userId));
+    await tx.insert(auditLogs).values({
+      systemAction: true,
+      actionType: "account.issued",
+      targetType: "user",
+      targetId: userId,
+    });
   });
   console.info("アカウントを発行しました。指定した受渡用ファイルを確認してください。");
 }

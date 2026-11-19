@@ -83,9 +83,23 @@ async function account(username: string) {
   `, [username])).rows[0];
 }
 
+async function accountAudits(userId?: string) {
+  return (await database.client.query(`
+    SELECT action_type, target_type, actor_id, system_action, before_state, after_state
+    FROM audit_logs WHERE ($1::text IS NULL OR target_id = $1)
+    ORDER BY action_type
+  `, [userId ?? null])).rows;
+}
+
+const issuedAudit = {
+  action_type: "account.issued", target_type: "user", actor_id: null, system_action: true,
+  before_state: null, after_state: null,
+};
+
 it("学校確認済みアカウントを発行し、重複時は認証情報・所属・権限を保持する", async () => {
   const output = join(directory, "credentials.json");
-  const issued = await issueAccount(fixture, output);
+  const displayName = "𠮷".repeat(50);
+  const issued = await issueAccount({ ...fixture, displayName: `  ${displayName}  ` }, output);
   expect(issued.status).toBe(0);
   const { username, password } = JSON.parse(await readFile(output, "utf8")) as {
     username: string; password: string;
@@ -104,7 +118,7 @@ it("学校確認済みアカウントを発行し、重複時は認証情報・�
     provisioning_status: "ready",
     private_real_name: fixture.privateRealName,
     school_reference: fixture.schoolReference,
-    display_name: fixture.displayName,
+    display_name: displayName,
   });
   expect(hash !== password && await verifyPassword({ hash, password })).toBe(true);
 
@@ -118,17 +132,20 @@ it("学校確認済みアカウントを発行し、重複時は認証情報・�
   const { password: currentHash, ...after } = await account(fixture.username);
   expect(currentHash === hash).toBe(true);
   expect(after).toEqual(before);
+  expect(await accountAudits(before.id)).toEqual([issuedAudit]);
 });
 
 it("出力先が既にある場合は上書きせず、認証アカウントの発行も取り消す", async () => {
   const username = "issue33_rollback";
   const output = join(directory, "existing.json");
   await writeFile(output, "既存ファイル");
+  const before = await accountAudits();
   const result = await issueAccount({ ...fixture, username }, output);
   expect(result.status).toBe(1);
   expect(await readFile(output, "utf8")).toBe("既存ファイル");
   const users = await database.client.query('SELECT id FROM "user" WHERE username = $1', [username]);
   expect(users.rowCount).toBe(0);
+  expect(await accountAudits()).toEqual(before);
 });
 
 it.each([
@@ -136,12 +153,18 @@ it.each([
   { baseRole: "student" },
   { schoolVerified: false },
   { schoolReference: "  " },
+  { displayName: "  " },
+  { displayName: "名".repeat(51) },
+  { displayName: "姓\n名" },
+  { displayName: "姓\u2028名" },
 ])("不正な発行情報をDB更新前に拒否する: %o", async (override) => {
   const output = join(directory, "invalid.json");
-  const result = await issueAccount({ ...fixture, ...override }, output);
+  const username = "issue33_invalid";
+  const result = await issueAccount({ ...fixture, username, ...override }, output);
   expect(result.status).toBe(1);
   expect(result.stderr).toContain("発行情報の形式");
   await expect(readFile(output)).rejects.toMatchObject({ code: "ENOENT" });
+  expect(await account(override.username ?? username)).toBeUndefined();
 });
 
 it("再発行は対象の旧パスワードと全セッションだけを無効にする", async () => {
@@ -186,6 +209,7 @@ it("再発行は対象の旧パスワードと全セッションだけを無効�
   expect(failed.status).toBe(1);
   expect((await account(username)).password === oldHash).toBe(true);
   expect(await sessionIds()).toEqual([...targetSessions, otherSession].sort());
+  expect(await accountAudits(before.id)).toEqual([issuedAudit]);
 
   const output = join(directory, "reset.json");
   const reset = runAccountTask("account:reset-password", "--username", username, "--output", output);
@@ -202,6 +226,10 @@ it("再発行は対象の旧パスワードと全セッションだけを無効�
   expect(await sessionIds()).toEqual([otherSession]);
   expect(after).toEqual(before);
   expect(await posts()).toEqual(beforePosts);
+  expect(await accountAudits(before.id)).toEqual([
+    issuedAudit,
+    { ...issuedAudit, action_type: "account.password_reset" },
+  ]);
 });
 
 it("未発行のログインIDに対して受渡用ファイルを作らない", async () => {
