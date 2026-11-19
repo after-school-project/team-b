@@ -29,6 +29,33 @@ Next.jsサーバー起動時は接続とアプリ用ロールの権限を検査�
 
 アプリロールはスキーマ・テーブル・DBの所有者にせず、管理権限や他ロールへの所属を与えません。既存テーブルにはSELECT / INSERT / UPDATE / DELETEのみを付与し、`audit_logs` はSELECT / INSERTのみです。CREATE、ALTER、DROP、TRUNCATE、一時テーブル作成、マイグレーション管理表へのアクセスを許可しません。PUBLICからもスキーマ作成・DBのCREATE/TEMP権限を外します。このDBはアプリ専用としてください。将来テーブルを追加したら、マイグレーション後に権限コマンドを再実行します。将来のテーブルへの包括的な既定GRANTは設けません。
 
+## 学校発行アカウントの初期発行
+
+開発担当者は、対象DBのマイグレーションを適用したうえで、`web/` から実行します。`DATABASE_URL_DIRECT`、`BETTER_AUTH_URL`、`BETTER_AUTH_SECRET` を対象環境用に設定します。Neonの場合は管理用マイグレーションと同じ接続先照合の設定も必要です。
+
+```sh
+npm run account:issue -- --input <発行情報JSON> --output <新規の受渡用JSON>
+```
+
+発行情報JSONの例です。学校による利用資格確認が済んだ架空のアカウントに使います。
+
+```json
+{
+  "username": "poc_new_staff",
+  "displayName": "架空の職員",
+  "baseRole": "staff",
+  "schoolManager": true,
+  "appManager": false,
+  "schoolVerified": true,
+  "privateRealName": "架空の本人確認名",
+  "schoolReference": "DEMO-STAFF-01"
+}
+```
+
+`baseRole` は `student`・`alumni`・`staff` のいずれかです。学校管理者は `staff` のみ、任意の `isGraduating` を `true` にできるのは `student` のみです。`verificationNote`、`department`、`entryYear`、`graduationYear` も任意で指定できます。
+
+入力・出力とも、リポジトリ外の実行者だけがアクセスできる場所を指定してください。正常終了後、出力JSONのログインIDとパスワードを対象者に個別に渡します。出力ファイルは新規作成され、既存ファイルとの衝突や同じログインIDの再実行時はエラーになります。Windowsでは出力先フォルダーのアクセス権も確認してください。
+
 ## ローカルの停止・再起動・リセット
 
 ```sh
