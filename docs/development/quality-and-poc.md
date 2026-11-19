@@ -35,6 +35,8 @@ E2E（[Playwright設定](../../web/playwright.config.ts)）は品質CIでは実�
 # 1. E2E専用の使い捨てDBを起動する（停止時に破棄される）
 docker run -d --rm --name team-b-e2e-db -e POSTGRES_DB=team_b_dev -e POSTGRES_USER=team_b \
   -e POSTGRES_PASSWORD='<管理ロールの開発用パスワード>' -p 127.0.0.1:5432:5432 postgres:17.11-alpine
+# docker run は接続の受付前に戻る。db:setup は再試行しないため、TCP接続を受け付けるまで待つ
+until docker exec team-b-e2e-db pg_isready -h 127.0.0.1 -U team_b -d team_b_dev >/dev/null 2>&1; do sleep 1; done
 
 # 2. web/ でマイグレーション・権限設定・seed を実行し、web/.seed/accounts.json を生成する
 cd web

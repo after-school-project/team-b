@@ -19,8 +19,15 @@ function passwordFor(username: string): string {
   if (!existsSync(accountsFile)) {
     throw new Error(`seed の認証情報が見つかりません。E2E_ACCOUNTS_FILE に accounts.json のパスを設定してください：${accountsFile}`);
   }
-  const password = (JSON.parse(readFileSync(accountsFile, "utf8")) as Record<string, string>)[username];
-  if (!password) throw new Error(`accounts.json に ${username} の認証情報がありません。`);
+  let accounts: unknown;
+  try {
+    accounts = JSON.parse(readFileSync(accountsFile, "utf8"));
+  } catch {
+    // 解析エラーの内容にはファイルの一部（秘密値）が含まれ得るため、元の例外を出さない。
+    throw new Error(`seed の認証情報を読み取れません。E2E_ACCOUNTS_FILE が db:setup で生成した accounts.json を指しているか確認してください：${accountsFile}`);
+  }
+  const password = accounts && typeof accounts === "object" ? (accounts as Record<string, unknown>)[username] : undefined;
+  if (typeof password !== "string" || !password) throw new Error(`accounts.json に ${username} の認証情報がありません。`);
   return password;
 }
 
