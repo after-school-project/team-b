@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import styles from "./page.module.css";
 
@@ -18,7 +18,15 @@ type FieldErrors = {
   password?: string;
 };
 
-type View = "form" | "checking" | "not-ready" | "suspended";
+type View = "form" | "checking" | "not-ready" | "suspended" | "logout-required";
+
+/** `GET /api/v1/me` の結果から判定した利用状態。 */
+type Access =
+  | { kind: "unauthenticated" }
+  | { kind: "active" }
+  | { kind: "not-ready" }
+  | { kind: "suspended"; publicReason: string }
+  | { kind: "unknown" };
 
 type MeResponse = {
   data?: {
@@ -68,16 +76,36 @@ function validate(username: string, password: string): FieldErrors {
   return errors;
 }
 
-/** 認証後に利用状態を確認できなかった場合に、残ったセッションを失効させる。失敗しても画面の案内は変えない。 */
-async function discardSession() {
+async function fetchAccess(signal?: AbortSignal): Promise<Access> {
+  const response = await fetch("/api/v1/me", { signal, cache: "no-store" });
+  if (response.status === 401) return { kind: "unauthenticated" };
+
+  const me = await readMeResponse(response);
+  if (response.status === 403 && me.error?.code === "ACCOUNT_NOT_READY") return { kind: "not-ready" };
+  if (response.ok && me.data?.access === "active") return { kind: "active" };
+  if (
+    response.ok &&
+    me.data?.access === "suspended" &&
+    typeof me.data.publicReason === "string" &&
+    me.data.publicReason.trim()
+  ) {
+    return { kind: "suspended", publicReason: me.data.publicReason };
+  }
+  // 5xx・想定外の形式など、利用状態を確認できない。
+  return { kind: "unknown" };
+}
+
+/** セッションを失効させる。失効を確認できた（2xx）ときだけ true を返す。 */
+async function requestSignOut(): Promise<boolean> {
   try {
-    await fetch("/api/auth/sign-out", {
+    const response = await fetch("/api/auth/sign-out", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: "{}",
     });
+    return response.ok;
   } catch {
-    // セッションが残っても、業務APIと保護画面はサーバー側の認可で拒否される。
+    return false;
   }
 }
 
@@ -92,6 +120,35 @@ export default function LoginForm({ returnTo }: LoginFormProps) {
   const [publicReason, setPublicReason] = useState("");
   const [view, setView] = useState<View>("form");
   const [loggingOut, setLoggingOut] = useState(false);
+  const sessionCheck = useRef<AbortController | null>(null);
+
+  // 入口の表示時に既存セッションの利用状態を確認する（停止案内を再読み込みしてもログアウト導線を残す）。
+  useEffect(() => {
+    const controller = new AbortController();
+    sessionCheck.current = controller;
+
+    fetchAccess(controller.signal)
+      .then((access) => {
+        if (controller.signal.aborted) return;
+        if (access.kind === "active") {
+          router.replace(returnTo);
+        } else if (access.kind === "not-ready") {
+          setView("not-ready");
+        } else if (access.kind === "suspended") {
+          setPublicReason(access.publicReason);
+          setView("suspended");
+        }
+        // 未認証・確認できない場合はログインフォームのまま。ログインすると新しいセッションに置き換わる。
+      })
+      .catch(() => {
+        // 通信できない場合もログインフォームのまま。
+      })
+      .finally(() => {
+        if (sessionCheck.current === controller) sessionCheck.current = null;
+      });
+
+    return () => controller.abort();
+  }, [returnTo, router]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -102,13 +159,20 @@ export default function LoginForm({ returnTo }: LoginFormProps) {
     if (Object.keys(errors).length > 0) return;
 
     submitting.current = true;
+    // 入口表示時の確認結果で、これから行うログインの結果を上書きしない。
+    sessionCheck.current?.abort();
     setView("checking");
     let signedIn = false;
 
     async function failAfterSignIn() {
-      await discardSession();
-      setView("form");
-      setFormError(processingError);
+      if (await requestSignOut()) {
+        setView("form");
+        setFormError(processingError);
+        return;
+      }
+      // セッションを失効できたか確認できないため、ログアウトの再試行を残す。
+      setView("logout-required");
+      setFormError(logoutError);
     }
 
     try {
@@ -132,34 +196,27 @@ export default function LoginForm({ returnTo }: LoginFormProps) {
       signedIn = true;
       setPassword("");
       setPasswordVisible(false);
-      const meResponse = await fetch("/api/v1/me");
-      if (meResponse.status === 401) {
+      const access = await fetchAccess();
+      if (access.kind === "unauthenticated") {
         setView("form");
         setFormError(authenticationError);
         return;
       }
-
-      const me = await readMeResponse(meResponse);
-      if (meResponse.status === 403 && me.error?.code === "ACCOUNT_NOT_READY") {
+      if (access.kind === "not-ready") {
         setView("not-ready");
         return;
       }
-      if (meResponse.ok && me.data?.access === "active") {
+      if (access.kind === "active") {
         router.replace(returnTo);
         return;
       }
-      if (
-        meResponse.ok &&
-        me.data?.access === "suspended" &&
-        typeof me.data.publicReason === "string" &&
-        me.data.publicReason.trim()
-      ) {
-        setPublicReason(me.data.publicReason);
+      if (access.kind === "suspended") {
+        setPublicReason(access.publicReason);
         setView("suspended");
         return;
       }
 
-      // 5xx・想定外の形式など、利用状態を確認できない場合はセッションを残さない。
+      // 利用状態を確認できない場合はセッションを残さない。
       await failAfterSignIn();
     } catch {
       if (signedIn) {
@@ -177,12 +234,7 @@ export default function LoginForm({ returnTo }: LoginFormProps) {
     setLoggingOut(true);
     setFormError("");
     try {
-      const response = await fetch("/api/auth/sign-out", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: "{}",
-      });
-      if (!response.ok) {
+      if (!(await requestSignOut())) {
         setFormError(logoutError);
         return;
       }
@@ -191,8 +243,6 @@ export default function LoginForm({ returnTo }: LoginFormProps) {
       setPublicReason("");
       setView("form");
       router.replace("/login");
-    } catch {
-      setFormError(logoutError);
     } finally {
       setLoggingOut(false);
     }
@@ -237,8 +287,14 @@ export default function LoginForm({ returnTo }: LoginFormProps) {
           accountNotice("このアカウントは利用準備中です。")
         ) : view === "suspended" ? (
           accountNotice("このアカウントは利用停止中です。", <p className={styles.reason}>{publicReason}</p>)
+        ) : view === "logout-required" ? (
+          accountNotice(
+            "ログイン処理を完了できませんでした。",
+            <p className={styles.reason}>ログアウトしてから、もう一度ログインしてください。</p>,
+          )
         ) : (
-          <form className={styles.form} onSubmit={submit} noValidate aria-labelledby="login-title">
+          // method="post": JavaScript が動く前に送信されても、認証情報を URL に含めない。
+          <form className={styles.form} method="post" onSubmit={submit} noValidate aria-labelledby="login-title">
             {fieldErrorCount > 1 && (
               <p className={styles.summary} role="alert">
                 {fieldErrorCount}件の入力内容を確認してください。

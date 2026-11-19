@@ -1,8 +1,13 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type Route } from "@playwright/test";
 
 const authenticationError =
   "ログインできませんでした。ログインIDとパスワードを確認し、時間をおいてもう一度お試しください。";
 const processingError = "ログイン処理を完了できませんでした。時間をおいてもう一度お試しください。";
+const logoutError = "ログアウトできませんでした。時間をおいてもう一度お試しください。";
+const suspendedBody = '{"data":{"access":"suspended","publicReason":"学校から利用停止の案内があります。"}}';
+const unauthenticatedBody = '{"error":{"code":"AUTH_REQUIRED"}}';
+
+type MockResponse = { status: number; body: string };
 
 async function submitValidCredentials(page: Page) {
   await page.getByLabel("ログインID").fill("poc_s001");
@@ -10,11 +15,35 @@ async function submitValidCredentials(page: Page) {
   await page.getByRole("button", { name: "ログイン" }).click();
 }
 
-async function mockSuccessfulSignIn(page: Page) {
-  await page.route("**/api/auth/sign-in/username", (route) =>
-    route.fulfill({ status: 200, contentType: "application/json", body: '{"redirect":false,"user":{"id":"user-1"}}' }),
-  );
+/**
+ * 認証成功と、認証後の利用状態APIをモックする。
+ * 入口の表示時の確認（認証前）は 401 を返し、認証後は `me` を返す。
+ */
+async function mockSuccessfulSignIn(page: Page, me?: MockResponse) {
+  let signedIn = false;
+  await page.route("**/api/auth/sign-in/username", (route) => {
+    signedIn = true;
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: '{"redirect":false,"user":{"id":"user-1"}}',
+    });
+  });
+  if (me) {
+    await page.route("**/api/v1/me", (route) =>
+      signedIn
+        ? route.fulfill({ status: me.status, contentType: "application/json", body: me.body })
+        : route.fulfill({ status: 401, contentType: "application/json", body: unauthenticatedBody }),
+    );
+  }
 }
+
+test.beforeEach(async ({ page }) => {
+  // 既定はセッションなし。各テストで後から登録した route が優先される。
+  await page.route("**/api/v1/me", (route) =>
+    route.fulfill({ status: 401, contentType: "application/json", body: unauthenticatedBody }),
+  );
+});
 
 test("未入力と形式違反を項目ごとに案内し、入力値を保つ", async ({ page }) => {
   await page.goto("/login");
@@ -113,10 +142,7 @@ test("送信中は二重送信を防ぎ、入力どおりの値だけを認証AP
 
 for (const target of ["/", undefined, "/not-implemented", "//example.com", "/api/auth/sign-out", "/login"]) {
   test(`activeのとき戻り先 ${target ?? "(未指定)"} を安全に処理する`, async ({ page }) => {
-    await mockSuccessfulSignIn(page);
-    await page.route("**/api/v1/me", (route) =>
-      route.fulfill({ status: 200, contentType: "application/json", body: '{"data":{"access":"active"}}' }),
-    );
+    await mockSuccessfulSignIn(page, { status: 200, body: '{"data":{"access":"active"}}' });
     const query = target === undefined ? "" : `?returnTo=${encodeURIComponent(target)}`;
     await page.goto(`/login${query}`);
     await submitValidCredentials(page);
@@ -126,14 +152,7 @@ for (const target of ["/", undefined, "/not-implemented", "//example.com", "/api
 }
 
 test("suspendedはpublicReasonとログアウトを表示し、ログアウト後にログイン入口へ戻る", async ({ page }) => {
-  await mockSuccessfulSignIn(page);
-  await page.route("**/api/v1/me", (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: '{"data":{"access":"suspended","publicReason":"学校から利用停止の案内があります。"}}',
-    }),
-  );
+  await mockSuccessfulSignIn(page, { status: 200, body: suspendedBody });
   let signOutBody: unknown;
   await page.route("**/api/auth/sign-out", async (route) => {
     signOutBody = route.request().postDataJSON();
@@ -149,14 +168,10 @@ test("suspendedはpublicReasonとログアウトを表示し、ログアウト�
 });
 
 test("ACCOUNT_NOT_READYは利用準備中の案内を同じ入口に表示する", async ({ page }) => {
-  await mockSuccessfulSignIn(page);
-  await page.route("**/api/v1/me", (route) =>
-    route.fulfill({
-      status: 403,
-      contentType: "application/json",
-      body: '{"error":{"code":"ACCOUNT_NOT_READY","message":"private detail"}}',
-    }),
-  );
+  await mockSuccessfulSignIn(page, {
+    status: 403,
+    body: '{"error":{"code":"ACCOUNT_NOT_READY","message":"private detail"}}',
+  });
   await page.goto("/login");
   await submitValidCredentials(page);
 
@@ -166,10 +181,7 @@ test("ACCOUNT_NOT_READYは利用準備中の案内を同じ入口に表示する
 });
 
 test("利用準備中の案内からログアウトしてフォームへ戻れる", async ({ page }) => {
-  await mockSuccessfulSignIn(page);
-  await page.route("**/api/v1/me", (route) =>
-    route.fulfill({ status: 403, contentType: "application/json", body: '{"error":{"code":"ACCOUNT_NOT_READY"}}' }),
-  );
+  await mockSuccessfulSignIn(page, { status: 403, body: '{"error":{"code":"ACCOUNT_NOT_READY"}}' });
   let signOutRequests = 0;
   await page.route("**/api/auth/sign-out", async (route) => {
     signOutRequests += 1;
@@ -191,10 +203,7 @@ for (const me of [
   { name: "未知のaccess", status: 200, body: '{"data":{"access":"unknown"}}' },
 ]) {
   test(`利用状態APIの${me.name}ではセッションを破棄して処理エラーを表示する`, async ({ page }) => {
-    await mockSuccessfulSignIn(page);
-    await page.route("**/api/v1/me", (route) =>
-      route.fulfill({ status: me.status, contentType: "application/json", body: me.body }),
-    );
+    await mockSuccessfulSignIn(page, me);
     let signOutRequests = 0;
     await page.route("**/api/auth/sign-out", async (route) => {
       signOutRequests += 1;
@@ -253,10 +262,7 @@ test("パスワードの文字数は認証サーバーと同じUTF-16単位で�
 });
 
 test("利用状態APIの401では認証エラーとログインフォームを表示する", async ({ page }) => {
-  await mockSuccessfulSignIn(page);
-  await page.route("**/api/v1/me", (route) =>
-    route.fulfill({ status: 401, contentType: "application/json", body: '{"error":{"code":"AUTH_REQUIRED"}}' }),
-  );
+  await mockSuccessfulSignIn(page, { status: 401, body: unauthenticatedBody });
   await page.goto("/login");
   await submitValidCredentials(page);
 
@@ -264,3 +270,98 @@ test("利用状態APIの401では認証エラーとログインフォームを�
   await expect(page.getByLabel("ログインID")).toBeVisible();
   await expect(page).toHaveURL("/login");
 });
+
+test.describe("JavaScriptが動かない状態", () => {
+  test.use({ javaScriptEnabled: false });
+
+  test("フォームを送信しても認証情報をURLに含めない", async ({ page }) => {
+    // 送信先の応答は問わないため、ログイン画面への POST だけを遮断する。
+    await page.route("**/login*", (route) =>
+      route.request().method() === "POST"
+        ? route.fulfill({ status: 200, contentType: "text/html", body: "<!doctype html><title>blocked</title>" })
+        : route.fallback(),
+    );
+    await page.goto("/login");
+    await page.getByLabel("ログインID").fill("poc_s001");
+    await page.getByLabel("パスワード").fill("correct-horse-battery");
+
+    const submitted = page.waitForRequest((request) => request.isNavigationRequest() && request.url().includes("/login"));
+    await page.getByRole("button", { name: "ログイン" }).click();
+    const request = await submitted;
+
+    expect(request.method()).toBe("POST");
+    for (const url of [request.url(), page.url()]) {
+      expect(url).not.toContain("poc_s001");
+      expect(url).not.toContain("correct-horse-battery");
+      expect(url).not.toContain("password");
+    }
+  });
+});
+
+test("停止案内を再読み込みしても、停止理由とログアウトを表示する", async ({ page }) => {
+  await mockSuccessfulSignIn(page, { status: 200, body: suspendedBody });
+  let signOutRequests = 0;
+  await page.route("**/api/auth/sign-out", async (route) => {
+    signOutRequests += 1;
+    await route.fulfill({ status: 200, contentType: "application/json", body: '{"success":true}' });
+  });
+  await page.goto("/login");
+  await submitValidCredentials(page);
+  await expect(page.getByText("学校から利用停止の案内があります。")).toBeVisible();
+
+  // 再読み込み後もセッションが残っている間は、利用状態APIが停止中を返す。
+  await page.reload();
+  await expect(page.getByRole("main").getByRole("status")).toHaveText("このアカウントは利用停止中です。");
+  await expect(page.getByText("学校から利用停止の案内があります。")).toBeVisible();
+  await page.getByRole("button", { name: "ログアウト" }).click();
+  await expect(page.getByLabel("ログインID")).toBeVisible();
+  expect(signOutRequests).toBe(1);
+});
+
+test("既存セッションが利用準備中のときは、入口の表示時に案内とログアウトを表示する", async ({ page }) => {
+  await page.route("**/api/v1/me", (route) =>
+    route.fulfill({ status: 403, contentType: "application/json", body: '{"error":{"code":"ACCOUNT_NOT_READY"}}' }),
+  );
+  await page.goto("/login");
+
+  await expect(page.getByRole("main").getByRole("status")).toHaveText("このアカウントは利用準備中です。");
+  await expect(page.getByRole("button", { name: "ログアウト" })).toBeVisible();
+});
+
+test("既存セッションが有効なときは、入口の表示時に戻り先へ移動する", async ({ page }) => {
+  await page.route("**/api/v1/me", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: '{"data":{"access":"active"}}' }),
+  );
+  await page.goto("/login");
+
+  await expect(page).toHaveURL("/");
+});
+
+for (const signOutFailure of [
+  {
+    name: "非2xx応答",
+    respond: (route: Route) => route.fulfill({ status: 503, contentType: "application/json", body: "{}" }),
+  },
+  { name: "通信失敗", respond: (route: Route) => route.abort() },
+]) {
+  test(`自動ログアウトの${signOutFailure.name}では、エラーとログアウトの再試行を表示する`, async ({ page }) => {
+    await mockSuccessfulSignIn(page, { status: 503, body: '{"error":{"code":"TEMPORARILY_UNAVAILABLE"}}' });
+    let signOutRequests = 0;
+    await page.route("**/api/auth/sign-out", async (route) => {
+      signOutRequests += 1;
+      if (signOutRequests === 1) return signOutFailure.respond(route);
+      await route.fulfill({ status: 200, contentType: "application/json", body: '{"success":true}' });
+    });
+    await page.goto("/login");
+    await submitValidCredentials(page);
+
+    await expect(page.getByRole("main").getByRole("alert")).toHaveText(logoutError);
+    await expect(page.getByLabel("ログインID")).toHaveCount(0);
+
+    // 再試行で失効を確認できたらログインフォームへ戻る。
+    await page.getByRole("button", { name: "ログアウト" }).click();
+    await expect(page.getByLabel("ログインID")).toBeVisible();
+    await expect(page.getByRole("main").getByRole("alert")).toHaveCount(0);
+    expect(signOutRequests).toBe(2);
+  });
+}
