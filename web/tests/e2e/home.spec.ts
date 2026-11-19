@@ -30,11 +30,13 @@ function passwordFor(username: string): string {
  * 失敗時は状態コードだけを報告し、要求本文や応答本文を出さない。
  */
 async function signIn(page: Page, baseURL: string, username: string) {
+  // 認証情報ファイルの不備は通信エラーと区別して報告する（秘密値は含めない）。
+  const password = passwordFor(username);
   let status: number;
   try {
     const response = await page.request.post("/api/auth/sign-in/username", {
       headers: { Origin: canonicalOrigin ?? new URL(baseURL).origin },
-      data: { username, password: passwordFor(username) },
+      data: { username, password },
       failOnStatusCode: false,
     });
     status = response.status();
