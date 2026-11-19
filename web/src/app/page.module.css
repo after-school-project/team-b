@@ -12,5 +12,5 @@
 
 .status {
   margin-top: 2rem;
-  color: var(--muted);
+  color: var(--color-text-muted);
 }

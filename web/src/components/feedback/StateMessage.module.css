@@ -1,0 +1,88 @@
+.state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-6) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  background: var(--color-surface);
+}
+
+.loading {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--color-text-muted);
+}
+
+.loadingLabel {
+  font-size: 16px;
+}
+
+.spinner {
+  width: 20px;
+  height: 20px;
+  border: 3px solid var(--color-border);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: spin 800ms linear infinite;
+}
+
+.empty {
+  align-items: center;
+  text-align: center;
+  background: var(--color-surface);
+}
+
+.error {
+  border-color: var(--color-danger);
+  background: var(--color-danger-bg);
+}
+
+.label {
+  display: inline-block;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-card);
+  color: var(--color-on-primary);
+  background: var(--color-danger);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.title {
+  margin: 0;
+  color: var(--color-heading);
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.error .title {
+  color: var(--color-danger);
+}
+
+.description {
+  color: var(--color-text-muted);
+}
+
+.error .description {
+  color: var(--color-text);
+}
+
+.action {
+  margin-top: var(--space-2);
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (min-width: 768px) {
+  .state {
+    padding: var(--space-8) var(--space-6);
+  }
+}

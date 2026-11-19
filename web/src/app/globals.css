@@ -1,8 +1,60 @@
+/* デザイントークンは docs/DESIGN.md に従う。PoCはライトテーマを基準とし、OS設定で自動的にダークへ切り替えない。 */
 :root {
-  color-scheme: light dark;
-  --background: #fafafa;
-  --foreground: #171717;
-  --muted: #525252;
+  color-scheme: light;
+
+  /* ブランドカラー */
+  --brand-navy: #1c2a54;
+  --brand-blue: #3297ca;
+  --brand-light-blue: #7cbed3;
+  --brand-orange: #e89112;
+
+  /* UI用カラー */
+  --color-bg: #f5f8fc;
+  --color-surface: #ffffff;
+  --color-surface-subtle: #eef5fa;
+  --color-text: #1f2937;
+  --color-text-muted: #526175;
+  --color-heading: #1c2a54;
+  --color-border: #d8e2ec;
+  --color-control-border: #718096;
+  --color-primary: #1c2a54;
+  --color-primary-hover: #152041;
+  --color-on-primary: #ffffff;
+  --color-link: #176b91;
+  --color-focus: #176b91;
+
+  /* 状態カラー */
+  --color-info: #176b91;
+  --color-info-bg: #eaf5fb;
+  --color-success: #166534;
+  --color-success-bg: #ecfdf3;
+  --color-warning: #92400e;
+  --color-warning-bg: #fff7e6;
+  --color-danger: #b42318;
+  --color-danger-bg: #fef3f2;
+  --color-neutral: #526175;
+  --color-neutral-bg: #eef2f6;
+
+  /* 余白・形状 */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-12: 48px;
+  --radius-control: 8px;
+  --radius-card: 5px;
+  --radius-dialog: 16px;
+
+  /* レイアウト */
+  --layout-max-width: 1200px;
+  --control-min-size: 44px;
+  --shadow-floating: 0 8px 24px rgb(28 42 84 / 16%);
+  --duration-fast: 150ms;
+
+  --font-sans:
+    system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Yu Gothic", Meiryo, sans-serif;
 }
 
 * {
@@ -11,16 +63,35 @@
 
 body {
   margin: 0;
-  color: var(--foreground);
-  background: var(--background);
-  font-family: system-ui, "Yu Gothic", Meiryo, sans-serif;
+  color: var(--color-text);
+  background: var(--color-bg);
+  font-family: var(--font-sans);
+  font-size: 16px;
   line-height: 1.7;
+  overflow-wrap: anywhere;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #111111;
-    --foreground: #ededed;
-    --muted: #b0b0b0;
+h1,
+h2,
+h3 {
+  color: var(--color-heading);
+}
+
+a {
+  color: var(--color-link);
+}
+
+:focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
   }
 }
