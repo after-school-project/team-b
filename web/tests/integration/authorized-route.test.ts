@@ -104,6 +104,32 @@ it("未認証・偽Cookie・失効セッションは処理を呼ばずに401 AUT
   expect(handled).not.toHaveBeenCalled();
 });
 
+it("更新は Origin を先に確認し、その後は形式の誤りより先に利用資格で拒否する", async () => {
+  const { route, handled } = businessRoute();
+  const post = (headers: Record<string, string>, query = "") => route.POST(new Request(
+    origin + "/api/v1/sample" + query, { method: "POST", headers, body: JSON.stringify({ message: "本文" }) },
+  ), {}).then(async (response) => ({ status: response.status, code: (await response.json()).error?.code }));
+  const json = { Origin: origin, "Content-Type": "application/json" };
+
+  // 他サイトからの更新は、セッションの有無より先に拒否する。
+  expect(await post({ Origin: "https://evil.example", "Content-Type": "application/json" }))
+    .toEqual({ status: 403, code: "ORIGIN_NOT_ALLOWED" });
+  // 再送キーの欠落・不正、クエリー付き、Content-Type 不正でも、未認証なら 401 を返す。
+  expect(await post(json)).toEqual({ status: 401, code: "AUTH_REQUIRED" });
+  expect(await post({ ...json, "Idempotency-Key": "short" })).toEqual({ status: 401, code: "AUTH_REQUIRED" });
+  expect(await post({ ...json, "Idempotency-Key": randomUUID() }, "?x=1")).toEqual({ status: 401, code: "AUTH_REQUIRED" });
+  expect(await post({ Origin: origin, "Content-Type": "text/plain" })).toEqual({ status: 401, code: "AUTH_REQUIRED" });
+
+  const { cookie } = await logIn("poc_suspended");
+  expect(await post({ ...json, Cookie: cookie })).toEqual({ status: 403, code: "ACCOUNT_SUSPENDED" });
+  // 利用中なら、従来どおり形式の誤りを返す。
+  const active = await logIn("poc_s_mgr");
+  expect(await post({ ...json, Cookie: active.cookie })).toEqual({ status: 400, code: "BAD_REQUEST" });
+  expect(await post({ Origin: origin, "Content-Type": "text/plain", Cookie: active.cookie, "Idempotency-Key": randomUUID() }))
+    .toEqual({ status: 415, code: "UNSUPPORTED_MEDIA_TYPE" });
+  expect(handled).not.toHaveBeenCalled();
+});
+
 it("発行・学校確認未完了は403 ACCOUNT_NOT_READY とし、処理を呼ばない", async () => {
   const { route, handled } = businessRoute();
   const { userId, cookie } = await logIn("poc_staff");

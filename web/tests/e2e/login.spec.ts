@@ -18,6 +18,7 @@ async function submitValidCredentials(page: Page) {
 /**
  * ホームへの移動要求を待つ。ホーム自体はサーバー側の認可で表示可否を判定し、
  * モックした認証では実セッションがないためログイン画面へ戻される。ここでは画面が戻り先へ移動したことだけを確認する。
+ * 実セッションでホームまで表示できることは home.spec.ts で確認する。
  */
 function homeNavigation(page: Page) {
   return page.waitForRequest((request) => request.method() === "GET" && new URL(request.url()).pathname === "/");

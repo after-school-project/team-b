@@ -37,9 +37,19 @@ export function validateMutationRequest(
   method: MutationMethod,
   environment: Parameters<typeof authOrigin>[0],
 ): MutationRequest {
+  validateMutationOrigin(request, environment);
+  return validateMutationInput(request, method);
+}
+
+/** 更新リクエストの送信元を確認する。利用資格の判定より先に行い、他サイトからの更新を拒否する。 */
+export function validateMutationOrigin(request: Request, environment: Parameters<typeof authOrigin>[0]) {
   if (request.headers.get("Origin") !== authOrigin(environment)) {
     throw new ApiError("ORIGIN_NOT_ALLOWED");
   }
+}
+
+/** Origin 確認後の更新リクエストの形式（Content-Type・再送キー・クエリー・パス）を確認する。 */
+export function validateMutationInput(request: Request, method: MutationMethod): MutationRequest {
   requireJson(request);
   const requestKey = request.headers.get("Idempotency-Key") ?? "";
   if (!idempotencyKey.test(requestKey)) throw new ApiError("BAD_REQUEST");
