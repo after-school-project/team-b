@@ -2,6 +2,7 @@ import { getCookies } from "better-auth/cookies";
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { authOrigin, authWebOptions } from "../../src/auth/web-config";
+import { authOptions } from "../../src/auth/options";
 import { createCursorCodec, listPage, parseListQuery } from "../../src/api/pagination";
 import {
   expectedVersion, isoDateTime, longText, maxJsonBytes, normalizedPath, parsePathParams,
@@ -169,6 +170,13 @@ describe("業務 Route Handler", () => {
 });
 
 describe("オリジンとCookie", () => {
+  it("認証セッションを発行から8時間固定とし、自動延長を無効にする", () => {
+    expect(authOptions(undefined).session).toMatchObject({
+      expiresIn: 8 * 60 * 60,
+      disableSessionRefresh: true,
+    });
+  });
+
   it("HTTPSの固定Originを共有し、公開・PreviewでローカルHTTPを拒否する", () => {
     expect(authOrigin({ ...environment, BETTER_AUTH_URL: origin + "/" })).toBe(origin);
     for (const invalid of [
