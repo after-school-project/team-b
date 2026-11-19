@@ -111,7 +111,11 @@ async function requestSignOut(): Promise<boolean> {
 
 export default function LoginForm({ returnTo }: LoginFormProps) {
   const router = useRouter();
-  const submitting = useRef(false);
+  /**
+   * ログインまたはログアウトの要求が進行中か。両方を同時に進めると、先に送ったログアウトの応答で
+   * 直後のログインのセッション Cookie が失効するため、どちらか一方だけを進める。
+   */
+  const authRequestInFlight = useRef(false);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [passwordVisible, setPasswordVisible] = useState(false);
@@ -163,13 +167,13 @@ export default function LoginForm({ returnTo }: LoginFormProps) {
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (submitting.current) return;
+    if (authRequestInFlight.current) return;
     const errors = validate(username, password);
     setFieldErrors(errors);
     setFormError("");
     if (Object.keys(errors).length > 0) return;
 
-    submitting.current = true;
+    authRequestInFlight.current = true;
     // 確認中の結果で、これから行うログインの結果を上書きしない。認証に失敗したら確認をやり直す。
     const interruptedCheck = sessionCheck.current !== null;
     sessionCheck.current?.abort();
@@ -243,11 +247,13 @@ export default function LoginForm({ returnTo }: LoginFormProps) {
         failBeforeSignIn(processingError);
       }
     } finally {
-      submitting.current = false;
+      authRequestInFlight.current = false;
     }
   }
 
   async function signOut() {
+    if (authRequestInFlight.current) return;
+    authRequestInFlight.current = true;
     setLoggingOut(true);
     setFormError("");
     try {
@@ -262,6 +268,7 @@ export default function LoginForm({ returnTo }: LoginFormProps) {
       setView("form");
       router.replace("/login");
     } finally {
+      authRequestInFlight.current = false;
       setLoggingOut(false);
     }
   }
@@ -289,6 +296,8 @@ export default function LoginForm({ returnTo }: LoginFormProps) {
 
   const fieldErrorCount = Object.values(fieldErrors).filter(Boolean).length;
   const checking = view === "checking";
+  // ログアウトの完了まではフォームも操作できないようにする。
+  const formLocked = checking || loggingOut;
 
   return (
     <main className={styles.page}>
@@ -355,7 +364,7 @@ export default function LoginForm({ returnTo }: LoginFormProps) {
                   value={username}
                   aria-invalid={Boolean(fieldErrors.username)}
                   aria-describedby={fieldErrors.username ? "username-error" : undefined}
-                  disabled={checking}
+                  disabled={formLocked}
                   onChange={(event) => {
                     setUsername(event.target.value);
                     setFieldErrors((current) => ({ ...current, username: undefined }));
@@ -382,7 +391,7 @@ export default function LoginForm({ returnTo }: LoginFormProps) {
                     value={password}
                     aria-invalid={Boolean(fieldErrors.password)}
                     aria-describedby={fieldErrors.password ? "password-error" : undefined}
-                    disabled={checking}
+                    disabled={formLocked}
                     onChange={(event) => {
                       setPassword(event.target.value);
                       setFieldErrors((current) => ({ ...current, password: undefined }));
@@ -392,7 +401,7 @@ export default function LoginForm({ returnTo }: LoginFormProps) {
                     className={styles.toggleButton}
                     type="button"
                     aria-controls="password"
-                    disabled={checking}
+                    disabled={formLocked}
                     onClick={() => setPasswordVisible((visible) => !visible)}
                   >
                     {passwordVisible ? "非表示" : "表示"}
@@ -411,7 +420,7 @@ export default function LoginForm({ returnTo }: LoginFormProps) {
                 </p>
               )}
   
-              <button className={styles.primaryButton} type="submit" disabled={checking}>
+              <button className={styles.primaryButton} type="submit" disabled={formLocked}>
                 {checking ? "確認中..." : "ログイン"}
               </button>
             </form>

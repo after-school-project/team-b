@@ -436,3 +436,43 @@ for (const status of [401, 429]) {
     releaseFirstCheck();
   });
 }
+
+test("ログアウトの処理中はログインを送信せず、完了後に送信できる", async ({ page }) => {
+  await page.route("**/api/v1/me", (route) => route.abort());
+  let releaseSignOut = () => {};
+  const signOutReleased = new Promise<void>((resolve) => {
+    releaseSignOut = resolve;
+  });
+  await page.route("**/api/auth/sign-out", async (route) => {
+    await signOutReleased;
+    await route.fulfill({ status: 200, contentType: "application/json", body: '{"success":true}' });
+  });
+  let signInRequests = 0;
+  await page.route("**/api/auth/sign-in/username", (route) => {
+    signInRequests += 1;
+    return route.fulfill({ status: 401, contentType: "application/json", body: "{}" });
+  });
+  await page.goto("/login");
+  await expect(page.getByRole("main").getByRole("status")).toHaveText("利用状態を確認できませんでした。");
+  await page.getByLabel("ログインID").fill("poc_s001");
+  await page.getByLabel("パスワード").fill("correct-horse-battery");
+
+  await page.getByRole("button", { name: "ログアウト" }).click();
+  await expect(page.getByRole("button", { name: "ログアウト中..." })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "ログイン", exact: true })).toBeDisabled();
+  await expect(page.getByLabel("ログインID")).toBeDisabled();
+  await expect(page.getByLabel("パスワード")).toBeDisabled();
+  // ボタンの無効化に頼らず、フォーム送信を直接実行しても認証APIへ送らないことを確認する。
+  await page.locator("form").evaluate((form: HTMLFormElement) => form.requestSubmit());
+  expect(signInRequests).toBe(0);
+
+  releaseSignOut();
+  await expect(page.getByRole("main").getByRole("status")).toHaveCount(0);
+  await expect(page.getByLabel("ログインID")).toBeEnabled();
+  expect(signInRequests).toBe(0);
+
+  // ログアウト完了後は通常どおり送信できる。
+  await submitValidCredentials(page);
+  await expect(page.getByRole("main").getByRole("alert")).toHaveText(authenticationError);
+  expect(signInRequests).toBe(1);
+});
