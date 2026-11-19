@@ -16,14 +16,54 @@ export const { GET, HEAD, OPTIONS, POST, PUT, DELETE, PATCH } = defineApiRoute({
 
 - `Allow` には対象ルートで定義した業務メソッドが入ります。Next.jsが対応する7メソッドが業務APIの405の適用範囲です。`HEAD` のHTTP応答には本文が付きません。
 - `parsePathParams` にNext.jsのデコード済みパス変数とIDのスキーマを渡します。クエリーは `parseQuery` で検証します。
-- 更新のOrigin、Content-Type、再送キーはRoute Handlerの共通処理が確認します。本文は `readJson` で読み、入れ子の各オブジェクトに `z.strictObject` を使います。DB保存と再送照合には、検証・正規化した値を渡します。`isoDateTime` はISO 8601の入力をUTCへ正規化します。
+- 更新のOrigin、Content-Type、再送キーはRoute Handlerの共通処理が確認します。確認の順序は[ログイン後の業務API](#ログイン後の業務api)を参照してください。本文は `readJson` で読み、入れ子の各オブジェクトに `z.strictObject` を使います。DB保存と再送照合には、検証・正規化した値を渡します。`isoDateTime` はISO 8601の入力をUTCへ正規化します。
 - タイトルと本文には `title`・`longText`・`shortText` を使います。NUL（U+0000）や単独のUTF-16サロゲートを含む値には、該当フィールドを示す422を返します。
 - 一覧は `parseListQuery` で絞り込みを検証し、認証済み利用者、一覧の識別子、正規化済み条件、並び順を `createCursorCodec` に渡します。署名には環境ごとの `BETTER_AUTH_SECRET` を使用します。毎ページで現在の認可を適用し、同じ絞り込みと認可条件で件数を数えます。`limit + 1` 件まで読み込み、`listPage` で次ページの情報を生成します。
 
+## ログイン後の業務API
+
+ログイン後に使う業務API（停止中は利用できないもの）は、`defineApiRoute` ではなく [`defineAuthorizedApiRoute`](../../web/src/api/authorized-route.ts) で定義します。各処理の前に [共通認可サービス](../../web/src/auth/access.ts) でセッション、発行・学校確認、停止を判定し、処理にはDBから読んだ最新の `Viewer` を渡します。操作者ID・所属・権限はリクエストの値から受け取らず、`viewer` を使います。[共通認可条件表](../After_School_Project_PoC_共通認可条件表_v0.1.md)
+
+```ts
+import { defineAuthorizedApiRoute } from "@/api/authorized-route";
+import { commitMutation } from "@/api/mutation";
+import { readJson } from "@/api/request";
+import { authorizeActiveEntry } from "@/auth/access";
+import { db } from "@/db/client";
+
+export const { GET, HEAD, OPTIONS, POST, PUT, DELETE, PATCH } = defineAuthorizedApiRoute({
+  GET: (request, context, viewer) => ({ data: { userId: viewer.userId } }),
+  async POST(request, context, viewer, input) {
+    const body = await readJson(request, schema);
+    return commitMutation(db, {
+      actorId: viewer.userId,
+      request: input,
+      body,
+      authorizeEntry: authorizeActiveEntry(viewer.userId),
+      authorizeReplay: async (context, original) => { /* 保存結果に対する現在の権限を確認する */ },
+      execute: async ({ tx, now }) => { /* 対象への権限確認、版番号の比較、更新 */ },
+    });
+  },
+});
+```
+
+- `GET` の処理は `(request, context, viewer)`、`POST`・`PATCH` の処理は `(request, context, viewer, input)` を受け取ります。`input` は `defineApiRoute` の更新情報と同じです。
+- 判定結果に応じて、次の応答を返します。いずれの場合も業務処理は呼ばれず、停止理由や業務データは返しません。
+
+  | 状態 | 応答 |
+  |---|---|
+  | セッションがない・失効・不正 | 401 `AUTH_REQUIRED` |
+  | 発行・学校確認が未完了 | 403 `ACCOUNT_NOT_READY` |
+  | 停止中 | 403 `ACCOUNT_SUSPENDED` |
+
+- 更新は、Origin、利用資格、形式（Content-Type・`Idempotency-Key`・クエリー・パス）の順に確認します。他サイトからの更新は、セッションの有無より先に403 `ORIGIN_NOT_ALLOWED` で拒否します。未認証・利用資格なしの更新は、形式の誤りより先に401・403で拒否します。`defineApiRoute` は利用資格を判定せず、Originの後に形式を確認します。
+- プロフィール状態・所属・管理権限・所有者・対象状態による制限は、渡された `viewer` と対象の最新状態で各処理が判定します。
+- `defineApiRoute` を直接使うのは、利用資格によらず応答を返す必要があるAPIだけです。たとえば利用状態取得（`GET /api/v1/me`）は、停止中も本人向けの案内を200で返すため `defineApiRoute` を使います。
+
 ## 更新と再送
 
-1. セッションから得た操作者ID、Route Handlerが渡した更新情報、検証済みJSONを `commitMutation(db, …)` へ渡します。
-2. `resolveUserIds` で今回の操作に必要な利用者IDを列挙します。操作者を含む利用者行のロック取得後、`authorizeEntry` で最新の入口資格を確認します。対象の存在・状態・権限は、ロック取得後の `execute` または `authorizeReplay` で判定します。
+1. `viewer.userId`（セッションから得た操作者ID）、Route Handlerが渡した更新情報、検証済みJSONを `commitMutation(db, …)` へ渡します。
+2. `resolveUserIds` で今回の操作に必要な利用者IDを列挙します。操作者を含む利用者行のロック取得後、`authorizeEntry` で最新の入口資格を確認します。ログイン後の業務APIでは `authorizeActiveEntry(viewer.userId)` を渡し、Route Handlerの入口での判定後に停止された場合も行ロック後に拒否します。プロフィール非表示中の新規投稿・既存編集を拒否する操作では `authorizeActiveEntry(viewer.userId, { profileWritable: true })` を渡します。対象の存在・状態・権限は、ロック取得後の `execute` または `authorizeReplay` で判定します。
 3. `targets` で対象行を列挙します。ロック順は本体、申請、案件の順で、各分類ではテーブル名とIDの昇順です。確定済みの再送なら `authorizeReplay` で保存結果に対する現在の権限と閲覧期限を確認します。
 4. 新しい操作は `execute` 内で対象への操作権限を確認し、`assertExpectedVersion` で版番号を比較します。権限判定に必要な利用者が追加で判明したら `requireLockedUsers` を呼び、ロックの取得をやり直します。期限判定、更新、通知・履歴・監査にはロック取得後のDB時刻 `now` と同じ `tx` を使います。
 5. `commitMutation` は業務変更と確定済み操作記録を同時に保存します。戻り値はRoute Handlerからそのまま返せます。通報受付のような専用形式では、`data` を設計書の公開DTOに変換します。
