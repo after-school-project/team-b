@@ -2,7 +2,7 @@ import { validateMutationRequest, type MutationRequest } from "./request";
 import { ApiError, createApiResponse, type PageInfo, type SuccessStatus } from "./response";
 
 type Method = "GET" | "HEAD" | "OPTIONS" | "POST" | "PUT" | "DELETE" | "PATCH";
-type HandlerResult = { data: unknown; status?: SuccessStatus; page?: PageInfo; replayed?: true };
+export type HandlerResult = { data: unknown; status?: SuccessStatus; page?: PageInfo; replayed?: true };
 type Handler<Context, Extra extends unknown[] = []> =
   (request: Request, context: Context, ...extra: Extra) => HandlerResult | Promise<HandlerResult>;
 type Handlers<Context> = Partial<{
