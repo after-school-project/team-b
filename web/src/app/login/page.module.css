@@ -1,0 +1,204 @@
+/* ログイン画面（AU-01）。docs/DESIGN.md §8.2・§9.1 に従う。 */
+
+.page {
+  display: grid;
+  min-height: 100vh;
+  min-height: 100dvh;
+  place-items: center;
+  padding: var(--space-8) var(--space-4);
+}
+
+.card {
+  width: 100%;
+  max-width: 440px;
+  padding: var(--space-8) var(--space-6);
+  border: 1px solid var(--color-border);
+  border-top: 4px solid var(--brand-navy);
+  border-radius: var(--radius-card);
+  background: var(--color-surface);
+}
+
+.brand {
+  margin-bottom: var(--space-6);
+}
+
+.appName {
+  display: inline-block;
+  margin: 0 0 var(--space-2);
+  padding-bottom: var(--space-1);
+  border-bottom: 2px solid var(--brand-orange);
+  color: var(--color-heading);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+.title {
+  margin: 0;
+  font-size: 24px;
+  line-height: 1.4;
+}
+
+.lead {
+  margin: var(--space-2) 0 0;
+  color: var(--color-text-muted);
+  font-size: 14px;
+}
+
+.form,
+.notice {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: 600;
+}
+
+.required {
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-card);
+  color: var(--color-danger);
+  background: var(--color-danger-bg);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.6;
+}
+
+.passwordRow {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.input {
+  flex: 1;
+  min-width: 0;
+  min-height: var(--control-min-size);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-control-border);
+  border-radius: var(--radius-control);
+  color: var(--color-text);
+  background: var(--color-surface);
+  font: inherit;
+}
+
+.input[aria-invalid="true"] {
+  border-color: var(--color-danger);
+}
+
+.input:disabled {
+  background: var(--color-neutral-bg);
+}
+
+.fieldError {
+  margin: 0;
+  color: var(--color-danger);
+  font-size: 14px;
+}
+
+.summary,
+.formError {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius-card);
+  color: var(--color-danger);
+  background: var(--color-danger-bg);
+  font-size: 14px;
+}
+
+.primaryButton,
+.secondaryButton,
+.toggleButton {
+  min-height: var(--control-min-size);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-control);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color var(--duration-fast);
+}
+
+.primaryButton {
+  border: 1px solid var(--color-primary);
+  color: var(--color-on-primary);
+  background: var(--color-primary);
+}
+
+.primaryButton:hover:not(:disabled) {
+  background: var(--color-primary-hover);
+}
+
+.secondaryButton,
+.toggleButton {
+  border: 1px solid var(--color-control-border);
+  color: var(--color-primary);
+  background: var(--color-surface);
+}
+
+.secondaryButton:hover:not(:disabled),
+.toggleButton:hover:not(:disabled) {
+  background: var(--color-surface-subtle);
+}
+
+.toggleButton {
+  flex: none;
+  min-width: 5em;
+}
+
+.primaryButton:disabled,
+.secondaryButton:disabled,
+.toggleButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.primaryButton:focus-visible,
+.secondaryButton:focus-visible,
+.toggleButton:focus-visible,
+.input:focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.noticeTitle {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-left: 4px solid var(--color-warning);
+  background: var(--color-warning-bg);
+  font-size: 18px;
+  line-height: 1.5;
+}
+
+.reason {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+/* 利用状態を確認できない場合に、フォームの上へ出すログアウトの案内。 */
+.sessionNotice {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-bottom: var(--space-6);
+  padding-bottom: var(--space-6);
+  border-bottom: 1px solid var(--color-border);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .primaryButton,
+  .secondaryButton,
+  .toggleButton {
+    transition: none;
+  }
+}
