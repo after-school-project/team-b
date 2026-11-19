@@ -29,6 +29,7 @@ GitHub用の定義は[Issueフォーム](./.github/ISSUE_TEMPLATE/)と[PRテン�
 - ブランチ名は`<type>/<Issue番号>-<変更の要約>`を基本とします。例：`feat/12-login`、`fix/15-login-redirect`。
 - `<type>`は[コミットメッセージ](#commit-messages)と同じ種別（`feat`、`fix`、`docs`、`refactor`、`test`、`chore`）から選びます。
 - ブランチ名の要約は、短い英小文字とハイフンで記載します。
+- 関連Issueがない場合は、Issue番号を省略して`<type>/<変更の要約>`とします。例：`docs/branch-naming-convention`。
 - `main`への直接Pushは原則行いません。
 
 <a id="commit-messages"></a>
