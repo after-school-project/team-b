@@ -22,6 +22,10 @@ type: #Issue番号 変更内容
 
 `type`は[コミットメッセージの種類](../../CONTRIBUTING.md#commit-messages)と同じ分類（`feat`、`fix`、`docs`、`refactor`、`test`、`chore`）を使用します。各コミットではIssue番号は任意ですが、PRタイトルには関連Issueの番号を記載します。関連Issueがない場合は、Issue番号を省略して`type: 変更内容`とし、本文に関連Issueがないことを記載します。
 
+PRをマージすると、マージコミットの本文にPRタイトルが入ります。そのため、`fix: #15 …` のタイトルのPRをマージすると、#15 は自動でクローズされます。Issueの一部だけを対応するPRで`type`が`fix`の場合は、例外として`fix: 変更内容 (#Issue番号)`とし、本文の関連Issueには`Related: #Issue番号`を使ってください。
+
+Issueの一部だけを対応するPRは、`type`にかかわらず、右側の **Development** にIssueを紐づけず、本文の`Related: #Issue番号`で関連を示します。Developmentに紐づけたIssueはマージ時にクローズされます。
+
 ## 3. PR本文の書き方
 
 PR作成時には[PRテンプレート](../../.github/pull_request_template.md)が本文へ自動表示されます。説明コメントを参考に内容を記入します。自動表示されない場合は、テンプレートの内容をコピーして使用できます。
@@ -60,7 +64,7 @@ Issueには着手時点で合意する受入条件と確認方法、PRには実�
 | **Labels** | 変更内容に合わせて設定します。 |
 | **Projects** | チームのGitHub Projectを設定します。 |
 | **Milestone** | 使用する場合のみ、対象Sprintを設定します。 |
-| **Development** | 関連Issueを紐づけます。 |
+| **Development** | 関連Issueを紐づけます。Issueの一部だけを対応するPRでは紐づけません（[2節](#2-prタイトルの付け方)）。 |
 
 ## 5. レビュー・マージ
 
