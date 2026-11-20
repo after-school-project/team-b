@@ -101,7 +101,9 @@ After School Project は、学校・在校生・卒業生をつなぐコミュ�
   - コミット: `type: 変更内容`
   - PR タイトル: `type: #Issue番号 変更内容`
   - 関連 Issue がない場合は、ブランチとタイトルの Issue 番号を省略する。
-  - `fix` の直後に `#Issue番号` を書くと、`main` への反映時に Issue が自動でクローズされる。Issue の一部だけを対応する場合、コミットと PR タイトルは `fix: 変更内容 (#Issue番号)` とし、PR は Development に紐づけず本文に `Related: #Issue番号` を書く。Issue を完了させる PR だけを Development に紐づける。[Issue のクローズ](CONTRIBUTING.md#closing-issues)
+  - `fix` の直後に `#Issue番号` を書くと、`main` への反映時に Issue が自動でクローズされる。コミットの Issue 番号は任意で、`fix` のコミットで書く場合は `fix: 変更内容 (#Issue番号)` とする。
+  - PR タイトルは、Issue の一部だけを対応し種別が `fix` の場合に限り `fix: 変更内容 (#Issue番号)` とする。その他の種別は通常の形式のまま。
+  - Issue を完了させる PR だけを Development に紐づける。一部だけを対応する PR は種別にかかわらず紐づけず、本文に `Related: #Issue番号` を書く。[Issue のクローズ](CONTRIBUTING.md#closing-issues)
 - PR 本文は [PR テンプレート](.github/pull_request_template.md) に沿って、受入条件に対応する確認内容と結果を記載し、未実施の項目には理由を添える。
 - 公開版からの差分はパス単位で判定される。現行ルールではルートの `AGENTS.md` もデプロイ判定の対象。公開確認を行う場合は GitHub Actions の要求結果に加え、Vercel で対象 SHA の `Ready` と公開反映を確認する。[Vercel デプロイ制御](docs/development/vercel-deployment.md) · [品質チェックと PoC 公開環境](docs/development/quality-and-poc.md)
 
