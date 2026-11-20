@@ -177,11 +177,13 @@ displayNameは前後空白除去後1〜50文字、改行なし。booleanを文�
 
 | API ID | メソッド・絶対パス | 入力・戻り値 | 認可・画面 |
 |---|---|---|---|
-| API-AUTH-01 | POST `/api/auth/sign-in/username` | SDKのusername・password。成功時に認証Cookie、SDKのセッション結果 | AU-01。未発行・パスワード不一致の画面表示を統一 |
-| API-AUTH-02 | GET `/api/auth/get-session` | SDKのSessionまたはnull。業務APIの成功・エラー形式へ変換しない | AU-01。アプリの利用資格は続けてAPI-COM-01で確認 |
-| API-AUTH-03 | POST `/api/auth/sign-out` | SDKのログアウト結果とCookie失効 | 停止中も呼出可能 |
+| API-AUTH-01 | POST `/api/auth/sign-in/username` | `{username,password}`。成功時は認証Cookieと `{redirect:false,user:{id}}` | AU-01。未発行・パスワード不一致は同じ401と同じ本文 |
+| API-AUTH-02 | GET `/api/auth/get-session` | `{session:{expiresAt},user:{id}}` または `null`。業務APIの成功・エラー形式へ変換しない | AU-01。アプリの利用資格は続けてAPI-COM-01で確認 |
+| API-AUTH-03 | POST `/api/auth/sign-out` | `{}`。成功時は `{success:true}` とCookie失効 | 停止中も呼出可能 |
 | API-COM-01 | GET `/me` | `MeState` | 認証済み本人。停止案内に必要な最小情報を取得 |
 | API-COM-02 | GET `/home` | `Home` | 非停止の利用資格確認済み利用者。GE-01 |
+
+認証APIの応答は、HTTP入口で上表の項目だけに絞る。SDKが返すセッショントークン（`token`・`session.token`）は応答に含めず、Cookieの設定だけを維持する。エラーは `{code}` だけを返し、401は `INVALID_USERNAME_OR_PASSWORD`、429は `RATE_LIMITED` と `Retry-After`（固定版SDKの `X-Retry-After` の値を移す）、許可したOrigin以外からのPOSTは403 `ORIGIN_NOT_ALLOWED`、上表以外の経路は404 `NOT_FOUND`、その他の失敗は `AUTH_REQUEST_FAILED` とする。応答は `Cache-Control: no-store` とする。実装は `web/src/auth/http.ts`。
 
 `MeState`は次のいずれか。発行未完了・学校確認未完了は403 ACCOUNT_NOT_READY、セッションなしは401。
 
