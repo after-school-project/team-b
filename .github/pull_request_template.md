@@ -1,4 +1,6 @@
 <!-- タイトルは type: #Issue番号 変更内容 の形式で記載します。関連 Issue がない場合は type: 変更内容 とします。 -->
+<!-- Issue の一部だけを対応する fix の PR は、自動クローズを避けるため fix: 変更内容 (#Issue番号) とします。 -->
+<!-- Issue を完了させる PR は Development に Issue を紐づけます。一部だけを対応する PR は紐づけず、本文に Related: #Issue番号 を記載します。 -->
 <!-- 書き方は docs/development/pull-request-guide.md を参照してください。 -->
 
 ## 概要
@@ -47,7 +49,7 @@
 ## PR作成前チェックリスト
 
 - [ ] PRタイトルの命名ルールを守っている
-- [ ] 関連Issueを紐づけている
+- [ ] 関連Issueを紐づけている（Issueを完了させるPRはDevelopmentに紐づけ、一部だけを対応するPRは本文に `Related: #Issue番号` を記載）
 - [ ] 不要なファイルが含まれていない
 - [ ] パスワード・APIキーなどの機密情報を含めていない
 - [ ] 必要な動作確認を実施した

@@ -63,8 +63,15 @@ docs: Issue作成ガイドのテンプレートと記入例を改善
 - 1コミットは、関連する1つの変更を目安にします。
 - 変更理由の補足が必要な場合は、先頭行の後に空行を挟み、本文へ記載します。
 - Issue番号はPRタイトルで必須とし、各コミットでは任意にします。
-- GitHubは、`fix`・`fixes`・`close`・`resolve` などの直後にIssue番号があると、`main`への反映時にそのIssueを自動でクローズします（コロンがあっても同じです）。`fix`のコミットでIssue番号を書く場合は、`fix: 停止中の更新を拒否する (#7)` のように説明の後ろに書き、`fix: #7 …` とは書かないでください。
-- Issueは、受入条件の確認結果をIssueのチェック欄へ反映してから手動でクローズします。
+- `main`に入るコミットメッセージの中で、`fix`・`fixes`・`close`・`resolve` などの直後にIssue番号があると、GitHubはそのIssueを自動でクローズします（コロンがあっても同じです）。`fix`のコミットでIssue番号を書く場合は、`fix: 停止中の更新を拒否する (#7)` のように説明の後ろに書き、`fix: #7 …` とは書かないでください。
+
+<a id="closing-issues"></a>
+
+### Issueのクローズ
+
+- Issueは受入条件をすべて満たしたときにクローズします。
+- Issueを完了させるPRでは、マージ前に受入条件の確認結果をIssueのチェック欄へ反映し、PRの **Development** にIssueを紐づけます。マージ時にIssueが自動でクローズされます。
+- Issueの一部だけを対応するPRでは、IssueをDevelopmentに紐づけず、本文の`Related: #Issue番号`で関連を示します。タイトルの書き方は[PR作成ガイド](./docs/development/pull-request-guide.md#2-prタイトルの付け方)を参照してください。Issueは、残りを完了させる最後のPRで上記の手順によりクローズします。
 
 <a id="review-and-merge"></a>
 
