@@ -36,7 +36,7 @@ docker compose exec app cat /app/.seed/accounts.json
 ```
 
 PostgreSQL のデータと開発用パスワードは名前付きボリュームに保存されます。通常の再起動では既存アカウント・権限・パスワードが維持されます。
-ログイン画面と業務機能はロードマップの後続工程です。
+[http://localhost:3000/login](http://localhost:3000/login) から上記のアカウントでログインできます。ホームと各業務機能はロードマップの後続工程です。
 
 ## 停止と確認
 
