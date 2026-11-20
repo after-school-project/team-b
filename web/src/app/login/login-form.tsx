@@ -427,6 +427,10 @@ export default function LoginForm({ returnTo }: LoginFormProps) {
             </form>
           </>
         )}
+
+        <p className={styles.contact}>
+          パスワードを忘れた場合やログインできない場合は、開発担当へ連絡してください。
+        </p>
       </div>
     </main>
   );

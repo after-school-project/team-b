@@ -54,6 +54,18 @@ test.beforeEach(async ({ page }) => {
   );
 });
 
+const contactNotice = "パスワードを忘れた場合やログインできない場合は、開発担当へ連絡してください。";
+
+test("再発行の連絡先案内をフォームと停止時の案内の両方に表示する", async ({ page }) => {
+  await mockSuccessfulSignIn(page, { status: 200, body: suspendedBody });
+  await page.goto("/login");
+  await expect(page.getByText(contactNotice)).toBeVisible();
+
+  await submitValidCredentials(page);
+  await expect(page.getByText("学校から利用停止の案内があります。")).toBeVisible();
+  await expect(page.getByText(contactNotice)).toBeVisible();
+});
+
 test("未入力と形式違反を項目ごとに案内し、入力値を保つ", async ({ page }) => {
   await page.goto("/login");
 

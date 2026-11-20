@@ -8,7 +8,7 @@ import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { seedDevelopmentData } from "../../scripts/development-seed";
 import { migrateDatabase } from "../../scripts/lib/database-management";
 import { GET, POST } from "../../src/app/api/auth/[...auth]/route";
-import { getAuthSession } from "../../src/auth/server";
+import { getAuthSession, loginRateLimit } from "../../src/auth/server";
 import { isolatedDatabase } from "./isolated-database";
 
 const origin = "https://school.example";
@@ -130,7 +130,7 @@ it.each(["連続", "同時"])("同一IPから異なる架空アカウントが4�
   }
 });
 
-it("資格情報の失敗を同一応答にし、同一IPの31件目はRetry-After付きの429を返す", async () => {
+it("資格情報の失敗を同一応答にし、同一IPで上限を超えるとRetry-After付きの429を返す", async () => {
   const ip = "192.0.2.11";
   const wrongPassword = randomBytes(18).toString("hex");
   const missing = await send(loginPath, { ip, body: { username: "missing_id", password: wrongPassword } });
@@ -141,7 +141,7 @@ it("資格情報の失敗を同一応答にし、同一IPの31件目はRetry-Aft
   expect(missing.headers.getSetCookie()).toHaveLength(0);
   expect(wrong.headers.getSetCookie()).toHaveLength(0);
   const body = { username: "missing_id", password: wrongPassword };
-  for (let accepted = 2; accepted < 30; accepted++) {
+  for (let accepted = 2; accepted < loginRateLimit.max; accepted++) {
     expect((await send(loginPath, { ip, body })).status).toBe(401);
   }
   const limited = await send(loginPath, { ip, body });
@@ -149,9 +149,9 @@ it("資格情報の失敗を同一応答にし、同一IPの31件目はRetry-Aft
   expect(limited.headers.get("Retry-After")).toMatch(/^\d+$/);
   expect(limited.headers.getSetCookie()).toHaveLength(0);
   expect((await target.client.query(
-    "SELECT 1 FROM rate_limit WHERE key LIKE $1 AND count = 30", ["%192.0.2.11%"],
+    "SELECT 1 FROM rate_limit WHERE key LIKE $1 AND count = $2", ["%192.0.2.11%", loginRateLimit.max],
   )).rowCount).toBe(1);
-});
+}, 120_000); // 上限まで1件ずつパスワード照合を行うため、既定の15秒では足りない。
 
 it.each([null, "https://other.example", "https://school.example/"])(
   "Cookieのない初回ログインでも正規Originと完全一致しなければ拒否する (%s)",

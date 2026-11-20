@@ -7,6 +7,13 @@ import * as schema from "@/db/auth-schema";
 import { authOptions } from "./options";
 import { authWebOptions } from "./web-config";
 
+/**
+ * Login attempts allowed per client IP. School NATs put about 300 students and alumni on one IP,
+ * so the limit lets all of them sign in within one minute. Issued passwords are 144-bit random
+ * values, so a higher limit does not make online guessing practical.
+ */
+export const loginRateLimit = { window: 60, max: 300 } as const;
+
 const loginBody = z.strictObject({
   username: z.string().regex(/^[a-z0-9_]{3,30}$/),
   password: z.string().min(12).max(128),
@@ -23,8 +30,7 @@ async function createAuthServer() {
     rateLimit: {
       ...options.rateLimit,
       customRules: {
-        // 共用回線での検証用暫定値。PoCの正式な上限はチームで決定する。
-        "/sign-in/username": { window: 10, max: 30 },
+        "/sign-in/username": loginRateLimit,
       },
     },
     // SDK database errors may contain SQL parameters with authentication secrets.
