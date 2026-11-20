@@ -130,7 +130,7 @@ erDiagram
 | report_actions | id、case_id FK、actor_id FK、action_type、before_state、after_state、note、created_at | 状態・優先度・担当・引継ぎ・措置の追記履歴。自動引継ぎにも契機を記録 |
 | evidence_snapshots | id、target_id FK、source_revision、snapshot JSONB、captured_at | 通報対象の必要な表示内容を別保全。通報受領時と証拠に関係する更新・削除前に保存。本人確認情報を公開内容のスナップショットへ混ぜない |
 | report_case_evidence | case_id FK、evidence_id FK、PRIMARY KEY(case_id, evidence_id) | 同じ証拠と複数案件の関係を保持。関連する最後の案件の終了時刻から保存期限を算出 |
-| notifications | id、recipient_id FK、kind、qa_question_id／qa_response_id／notice_request_id／event_request_id／profile_review_id／profile_user_idの各nullable FK、event_key、public_message、read_at nullable、created_at | kindに対応する対象参照を1つだけ設定。event_keyは `<kind>:<対象ID>:<契機ID>`（契機IDは回答・審査など通知のきっかけになったレコードのID）とし、同じ対象への再通知を区別する。UNIQUE(recipient_id, event_key)。送信者ではなく受信者が既読更新。未読件数も最新の認可を適用 |
+| notifications | id、recipient_id FK、kind、qa_question_id／qa_response_id／notice_request_id／event_request_id／profile_review_id／profile_user_idの各nullable FK、event_key、public_message、read_at nullable、created_at | kindに対応する対象参照を1つだけ設定。event_keyは `<kind>:<対象ID>:<契機ID>`（`<kind>` はこの表のkindの値、契機IDは回答・審査など通知のきっかけになったレコードのID）とし、同じ対象への再通知を区別する。この形式は#47の通知記録の共通処理から適用し、既存の開発用seedの2要素のキーも#47で共通処理に合わせて更新する。UNIQUE(recipient_id, event_key)。送信者ではなく受信者が既読更新。未読件数も最新の認可を適用 |
 | audit_logs | id、actor_id nullable FK、system_action、action_type、target_type、target_id、before_state、after_state、public_reason、created_at | 操作と対象を記録。対象削除後も対象IDを保持するため、target_idは削除連鎖の対象にしない。秘密値・投稿本文・非公開本人確認情報をコピーしない |
 | operation_receipts | id、actor_id FK、request_key、request_hash、result_type、result_id、created_at | UNIQUE(actor_id, request_key)。同一キー・同一内容の再送は重複処理せず、結果参照を現在の権限で返す。異なる内容の同一キーは409相当 |
 

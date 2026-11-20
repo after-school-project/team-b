@@ -130,7 +130,16 @@ it.each(["連続", "同時"])("同一IPから異なる架空アカウントが4�
   }
 });
 
-it("資格情報の失敗を同一応答にし、同一IPで上限を超えるとRetry-After付きの429を返す", async () => {
+it("資格情報の失敗を同一応答にし、同一IPで上限を超えると429を返し、時間窓が過ぎると解除する", async () => {
+  vi.useFakeTimers({ toFake: ["Date"], now: Date.now() });
+  try {
+    await expectLoginLimit();
+  } finally {
+    vi.useRealTimers();
+  }
+}, 120_000); // 上限まで1件ずつパスワード照合を行うため、既定の15秒では足りない。
+
+async function expectLoginLimit() {
   const ip = "192.0.2.11";
   const wrongPassword = randomBytes(18).toString("hex");
   const missing = await send(loginPath, { ip, body: { username: "missing_id", password: wrongPassword } });
@@ -146,12 +155,21 @@ it("資格情報の失敗を同一応答にし、同一IPで上限を超える�
   }
   const limited = await send(loginPath, { ip, body });
   expect(limited.status).toBe(429);
-  expect(limited.headers.get("Retry-After")).toMatch(/^\d+$/);
+  expect(Number(limited.headers.get("Retry-After"))).toBeGreaterThan(0);
+  expect(Number(limited.headers.get("Retry-After"))).toBeLessThanOrEqual(loginRateLimit.window);
   expect(limited.headers.getSetCookie()).toHaveLength(0);
+  // 拒否した試行は上限+1で止める（rate-limit-storage.ts）。
   expect((await target.client.query(
-    "SELECT 1 FROM rate_limit WHERE key LIKE $1 AND count = $2", ["%192.0.2.11%", loginRateLimit.max],
+    "SELECT 1 FROM rate_limit WHERE key LIKE $1 AND count = $2", ["%192.0.2.11%", loginRateLimit.max + 1],
   )).rowCount).toBe(1);
-}, 120_000); // 上限まで1件ずつパスワード照合を行うため、既定の15秒では足りない。
+
+  // 別の送信元は制限されない。
+  expect((await send(loginPath, { ip: "192.0.2.16", body })).status).toBe(401);
+
+  // 時間窓の起点から60秒たつと、同じ送信元でも再び認証を試せる。
+  vi.setSystemTime(Date.now() + loginRateLimit.window * 1000);
+  expect((await send(loginPath, { ip, body })).status).toBe(401);
+}
 
 it.each([null, "https://other.example", "https://school.example/"])(
   "Cookieのない初回ログインでも正規Originと完全一致しなければ拒否する (%s)",
