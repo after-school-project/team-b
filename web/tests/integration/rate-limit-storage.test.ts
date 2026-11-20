@@ -2,7 +2,7 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { migrateDatabase } from "../../scripts/lib/database-management";
-import { fixedWindowRateLimitStorage } from "../../src/auth/rate-limit-storage";
+import { fixedWindowRateLimitStorage, staleAfterMs } from "../../src/auth/rate-limit-storage";
 import { isolatedDatabase } from "./isolated-database";
 
 const rule = { window: 60, max: 3 };
@@ -76,6 +76,23 @@ it("同時の試行でも上限を超えて受け付けない", async () => {
   const results = await Promise.all(Array.from({ length: 10 }, () => clock.consume(key, rule)));
   expect(results.filter((result) => result.allowed)).toHaveLength(rule.max);
   expect(await storedCount(key)).toBe(rule.max + 1);
+});
+
+it("新しい送信元の記録を作るとき、保持期間を過ぎた記録だけを削除する", async () => {
+  await target.client.query(
+    "INSERT INTO rate_limit (id, key, count, last_request) VALUES ('stale', $1, 1, $2), ('recent', $3, 1, $4)",
+    ["192.0.2.27|/sign-in/username", start - staleAfterMs - 1, "192.0.2.28|/sign-in/username", start - staleAfterMs + 1],
+  );
+  const clock = storageAt().at(0);
+  // 既存の行の更新では削除しない。
+  await clock.consume("192.0.2.28|/sign-in/username", rule);
+  expect(await storedCount("192.0.2.27|/sign-in/username")).toBe(1);
+
+  await clock.consume("192.0.2.29|/sign-in/username", rule);
+  expect(await storedCount("192.0.2.27|/sign-in/username")).toBeUndefined();
+  // 保持期間内の行は残る（時間窓は過ぎているため、上の試行で1から数え直している）。
+  expect(await storedCount("192.0.2.28|/sign-in/username")).toBe(1);
+  expect(await storedCount("192.0.2.29|/sign-in/username")).toBe(1);
 });
 
 it("送信元と経路ごとに別々に数える", async () => {

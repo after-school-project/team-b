@@ -8,7 +8,8 @@ import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { seedDevelopmentData } from "../../scripts/development-seed";
 import { migrateDatabase } from "../../scripts/lib/database-management";
 import { GET, POST } from "../../src/app/api/auth/[...auth]/route";
-import { getAuthSession, loginRateLimit } from "../../src/auth/server";
+import { loginRateLimit } from "../../src/auth/login-rate-limit";
+import { getAuthSession } from "../../src/auth/server";
 import { isolatedDatabase } from "./isolated-database";
 
 const origin = "https://school.example";
@@ -22,6 +23,9 @@ let credentials: Record<string, string>;
 
 vi.mock("server-only", () => ({}));
 vi.mock("../../src/db/client", () => ({ db: drizzle(pool) }));
+// 上限の数え方は rate-limit-storage.test.ts で確認する。ここでは小さな上限で、
+// HTTP入口の429・Retry-Afterへの変換と時間窓の解除までの配線を確認する。
+vi.mock("../../src/auth/login-rate-limit", () => ({ loginRateLimit: { window: 60, max: 10 } }));
 
 beforeAll(async () => {
   target = await isolatedDatabase();
@@ -137,7 +141,7 @@ it("資格情報の失敗を同一応答にし、同一IPで上限を超える�
   } finally {
     vi.useRealTimers();
   }
-}, 120_000); // 上限まで1件ずつパスワード照合を行うため、既定の15秒では足りない。
+});
 
 async function expectLoginLimit() {
   const ip = "192.0.2.11";
