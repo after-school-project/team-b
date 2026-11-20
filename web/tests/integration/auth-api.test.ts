@@ -8,6 +8,7 @@ import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { seedDevelopmentData } from "../../scripts/development-seed";
 import { migrateDatabase } from "../../scripts/lib/database-management";
 import { GET, POST } from "../../src/app/api/auth/[...auth]/route";
+import { loginRateLimit } from "../../src/auth/login-rate-limit";
 import { getAuthSession } from "../../src/auth/server";
 import { isolatedDatabase } from "./isolated-database";
 
@@ -22,6 +23,9 @@ let credentials: Record<string, string>;
 
 vi.mock("server-only", () => ({}));
 vi.mock("../../src/db/client", () => ({ db: drizzle(pool) }));
+// 上限の数え方は rate-limit-storage.test.ts で確認する。ここでは小さな上限で、
+// HTTP入口の429・Retry-Afterへの変換と時間窓の解除までの配線を確認する。
+vi.mock("../../src/auth/login-rate-limit", () => ({ loginRateLimit: { window: 60, max: 10 } }));
 
 beforeAll(async () => {
   target = await isolatedDatabase();
@@ -130,7 +134,16 @@ it.each(["連続", "同時"])("同一IPから異なる架空アカウントが4�
   }
 });
 
-it("資格情報の失敗を同一応答にし、同一IPの31件目はRetry-After付きの429を返す", async () => {
+it("資格情報の失敗を同一応答にし、同一IPで上限を超えると429を返し、時間窓が過ぎると解除する", async () => {
+  vi.useFakeTimers({ toFake: ["Date"], now: Date.now() });
+  try {
+    await expectLoginLimit();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+async function expectLoginLimit() {
   const ip = "192.0.2.11";
   const wrongPassword = randomBytes(18).toString("hex");
   const missing = await send(loginPath, { ip, body: { username: "missing_id", password: wrongPassword } });
@@ -141,17 +154,26 @@ it("資格情報の失敗を同一応答にし、同一IPの31件目はRetry-Aft
   expect(missing.headers.getSetCookie()).toHaveLength(0);
   expect(wrong.headers.getSetCookie()).toHaveLength(0);
   const body = { username: "missing_id", password: wrongPassword };
-  for (let accepted = 2; accepted < 30; accepted++) {
+  for (let accepted = 2; accepted < loginRateLimit.max; accepted++) {
     expect((await send(loginPath, { ip, body })).status).toBe(401);
   }
   const limited = await send(loginPath, { ip, body });
   expect(limited.status).toBe(429);
-  expect(limited.headers.get("Retry-After")).toMatch(/^\d+$/);
+  expect(Number(limited.headers.get("Retry-After"))).toBeGreaterThan(0);
+  expect(Number(limited.headers.get("Retry-After"))).toBeLessThanOrEqual(loginRateLimit.window);
   expect(limited.headers.getSetCookie()).toHaveLength(0);
+  // 拒否した試行は上限+1で止める（rate-limit-storage.ts）。
   expect((await target.client.query(
-    "SELECT 1 FROM rate_limit WHERE key LIKE $1 AND count = 30", ["%192.0.2.11%"],
+    "SELECT 1 FROM rate_limit WHERE key LIKE $1 AND count = $2", ["%192.0.2.11%", loginRateLimit.max + 1],
   )).rowCount).toBe(1);
-});
+
+  // 別の送信元は制限されない。
+  expect((await send(loginPath, { ip: "192.0.2.16", body })).status).toBe(401);
+
+  // 時間窓の起点から60秒たつと、同じ送信元でも再び認証を試せる。
+  vi.setSystemTime(Date.now() + loginRateLimit.window * 1000);
+  expect((await send(loginPath, { ip, body })).status).toBe(401);
+}
 
 it.each([null, "https://other.example", "https://school.example/"])(
   "Cookieのない初回ログインでも正規Originと完全一致しなければ拒否する (%s)",

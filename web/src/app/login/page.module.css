@@ -185,6 +185,13 @@
   white-space: pre-wrap;
 }
 
+/* 再発行の連絡先案内（AU-01）。具体的な連絡先は実演準備（#21）で差し替える。 */
+.contact {
+  margin: var(--space-6) 0 0;
+  color: var(--color-text-muted);
+  font-size: 14px;
+}
+
 /* 利用状態を確認できない場合に、フォームの上へ出すログアウトの案内。 */
 .sessionNotice {
   display: flex;

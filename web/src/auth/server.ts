@@ -5,6 +5,8 @@ import { APIError, createAuthMiddleware } from "better-auth/api";
 import { z } from "zod";
 import * as schema from "@/db/auth-schema";
 import { authOptions } from "./options";
+import { loginRateLimit } from "./login-rate-limit";
+import { fixedWindowRateLimitStorage } from "./rate-limit-storage";
 import { authWebOptions } from "./web-config";
 
 const loginBody = z.strictObject({
@@ -22,9 +24,9 @@ async function createAuthServer() {
     ...webOptions,
     rateLimit: {
       ...options.rateLimit,
+      customStorage: fixedWindowRateLimitStorage(db),
       customRules: {
-        // 共用回線での検証用暫定値。PoCの正式な上限はチームで決定する。
-        "/sign-in/username": { window: 10, max: 30 },
+        "/sign-in/username": loginRateLimit,
       },
     },
     // SDK database errors may contain SQL parameters with authentication secrets.
