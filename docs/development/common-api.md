@@ -209,6 +209,20 @@ return commitMutation(db, {
 - kind ごとの対象・契機ID・理由の要否は `NotificationSubject` の説明を参照してください。Q&Aの宛先（質問者・直接の親投稿者）の特定は各機能で行います。
 - 監査ログの許可リスト（`auditOperations`）には #8 の操作だけを定めています。新しい操作を記録する機能は、その操作の対象の種類と、項目ごとに許可する値を追加します。
 
+### 通報証拠の保全・担当案件の引継ぎ
+
+通報に関係する更新では、証拠の保全と担当案件の引継ぎも同じ `execute` の中で行います。どちらも案件の行を `FOR UPDATE` でロックするため、本体・申請のロックを取得した後に呼びます（共通認可条件表 §5）。[DB・ER設計書](../After_School_Project_PoC_DB・ER設計書_v0.1.md) §5、[ロール・権限マトリクス詳細設計書](../After_School_Project_ロール・権限マトリクス詳細設計書_v1.0.md) 4.1
+
+| 共通処理 | 使う場面 |
+|---|---|
+| [`preserveEvidence`](../../web/src/api/report-evidence.ts) | 通報の受付時（#15）と、証拠に関係する更新・削除の前（#8 のプロフィール保存、#9 の削除など）。対象の公開内容（API設計書 §13 EvidenceSnapshot）を保存し、未終了案件に関連付ける。未終了案件がなければ何もしない。内容が同じ証拠は再利用する |
+| [`handoffCasesAssignedTo`](../../web/src/api/report-handoff.ts) | アプリ管理者のプロフィール非表示・停止・権限解除。その管理者が担当する未終了案件を引継ぎ待ちにする。管理者を `resolveUserIds` に含める |
+| `handoffCasesOfDeletedTarget` | 通報対象の質問・回答等の削除。アプリ管理者が担当する未終了案件を引継ぎ待ちにする（削除前に `preserveEvidence` で保全する） |
+| `restrictCasesForNewAppManager` | アプリ管理者の付与。その利用者が対象者の案件（プロフィール・アカウントと、投稿した質問・回答等への通報）を学校専用にし、アプリ管理者が担当する未終了案件を引継ぎ待ちにする。対象者を `resolveUserIds` に含める |
+
+- 引継ぎ待ちにしても対応状態と過去の履歴は変えません。変更した案件には、`report_actions` へシステム操作（実行者なし）として契機（`afterState.trigger`）と変更前後を記録し、版番号を上げます。
+- プロフィールの証拠には本人以外が見られる任意項目だけを保存し、本人確認情報・管理権限は保存しません。
+
 ## 環境設定
 
 `BETTER_AUTH_URL` にはブラウザーからアクセスする正規のOriginを設定します。HTTPSを使い、開発・テストのループバックのみHTTPを許可します。Better AuthのHTTP入口を実装するときは [web-config.ts](../../web/src/auth/web-config.ts) の `authWebOptions()` を既存の `authOptions()` と組み合わせ、同じOriginとセッションCookie属性を適用します。
