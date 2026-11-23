@@ -1,6 +1,7 @@
 import "server-only";
 import { and, eq } from "drizzle-orm";
 import { canEnterAdmin, type AccessReader, type Viewer } from "@/auth/access";
+import { hasAdminScope, type AdminScope } from "@/auth/admin";
 import { requireScreenViewer, type ScreenSearchParams } from "@/auth/screen";
 import { profileRevisions, profiles } from "@/db/schema";
 import type { AppShellViewer } from "./navigation";
@@ -41,4 +42,29 @@ export type AppScreen = {
 export async function requireAppScreen(currentPath: string, searchParams?: ScreenSearchParams): Promise<AppScreen> {
   const viewer = await requireScreenViewer(currentPath, searchParams);
   return { viewer, shell: await loadAppShellViewer(viewer) };
+}
+
+/**
+ * 管理エリアの画面の判定結果。`denied` の場合、ページは管理データを読まずに `AdminAccessDenied` だけを表示する。
+ * 判定結果を必ず分岐させるため、管理データの取得は `granted` の場合だけに書く。
+ */
+export type AdminScreen = AppScreen & { access: "granted" | "denied" };
+
+/**
+ * 管理エリアの画面（`/admin/*`）の共通の入口。`requireAppScreen` の判定の後に、管理APIと同じ区分で管理権限を確認する。
+ *
+ * - 未認証・利用準備中・停止中：`requireAppScreen` と同じ（ログイン画面へ）。
+ * - 管理権限が足りない（一般利用者、権限解除・プロフィール非表示中のアプリ管理者、学校専用画面のアプリ管理者）：
+ *   `denied`。ログインは維持し、権限変更の案内とホームへの導線を表示する（画面遷移・状態遷移設計書 §4）。
+ * - 判定には毎回DBから読んだ最新の状態を使うため、権限の解除は次の画面表示から反映される。
+ *
+ * 対象者によって学校専用になる操作や、操作ごとの条件は、各画面・APIで判定する。
+ */
+export async function requireAdminScreen(
+  scope: AdminScope,
+  currentPath: string,
+  searchParams?: ScreenSearchParams,
+): Promise<AdminScreen> {
+  const screen = await requireAppScreen(currentPath, searchParams);
+  return { ...screen, access: hasAdminScope(screen.viewer, scope) ? "granted" : "denied" };
 }
