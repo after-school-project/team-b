@@ -60,6 +60,41 @@ export const { GET, HEAD, OPTIONS, POST, PUT, DELETE, PATCH } = defineAuthorized
 - プロフィール状態・所属・管理権限・所有者・対象状態による制限は、渡された `viewer` と対象の最新状態で各処理が判定します。
 - `defineApiRoute` を直接使うのは、利用資格によらず応答を返す必要があるAPIだけです。たとえば利用状態取得（`GET /api/v1/me`）は、停止中も本人向けの案内を200で返すため `defineApiRoute` を使います。
 
+## 管理エリアの業務API
+
+管理エリアのAPI（`/api/v1/admin/*`）は [`defineAdminApiRoute`](../../web/src/api/admin-route.ts) で定義し、必要な管理権限の区分を最初の引数に渡します。上の共通認可の後に [管理権限の共通判定](../../web/src/auth/admin.ts) を行い、権限が足りなければ処理を呼ばずに403 `FORBIDDEN` を返します。一般の業務API（`defineAuthorizedApiRoute`）は管理権限の有無に関係なく利用でき、アプリ管理者の権限を解除しても一般利用者としてのログインは続きます。
+
+| 区分 | 利用できる管理者 | 例（共通認可条件表 §4） |
+|---|---|---|
+| `"any"` | 学校管理者、または停止・プロフィール非表示・権限解除の制限がないアプリ管理者 | 申請の審査、ユーザー一覧、通報案件の取得 |
+| `"school"` | 学校管理者のみ | 本人確認情報、削除済み証拠、操作ログ、卒業区分、アプリ管理者の付与・解除、引継ぎ待ち |
+
+対象者によって学校専用になる操作（対象者がアプリ管理者の停止・プロフィール非表示、アプリ管理者が投稿したQ&Aの強制非表示など）は、入口を `"any"` で通し、`scopeForTarget` で対象者の管理権限から区分を決めます。更新では `commitMutation` の `resolveUserIds` に対象者を含め、`authorizeEntry` に `authorizeAdminEntry` を渡します。実行者と対象者の行をロックした後に最新状態で再判定するため、権限解除・停止・プロフィール非表示や対象者のアプリ管理者化と、処理中の更新が直列化されます。
+
+```ts
+import { defineAdminApiRoute } from "@/api/admin-route";
+import { authorizeAdminEntry, scopeForLockedTarget } from "@/auth/admin";
+
+export const { GET, HEAD, OPTIONS, POST, PUT, DELETE, PATCH } = defineAdminApiRoute("any", {
+  async POST(request, context, viewer, input) {
+    const { userId } = parsePathParams(await context.params, { userId: userIdSchema });
+    return commitMutation(db, {
+      actorId: viewer.userId,
+      request: input,
+      body,
+      resolveUserIds: async () => [userId],
+      // 対象者がアプリ管理者なら学校管理者のみ。対象者がいなければ404。
+      authorizeEntry: authorizeAdminEntry(viewer.userId, scopeForLockedTarget(userId)),
+      authorizeReplay: async (context, original) => { /* 保存結果に対する現在の権限を確認する */ },
+      execute: async ({ tx, now }) => { /* 学校管理者を対象にできない等の操作ごとの条件、更新 */ },
+    });
+  },
+});
+```
+
+- 区分を満たさない場合は403 `FORBIDDEN` を返し、どの権限が足りないかは返しません。停止中・未完了は管理権限より先に、一般の業務APIと同じ403で拒否します。
+- 自己審査の禁止、学校管理者を対象にできない操作、通報案件の学校専用属性など、操作ごとの条件は各機能の処理で判定します。
+
 ## 更新と再送
 
 1. `viewer.userId`（セッションから得た操作者ID）、Route Handlerが渡した更新情報、検証済みJSONを `commitMutation(db, …)` へ渡します。
