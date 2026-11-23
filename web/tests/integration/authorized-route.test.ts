@@ -11,7 +11,7 @@ import { migrateDatabase } from "../../scripts/lib/database-management";
 import { defineAuthorizedApiRoute } from "../../src/api/authorized-route";
 import { readJson } from "../../src/api/request";
 import { POST as authPost } from "../../src/app/api/auth/[...auth]/route";
-import { isolatedDatabase } from "./isolated-database";
+import { endPool, isolatedDatabase } from "./isolated-database";
 
 const origin = "https://school.example";
 let target: Awaited<ReturnType<typeof isolatedDatabase>>;
@@ -36,7 +36,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   vi.unstubAllEnvs();
-  await pool?.end();
+  await endPool(pool);
   if (credentialsDir) await rm(credentialsDir, { recursive: true, force: true });
   await target?.dispose();
 });

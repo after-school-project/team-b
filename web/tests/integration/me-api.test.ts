@@ -12,7 +12,7 @@ import { defineApiRoute } from "../../src/api/route";
 import { POST as authPost } from "../../src/app/api/auth/[...auth]/route";
 import { GET as meGet, POST as mePost } from "../../src/app/api/v1/me/route";
 import { authorizeActiveEntry } from "../../src/auth/access";
-import { isolatedDatabase } from "./isolated-database";
+import { endPool, isolatedDatabase } from "./isolated-database";
 
 const origin = "https://school.example";
 let target: Awaited<ReturnType<typeof isolatedDatabase>>;
@@ -37,7 +37,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   vi.unstubAllEnvs();
-  await pool?.end();
+  await endPool(pool);
   if (credentialsDir) await rm(credentialsDir, { recursive: true, force: true });
   await target?.dispose();
 });

@@ -13,7 +13,7 @@ import * as content from "../../src/db/content-schema";
 import * as moderation from "../../src/db/moderation-schema";
 import * as community from "../../src/db/schema";
 import { migrateDatabase } from "../../scripts/lib/database-management";
-import { isolatedDatabase } from "./isolated-database";
+import { endPool, isolatedDatabase } from "./isolated-database";
 
 const { communityUsers, profiles, profileRevisions } = community;
 const { auditLogs, notifications, operationReceipts } = moderation;
@@ -50,7 +50,7 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
-  await pool?.end();
+  await endPool(pool);
   await target?.dispose();
 });
 

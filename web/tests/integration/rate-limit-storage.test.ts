@@ -3,7 +3,7 @@ import { Pool } from "pg";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { migrateDatabase } from "../../scripts/lib/database-management";
 import { fixedWindowRateLimitStorage, staleAfterMs } from "../../src/auth/rate-limit-storage";
-import { isolatedDatabase } from "./isolated-database";
+import { endPool, isolatedDatabase } from "./isolated-database";
 
 const rule = { window: 60, max: 3 };
 const start = Date.UTC(2026, 10, 20, 0, 0, 0);
@@ -17,7 +17,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await pool?.end();
+  await endPool(pool);
   await target?.dispose();
 });
 
