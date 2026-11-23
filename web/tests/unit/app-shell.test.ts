@@ -90,12 +90,13 @@ describe("共通ナビゲーションの導線定義", () => {
 });
 
 describe("導線の実装状況", () => {
-  it("実装済みの画面（現在はホームだけ）の導線を押せる状態にする", async () => {
+  it("実装済みの画面（現在はホームとマイプロフィール）の導線を押せる状態にする", async () => {
     const actual = await vi.importActual<typeof import("@/components/app-shell/navigation")>(
       "@/components/app-shell/navigation",
     );
     expect(actual.isNavItemAvailable({ href: "/" })).toBe(true);
-    for (const item of [...PRIMARY_NAV_ITEMS.slice(1), ...ACCOUNT_NAV_ITEMS, NOTIFICATION_NAV_ITEM, ADMIN_NAV_ITEM]) {
+    expect(actual.isNavItemAvailable({ href: "/me/profile" })).toBe(true);
+    for (const item of [...PRIMARY_NAV_ITEMS.slice(1), ...ACCOUNT_NAV_ITEMS.slice(1), NOTIFICATION_NAV_ITEM, ADMIN_NAV_ITEM]) {
       expect(actual.isNavItemAvailable(item)).toBe(false);
     }
   });
@@ -107,10 +108,11 @@ describe("AppShell（未実装の画面がある状態）", () => {
     availability.all = false;
   });
 
-  it("実装済みのホームだけをリンクにし、未実装の画面は押せない「準備中」として表示する", () => {
+  it("実装済みのホームとマイプロフィールだけをリンクにし、未実装の画面は押せない「準備中」として表示する", () => {
     const html = renderShell({ canAccessAdmin: false });
     expect(html).toContain('href="/"');
-    for (const item of [...PRIMARY_NAV_ITEMS.slice(1), ...ACCOUNT_NAV_ITEMS, NOTIFICATION_NAV_ITEM]) {
+    expect(html).toContain('href="/me/profile"');
+    for (const item of [...PRIMARY_NAV_ITEMS.slice(1), ...ACCOUNT_NAV_ITEMS.slice(1), NOTIFICATION_NAV_ITEM]) {
       expect(html).not.toContain(`href="${item.href}"`);
       expect(html).toContain(item.label.replaceAll("&", "&amp;"));
     }

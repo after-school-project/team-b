@@ -151,3 +151,16 @@ function bodyText(maxLength: number) {
 
 export const longText = bodyText(10_000);
 export const shortText = bodyText(2_000);
+
+/** プロフィールの公開表示名。前後空白除去後1〜50文字、改行なし（API設計書 §3）。 */
+export const displayName = storableText.trim().refine((value) => value.length > 0 &&
+  [...value].length <= 50 && !/[\r\n\u2028\u2029]/.test(value));
+
+/**
+ * プロフィールの任意項目の値（API設計書 §3 OptionalProfileField）。空文字列を許可し、改行はLFへ正規化する。
+ * 文字数はUnicodeのコードポイントで数える。
+ */
+export function optionalProfileText(maxLength: number) {
+  return storableText.transform((value) => value.replace(/\r\n?/g, "\n"))
+    .refine((value) => [...value].length <= maxLength);
+}
