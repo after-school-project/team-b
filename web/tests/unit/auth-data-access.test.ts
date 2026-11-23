@@ -116,18 +116,20 @@ describe("プロフィールの任意項目の返却範囲", () => {
   });
 });
 
-type RowsQuery = (where: SQL, take: number) => Promise<{ id: string }[]>;
+type RowsQuery = (where: SQL, take: number) => Promise<{ id: string; cursorAt?: string }[]>;
 type CountQuery = (where: SQL) => Promise<number>;
 
 describe("認可条件を適用した一覧", () => {
   const authorized = sql`"owner_id" = ${"u1"}`;
 
   it("件数と各ページに認可条件を必ず適用し、括弧のない OR の条件でも認可条件が外れない", async () => {
-    const rows = vi.fn<RowsQuery>(async () => [{ id: "a" }, { id: "b" }, { id: "c" }]);
+    const rows = vi.fn<RowsQuery>(async () => [
+      { id: "a", cursorAt: "t3" }, { id: "b", cursorAt: "t2" }, { id: "c", cursorAt: "t1" },
+    ]);
     const count = vi.fn<CountQuery>(async () => 7);
     const page = await queryListPage({
       authorized, filters: sql`"title" = ${"x"} OR true`, after: sql`"id" > ${"z"}`,
-      limit: 2, rows, count, cursorFor: (last) => "cursor:" + last.id,
+      limit: 2, rows, count, cursorFor: (last) => `cursor:${last.cursorAt}:${last.id}`, toItem: ({ id }) => ({ id }),
     });
 
     expect(rows).toHaveBeenCalledWith(expect.anything(), 3);
@@ -138,16 +140,17 @@ describe("認可条件を適用した一覧", () => {
     expect(render(count.mock.calls[0][0])).toEqual({
       sql: '("owner_id" = $1) AND ("title" = $2 OR true)', params: ["u1", "x"],
     });
+    // カーソルはカーソル用の列から作り、応答の各項目には toItem で変換した値だけを返す。
     expect(page).toEqual({
       data: { items: [{ id: "a" }, { id: "b" }] },
-      page: { limit: 2, hasMore: true, nextCursor: "cursor:b", totalCount: 7 },
+      page: { limit: 2, hasMore: true, nextCursor: "cursor:t2:b", totalCount: 7 },
     });
   });
 
   it("検索条件・カーソルがなければ認可条件だけで取得し、最後のページにはカーソルを返さない", async () => {
     const rows = vi.fn<RowsQuery>(async () => [{ id: "a" }]);
     const count = vi.fn<CountQuery>(async () => 1);
-    const page = await queryListPage({ authorized, limit: 20, rows, count, cursorFor: () => "unused" });
+    const page = await queryListPage({ authorized, limit: 20, rows, count, cursorFor: () => "unused", toItem: (row) => row });
     expect(render(rows.mock.calls[0][0]).sql).toBe('(("owner_id" = $1))');
     expect(page.page).toEqual({ limit: 20, hasMore: false, nextCursor: null, totalCount: 1 });
   });
@@ -159,7 +162,7 @@ describe("認可条件を適用した一覧", () => {
 
   it("取得件数が上限を超えたら、誤った件数のまま返さない", async () => {
     await expect(queryListPage({
-      authorized, limit: 1, rows: async () => [{}, {}, {}], count: async () => 3, cursorFor: () => "c",
+      authorized, limit: 1, rows: async () => [{}, {}, {}], count: async () => 3, cursorFor: () => "c", toItem: (row) => row,
     })).rejects.toThrow("上限");
   });
 });

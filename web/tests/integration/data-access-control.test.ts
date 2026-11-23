@@ -200,6 +200,8 @@ const questionsRoute = defineAuthorizedApiRoute<{ params: Promise<Record<string,
         .from(qaQuestions).where(where).orderBy(desc(qaQuestions.createdAt), desc(qaQuestions.id)).limit(take),
       count: async (where) => (await database().select({ n: count() }).from(qaQuestions).where(where))[0].n,
       cursorFor: (row) => codec.encode([row.cursorAt, row.id]),
+      // カーソル用の列は返さない。
+      toItem: ({ id, title }) => ({ id, title }),
     });
   },
 });
@@ -223,6 +225,7 @@ function publishedListRoute(kind: "notices" | "events") {
         rows: select,
         count: async (where) => (await database().select({ n: count() }).from(table).where(where))[0].n,
         cursorFor: () => { throw new Error("検証では全件を1ページで取得する"); },
+        toItem: (row) => row,
       });
     },
   });
@@ -241,6 +244,7 @@ const myNotificationsRoute = defineAuthorizedApiRoute<{ params: Promise<Record<s
         .from(notifications).where(where).orderBy(notifications.id).limit(take),
       count: async (where) => (await database().select({ n: count() }).from(notifications).where(where))[0].n,
       cursorFor: () => { throw new Error("検証では全件を1ページで取得する"); },
+      toItem: (row) => row,
     });
   },
 });
@@ -307,6 +311,7 @@ const publicProfilesRoute = defineAuthorizedApiRoute<{ params: Promise<Record<st
         .where(where).orderBy(communityUsers.userId).limit(take),
       count: async (where) => (await database().select({ n: count() }).from(communityUsers).where(where))[0].n,
       cursorFor: () => { throw new Error("検証では全件を1ページで取得する"); },
+      toItem: (row) => row,
     });
   },
 });
@@ -323,6 +328,8 @@ describe("AC-07：未承認版・強制非表示・削除済みを一覧・件�
       expect(status).toBe(200);
       expectNoForbiddenText(text);
       expect(body.meta.page!.totalCount).toBe(3);
+      // 応答の各項目は DTO の項目だけで、カーソル用の列を含めない。
+      for (const item of body.data!.items!) expect(Object.keys(item).sort()).toEqual(["id", "title"]);
       titles.push(...body.data!.items!.map((item) => item.title as string));
       cursor = body.meta.page!.nextCursor;
       pages += 1;

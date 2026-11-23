@@ -118,7 +118,7 @@ export const { GET, HEAD, OPTIONS, POST, PUT, DELETE, PATCH } = defineAdminApiRo
 | 一般の閲覧者向けの公開条件 | [`visibleQuestion`・`visibleResponse`・`publishedNotice`・`publishedEvent`](../../web/src/auth/visibility.ts) | 強制非表示・削除済み・公開版のないものを除く条件。お知らせ・イベントの本文は `publicRevisionId` の版から取得し、審査中の版を返さない |
 | 削除済みお知らせの本文 | `retainedDeletedNotice` | 削除から180日の期間内の条件。本人・学校管理者の判定と組み合わせる。更新では `commitMutation` の `now` を渡す |
 | プロフィール | `publicProfileState`・`projectOptionalProfileFields` | 公開中のプロフィールの条件と、任意項目の返却範囲。本人には全項目、本人以外には `members` の項目だけを返し、本人のみの項目はキーごと省略する |
-| 一覧・件数・カーソル | [`queryListPage`](../../web/src/api/pagination.ts) | `authorized`（認可条件）と `filters`（検索条件）を件数と各ページの両方に適用し、返した行からだけ次ページのカーソルを作る。カーソルの日時は `cursorTimestamp` でDBの精度のまま取得する |
+| 一覧・件数・カーソル | [`queryListPage`](../../web/src/api/pagination.ts) | `authorized`（認可条件）と `filters`（検索条件）を件数と各ページの両方に適用し、返した行からだけ次ページのカーソルを作る。カーソルの日時は `cursorTimestamp` でDBの精度のまま取得し、応答の各項目は `toItem` で DTO の項目だけにする |
 
 ```ts
 import { createCursorCodec, cursorTimestamp, parseListQuery, queryListPage } from "@/api/pagination";
@@ -134,9 +134,13 @@ export const { GET, HEAD, OPTIONS, POST, PUT, DELETE, PATCH } = defineAuthorized
       filters: q ? ilike(qaQuestions.title, `%${q}%`) : undefined,
       after: last ? sql`(${qaQuestions.createdAt}, ${qaQuestions.id}) < (${last[0]}::timestamptz, ${last[1]}::uuid)` : undefined,
       limit,
-      rows: (where, take) => db.select({ /* 返却項目だけ */ id: qaQuestions.id, cursorAt: cursorTimestamp(qaQuestions.createdAt) }).from(qaQuestions).where(where).orderBy(/* 並び順 */).limit(take),
+      // 返却項目に必要な列と、カーソル用の列（cursorAt）だけを取得する。
+      rows: (where, take) => db.select({ id: qaQuestions.id, title: qaQuestions.title, cursorAt: cursorTimestamp(qaQuestions.createdAt) })
+        .from(qaQuestions).where(where).orderBy(/* 並び順 */).limit(take),
       count: async (where) => (await db.select({ n: count() }).from(qaQuestions).where(where))[0].n,
       cursorFor: (row) => codec.encode([row.cursorAt, row.id]),
+      // 応答には DTO の項目だけを返し、カーソル用の列を含めない。
+      toItem: ({ id, title }) => ({ id, title }),
     });
   },
 });
