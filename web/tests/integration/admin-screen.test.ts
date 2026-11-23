@@ -153,14 +153,19 @@ it("停止中の管理者は、管理画面でも拒否表示ではなく停止�
   expect(await redirectOf(() => requireAdminScreen("any", "/admin"))).toBe("/login");
 });
 
-it("未認証・発行未完了は、管理画面の判定より先にログイン画面へ移動する", async () => {
+it("未認証は、管理画面の判定より先にログイン画面へ移動する", async () => {
   expect(await redirectOf(() => requireAdminScreen("any", "/admin"))).toBe("/login");
+});
 
+it.each([
+  ["学校による利用資格確認が未完了", "eligibility_status = 'pending'", "eligibility_status = 'verified'"],
+  ["アカウント発行が未完了", "provisioning_status = 'pending'", "provisioning_status = 'ready'"],
+])("%sの学校管理者は、管理画面の判定より先にログイン画面へ移動する", async (_label, change, restore) => {
   await openAs("poc_school");
-  await setUser("poc_school", "eligibility_status = 'pending'");
+  await setUser("poc_school", change);
   try {
     expect(await redirectOf(() => requireAdminScreen("school", "/admin/audit-logs"))).toBe("/login");
   } finally {
-    await setUser("poc_school", "eligibility_status = 'verified'");
+    await setUser("poc_school", restore);
   }
 });
