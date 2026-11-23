@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -11,7 +10,9 @@ import { migrateDatabase } from "../../scripts/lib/database-management";
 import { GET, POST } from "../../src/app/api/auth/[...auth]/route";
 import { GET as meGet } from "../../src/app/api/v1/me/route";
 import { loginRateLimit } from "../../src/auth/login-rate-limit";
+import { requireScreenViewer } from "../../src/auth/screen";
 import { getAuthSession } from "../../src/auth/server";
+import { expectExit, runAccountTask } from "./account-task";
 import { endPool, isolatedDatabase } from "./isolated-database";
 
 const origin = "https://school.example";
@@ -23,8 +24,17 @@ let pool: Pool;
 let credentialsDir: string;
 let credentials: Record<string, string>;
 
+/** 保護画面の入口（`requireScreenViewer`）へ渡す要求ヘッダー。Next.js の要求の代わりに使う。 */
+const screen = vi.hoisted(() => ({ headers: new Headers() }));
+
 vi.mock("server-only", () => ({}));
 vi.mock("../../src/db/client", () => ({ db: drizzle(pool) }));
+vi.mock("next/headers", () => ({ headers: async () => screen.headers }));
+vi.mock("next/navigation", () => ({
+  redirect: (path: string): never => {
+    throw Object.assign(new Error("NEXT_REDIRECT"), { path });
+  },
+}));
 // 上限の数え方は rate-limit-storage.test.ts で確認する。ここでは小さな上限で、
 // HTTP入口の429・Retry-Afterへの変換と時間窓の解除までの配線を確認する。
 vi.mock("../../src/auth/login-rate-limit", () => ({ loginRateLimit: { window: 60, max: 10 } }));
@@ -185,27 +195,25 @@ it("再発行後は旧パスワードと再発行前の全Cookieを認証APIで�
   const second = await logIn(username, ip);
   expect((await me(first.cookie)).status).toBe(200);
 
+  expect(await screenRedirect(first.cookie)).toBeNull();
+
   const output = join(credentialsDir, "reset-poc_a001.json");
-  const reset = spawnSync("npm", ["run", "account:reset-password", "--", "--username", username, "--output", output], {
-    encoding: "utf8",
-    timeout: 30_000,
-    env: {
-      ...process.env,
-      DATABASE_URL_DIRECT: target.url.toString(),
-      BETTER_AUTH_URL: origin,
-      BETTER_AUTH_SECRET: randomBytes(32).toString("hex"),
-    },
+  const reset = runAccountTask("account:reset-password", ["--username", username, "--output", output], {
+    DATABASE_URL_DIRECT: target.url.toString(),
+    BETTER_AUTH_URL: origin,
+    BETTER_AUTH_SECRET: randomBytes(32).toString("hex"),
   });
-  expect(reset.status).toBe(0);
+  expectExit(reset, 0);
   const { password: newPassword } = JSON.parse(await readFile(output, "utf8")) as { password: string };
   expect(newPassword).not.toBe(oldPassword);
 
-  // 再発行前のセッションは、どのCookieでもセッション確認・保護APIの両方で未認証になる。
+  // 再発行前のセッションは、どのCookieでもセッション確認・保護API・保護画面のすべてで未認証になる。
   for (const { cookie } of [first, second]) {
     const session = await send(sessionPath, { cookie });
     expect(session.status).toBe(200);
     expect(await session.json()).toBeNull();
     expect((await me(cookie)).status).toBe(401);
+    expect(await screenRedirect(cookie)).toBe("/login");
   }
 
   const rejected = await send(loginPath, { ip, body: { username, password: oldPassword } });
@@ -217,12 +225,25 @@ it("再発行後は旧パスワードと再発行前の全Cookieを認証APIで�
   const renewed = await logIn(username, ip);
   expect(renewed.userId).toBe(first.userId);
   expect((await me(renewed.cookie)).status).toBe(200);
-}, 60_000); // 再発行コマンドを別プロセスで起動するため、既定の15秒より長くする。
+  expect(await screenRedirect(renewed.cookie)).toBeNull();
+}, 120_000); // 再発行コマンドを別プロセスで起動するため、既定の15秒より長くする。
 
 /** 保護API（API-COM-01）の応答。認証されていなければ401になる。 */
 async function me(cookie: string) {
   const response = await meGet(new Request(origin + "/api/v1/me", { headers: { Cookie: cookie } }), {});
   return { status: response.status };
+}
+
+/** 保護画面（ホーム）の入口の判定。表示できれば null、ログイン画面などへ移す場合は移動先を返す。 */
+async function screenRedirect(cookie: string): Promise<string | null> {
+  screen.headers = new Headers({ Cookie: cookie });
+  try {
+    await requireScreenViewer("/");
+    return null;
+  } catch (error) {
+    if (error instanceof Error && "path" in error && typeof error.path === "string") return error.path;
+    throw error;
+  }
 }
 
 it.each([null, "https://other.example", "https://school.example/"])(
