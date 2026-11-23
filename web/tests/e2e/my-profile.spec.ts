@@ -66,6 +66,47 @@ test("キーボードだけで任意項目と公開範囲を変更して保存�
     .toBeChecked();
 });
 
+test("保存の応答を読めなかった場合は、同じ再送キーで送り直して保存を確認し、次の保存も競合しない", async ({ page, baseURL }) => {
+  // 並行して保存するほかのテストと版番号が競合しないよう、このテストだけで使う利用者にする。
+  await signIn(page, baseURL!, "poc_a_mgr");
+  const origin = canonicalOrigin ?? new URL(baseURL!).origin;
+  const keys: string[] = [];
+  let truncateNext = true;
+  await page.route("**/api/v1/me/profile", async (route) => {
+    if (route.request().method() !== "PATCH") return route.continue();
+    const headers = await route.request().allHeaders();
+    keys.push(headers["idempotency-key"]);
+    const response = await route.fetch({ headers: { ...headers, origin } });
+    if (truncateNext) {
+      // サーバーでは保存が確定し200を返したが、本文が途中で途切れた状態を再現する。
+      truncateNext = false;
+      return route.fulfill({ status: response.status(), contentType: "application/json", body: "{\"data\":" });
+    }
+    await route.fulfill({ response });
+  });
+  await page.goto("/me/profile");
+
+  const form = page.getByRole("form", { name: "公開情報の編集" });
+  const input = page.getByRole("textbox", { name: "職種の内容" });
+  const save = page.getByRole("button", { name: "保存する" });
+  await input.fill(`途切れた応答 ${Date.now()}`);
+  await save.click();
+  await expect(form.getByRole("alert")).toContainText("保存できたか確認できませんでした。");
+
+  await save.click();
+  await expect(page.getByRole("status").filter({ hasText: "プロフィールを保存しました。" })).toBeVisible();
+  expect(keys).toHaveLength(2);
+  expect(keys[1]).toBe(keys[0]);
+
+  // 確定した版番号を受け取っているため、続けて保存しても409にならない。
+  await input.fill(`続けて保存 ${Date.now()}`);
+  await save.click();
+  await expect.poll(() => keys.length).toBe(3);
+  expect(keys[2]).not.toBe(keys[0]);
+  await expect(page.getByRole("status").filter({ hasText: "プロフィールを保存しました。" })).toBeVisible();
+  await expect(form.getByRole("alert")).toHaveCount(0);
+});
+
 test("入力エラーは項目の近くに表示し、入力した内容を保つ", async ({ page, baseURL }) => {
   await signIn(page, baseURL!, "poc_s002");
   await useCanonicalOrigin(page, baseURL!);
@@ -85,8 +126,11 @@ test("非表示中の利用者には、非表示の案内と再公開申請の�
   await signIn(page, baseURL!, "poc_hidden");
   await page.goto("/me/profile");
   await expect(page.getByText("非表示", { exact: true })).toBeVisible();
-  await expect(page.getByText("内容を修正して保存すると、再公開の申請として管理者が審査します。")).toBeVisible();
+  await expect(page.getByText("審査中の申請", { exact: true })).toBeVisible();
   await expect(page.getByText("承認待ち", { exact: true })).toBeVisible();
+  await expect(page.getByText("審査中も内容を修正できます。保存すると、審査する内容が最新の内容に変わります。")).toBeVisible();
+  // 審査中の申請を、前回の審査結果として表示しない。
+  await expect(page.getByText("前回の審査結果")).toHaveCount(0);
 });
 
 test("モバイル幅でも横スクロールなしで、すべての項目と保存ボタンを使える", async ({ page, baseURL }) => {

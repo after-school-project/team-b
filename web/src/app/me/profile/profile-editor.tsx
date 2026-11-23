@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import type { MyProfile } from "@/profile/my-profile";
 import { countCharacters, displayNameMaxLength, optionalFieldLimits } from "@/profile/limits";
 import styles from "./page.module.css";
+import { ProfileStatus } from "./profile-status";
+import { saveOutcome, type SaveOutcome, type SavedFieldError } from "./save-outcome";
 
 type FieldName = "bio" | "occupation" | "interests";
 type Visibility = "members" | "self";
@@ -21,10 +23,10 @@ const optionalFieldOrder: readonly FieldName[] = ["bio", "occupation", "interest
 const optionalFieldLabels: Record<FieldName, string> = { bio: "自己紹介", occupation: "職種", interests: "関心分野" };
 const visibilityLabels: Record<Visibility, string> = { members: "ログインした利用者に公開", self: "自分だけ" };
 const baseRoleLabels: Record<MyProfile["baseRole"], string> = { student: "在校生", alumni: "卒業生", staff: "学校職員" };
-const reviewStatusLabels = { pending: "承認待ち", approved: "承認済み", rejected: "却下" } as const;
-
 const conflictMessage = "内容が更新されています。最新の内容を確認してください。";
 const failureMessage = "保存できませんでした。時間をおいてもう一度お試しください。";
+const unconfirmedMessage =
+  "保存できたか確認できませんでした。内容を変えずにもう一度「保存する」を押すと、同じ保存として確認します。";
 
 function initialState(profile: MyProfile): FormState {
   const field = (name: FieldName): OptionalFieldState => ({
@@ -54,24 +56,13 @@ function validate(form: FormState): FieldErrors {
   return errors;
 }
 
-function formatDateTime(value: string): string {
-  return new Intl.DateTimeFormat("ja-JP", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Tokyo" })
-    .format(new Date(value));
-}
-
-/** 422 の項目エラーを入力欄に対応付ける。 */
-function fieldErrorsFrom(body: unknown): FieldErrors {
-  const errors: FieldErrors = {};
-  const fields = (body as { error?: { fields?: Array<{ path?: unknown }> } } | null)?.error?.fields;
-  for (const { path } of Array.isArray(fields) ? fields : []) {
-    if (typeof path !== "string") continue;
-    if (path === "displayName") errors.displayName = "公開表示名を確認してください。";
-    for (const field of optionalFieldOrder) {
-      if (path.startsWith(`optionalFields.${field}`)) errors[field] = `${optionalFieldLabels[field]}を確認してください。`;
-    }
-  }
-  return errors;
-}
+/** 422 の項目エラーの表示文言。 */
+const fieldErrorMessages: Record<SavedFieldError, string> = {
+  displayName: "公開表示名を確認してください。",
+  bio: "自己紹介を確認してください。",
+  occupation: "職種を確認してください。",
+  interests: "関心分野を確認してください。",
+};
 
 export function ProfileEditor({ profile }: { profile: MyProfile }) {
   const router = useRouter();
@@ -83,9 +74,6 @@ export function ProfileEditor({ profile }: { profile: MyProfile }) {
   const [saving, setSaving] = useState(false);
   /** 応答を受け取れなかった送信。同じ内容で送り直すときは同じ再送キーを使い、二重に保存しない。 */
   const pending = useRef<{ body: string; key: string } | null>(null);
-
-  const hidden = profile.profileState === "hidden";
-  const review = profile.review;
 
   function updateField(field: FieldName, change: Partial<OptionalFieldState>) {
     setForm((current) => ({
@@ -115,41 +103,50 @@ export function ProfileEditor({ profile }: { profile: MyProfile }) {
     setSaving(true);
     setNotice(null);
     try {
-      const response = await fetch("/api/v1/me/profile", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json", "Idempotency-Key": key },
-        body,
-      });
-      const result: unknown = await response.json().catch(() => null);
-      if (response.status >= 500) {
-        // 処理されたか分からないため、同じ内容なら同じ再送キーで送り直せるようにする。
-        setNotice({ kind: "error", message: failureMessage });
-        return;
-      }
-      pending.current = null;
-      if (response.ok) {
-        const saved = (result as { data?: { version?: unknown; state?: unknown } } | null)?.data;
-        if (typeof saved?.version === "number") setVersion(saved.version);
-        setNotice({
-          kind: "success",
-          message: saved?.state === "hidden"
-            ? "プロフィールを保存しました。再公開の申請として審査されます。"
-            : "プロフィールを保存しました。",
+      let outcome: SaveOutcome;
+      try {
+        const response = await fetch("/api/v1/me/profile", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", "Idempotency-Key": key },
+          body,
         });
-        // 共通ナビの表示名と審査状況を最新にする。入力中の内容はこの画面の状態として保つ。
-        router.refresh();
-      } else if (response.status === 409) {
-        setNotice({ kind: "error", message: conflictMessage, reload: true });
-      } else if (response.status === 422) {
-        setErrors(fieldErrorsFrom(result));
-        setNotice({ kind: "error", message: "入力内容を確認してください。" });
-      } else if (response.status === 401 || response.status === 403) {
-        setNotice({ kind: "error", message: "ログイン状態を確認できませんでした。再読み込みしてください。", reload: true });
-      } else {
-        setNotice({ kind: "error", message: failureMessage });
+        outcome = saveOutcome(response.status, await response.json().catch(() => null));
+      } catch {
+        // 送信できたか分からない（通信の途中切断を含む）。
+        outcome = { kind: "unconfirmed" };
       }
-    } catch {
-      setNotice({ kind: "error", message: failureMessage });
+
+      // 保存されたか確認できない間は、同じ内容なら同じ再送キーで送り直せるように送信内容を保つ。
+      if (outcome.kind !== "unconfirmed") pending.current = null;
+      switch (outcome.kind) {
+        case "saved":
+          setVersion(outcome.version);
+          setNotice({
+            kind: "success",
+            message: outcome.state === "hidden"
+              ? "プロフィールを保存しました。再公開の申請として審査されます。"
+              : "プロフィールを保存しました。",
+          });
+          // 共通ナビの表示名と審査状況を最新にする。入力中の内容はこの画面の状態として保つ。
+          router.refresh();
+          break;
+        case "unconfirmed":
+          setNotice({ kind: "error", message: unconfirmedMessage });
+          break;
+        case "conflict":
+          setNotice({ kind: "error", message: conflictMessage, reload: true });
+          break;
+        case "invalid":
+          setErrors(Object.fromEntries(outcome.fields.map((field) => [field, fieldErrorMessages[field]])));
+          setNotice({ kind: "error", message: "入力内容を確認してください。" });
+          break;
+        case "unauthorized":
+          setNotice({ kind: "error", message: "ログイン状態を確認できませんでした。再読み込みしてください。", reload: true });
+          break;
+        case "failed":
+          setNotice({ kind: "error", message: failureMessage });
+          break;
+      }
     } finally {
       setSaving(false);
     }
@@ -165,45 +162,7 @@ export function ProfileEditor({ profile }: { profile: MyProfile }) {
         <p className={styles.lead}>公開表示名と、ほかの利用者に見せる項目を設定します。</p>
       </header>
 
-      <section className={styles.card} aria-labelledby={`${formId}-state`}>
-        <h2 id={`${formId}-state`} className={styles.sectionTitle}>公開状態</h2>
-        <p className={styles.stateRow}>
-          <span className={hidden ? styles.badgeWarning : styles.badgeSuccess}>{hidden ? "非表示" : "公開中"}</span>
-          {hidden
-            ? "プロフィールは管理者により非表示になっています。ほかの利用者には表示されません。"
-            : "ほかの利用者に、公開を許可した項目が表示されます。"}
-        </p>
-        {hidden ? (
-          <div className={styles.reviewBox}>
-            <p className={styles.reviewText}>内容を修正して保存すると、再公開の申請として管理者が審査します。</p>
-            {review ? (
-              <dl className={styles.details}>
-                <div>
-                  <dt>再公開の申請</dt>
-                  <dd>
-                    <span className={review.status === "rejected" ? styles.badgeDanger
-                      : review.status === "approved" ? styles.badgeSuccess : styles.badgeWarning}>
-                      {reviewStatusLabels[review.status]}
-                    </span>
-                  </dd>
-                </div>
-                <div>
-                  <dt>申請日時</dt>
-                  <dd>{formatDateTime(review.submittedAt)}</dd>
-                </div>
-                {review.status === "rejected" && review.decisionReason ? (
-                  <div>
-                    <dt>却下の理由</dt>
-                    <dd className={styles.reason}>{review.decisionReason}</dd>
-                  </div>
-                ) : null}
-              </dl>
-            ) : (
-              <p className={styles.reviewText}>再公開の申請はまだありません。</p>
-            )}
-          </div>
-        ) : null}
-      </section>
+      <ProfileStatus profile={profile} headingId={`${formId}-state`} />
 
       <section className={styles.card} aria-labelledby={`${formId}-affiliation`}>
         <h2 id={`${formId}-affiliation`} className={styles.sectionTitle}>所属</h2>
