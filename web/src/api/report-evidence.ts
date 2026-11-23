@@ -15,6 +15,10 @@ import { communityUsers, profileRevisions, profiles } from "../db/schema";
  *
  * 保存する内容は API設計書 §13 の EvidenceSnapshot に従い、公開内容だけにする。本人確認情報、管理権限、
  * 本人のみの任意プロフィール項目は保存しない。対象の行は、呼び出し側が本体としてロックしておく。
+ *
+ * プロフィールの公開版は、`profile_state=public` のときの現在版だけ（DB・ER設計書 §3）。非表示中は本人の保存で現在版が
+ * 更新されても公開されない（再公開の承認前の版）ため、非表示中のプロフィールは保全しない。公開中の内容は、非表示にする
+ * 処理（#8 API-US-05）で非表示にする前に保全する。アカウントの証拠でも、非表示中は未承認の版の表示名を保存しない。
  */
 
 /** 業務更新と同じトランザクション。 */
@@ -39,9 +43,13 @@ function targetCondition(target: EvidenceTarget): SQL {
   }
 }
 
-/** 現在の公開表示名などを持つ、本人の現在のプロフィール版。 */
+/**
+ * 本人の現在のプロフィール版と公開状態。公開状態と現在版は同じ問い合わせで読み、組み合わせの食い違いを避ける。
+ * 現在版が公開版なのは `profileState` が public のときだけ。
+ */
 async function currentProfile(tx: CaseWriter, userId: string) {
   const [row] = await tx.select({
+    profileState: communityUsers.profileState,
     baseRole: communityUsers.baseRole,
     isGraduating: communityUsers.isGraduating,
     userVersion: communityUsers.version,
@@ -59,15 +67,16 @@ async function currentProfile(tx: CaseWriter, userId: string) {
   return row ?? null;
 }
 
-/** API設計書 §13 EvidenceSnapshot の content。対象がなければ null。 */
+/** API設計書 §13 EvidenceSnapshot の content。保全する公開内容がなければ（非表示中のプロフィール）null。 */
 async function snapshotOf(tx: CaseWriter, target: EvidenceTarget): Promise<Snapshot | null> {
+  const missing = () => new Error(`通報対象 ${target.kind} が見つかりません。`);
   switch (target.kind) {
     case "question": {
       const [row] = await tx.select({
         version: qaQuestions.version, title: qaQuestions.title,
         bodyMarkdown: qaQuestions.bodyMarkdown, authorLabel: qaQuestions.authorLabel,
       }).from(qaQuestions).where(eq(qaQuestions.id, target.questionId));
-      if (!row) return null;
+      if (!row) throw missing();
       const { version, ...content } = row;
       return { sourceRevision: version, content };
     }
@@ -76,14 +85,16 @@ async function snapshotOf(tx: CaseWriter, target: EvidenceTarget): Promise<Snaps
         version: qaResponses.version, bodyMarkdown: qaResponses.bodyMarkdown, authorLabel: qaResponses.authorLabel,
         kind: qaResponses.kind, questionId: qaResponses.questionId, parentResponseId: qaResponses.parentResponseId,
       }).from(qaResponses).where(eq(qaResponses.id, target.responseId));
-      if (!row) return null;
+      if (!row) throw missing();
       // 親投稿の本文は含めない（削除済みの親の本文を残存回答の証拠へ追加しない。API設計書 §13）。
       const { version, ...content } = row;
       return { sourceRevision: version, content };
     }
     case "profile": {
       const profile = await currentProfile(tx, target.userId);
-      if (!profile) return null;
+      if (!profile) throw missing();
+      // 非表示中の現在版は未承認の版の可能性があるため保存しない。
+      if (profile.profileState !== "public") return null;
       return {
         sourceRevision: profile.revisionNo,
         content: {
@@ -103,10 +114,15 @@ async function snapshotOf(tx: CaseWriter, target: EvidenceTarget): Promise<Snaps
     }
     case "account": {
       const profile = await currentProfile(tx, target.userId);
-      if (!profile) return null;
+      if (!profile) throw missing();
       return {
         sourceRevision: profile.userVersion,
-        content: { userId: target.userId, displayName: profile.displayName, baseRole: profile.baseRole },
+        content: {
+          userId: target.userId,
+          // 非表示中は公開している表示名がないため null にし、未承認の版の表示名を保存しない。
+          displayName: profile.profileState === "public" ? profile.displayName : null,
+          baseRole: profile.baseRole,
+        },
       };
     }
   }
@@ -115,11 +131,13 @@ async function snapshotOf(tx: CaseWriter, target: EvidenceTarget): Promise<Snaps
 export type PreservedEvidence = { evidenceId: string; caseIds: string[] };
 
 /**
- * 通報対象の現在の公開内容を証拠として保全し、未終了案件に関連付ける。未終了案件がなければ何もせず null を返す。
+ * 通報対象の現在の公開内容を証拠として保全し、未終了案件に関連付ける。未終了案件がない場合と、保全する公開内容が
+ * ない場合（非表示中のプロフィール）は何もせず null を返す。
  *
  * - 未終了案件の行を `FOR UPDATE` でロックしてから関連付ける。ロック順は本体 → 申請 → 案件（共通認可条件表 §5）のため、
  *   本体・申請のロックを取得した後に呼ぶ。更新・削除の前の内容を残す場合は、ロック後・更新前に呼ぶ。
- * - 同じ対象で内容が同じ証拠が既にあれば、新しく保存せずにその証拠を関連付ける。再送・同じ内容での再実行で重複しない。
+ * - 同じ対象で内容が同じ証拠が既にあれば、版番号が変わっていても新しく保存せず、その証拠を関連付ける。再送・同じ内容での
+ *   再実行や、証拠に含めない項目（質問の解決状態など）だけの変更で重複しない。
  */
 export async function preserveEvidence(
   tx: CaseWriter,
@@ -134,11 +152,10 @@ export async function preserveEvidence(
   if (openCases.length === 0) return null;
 
   const snapshot = await snapshotOf(tx, input.target);
-  if (!snapshot) throw new Error(`通報対象 ${input.target.kind} が見つかりません。`);
+  if (!snapshot) return null;
 
   const [existing] = await tx.select({ id: evidenceSnapshots.id }).from(evidenceSnapshots).where(and(
     eq(evidenceSnapshots.targetId, reportTarget.id),
-    eq(evidenceSnapshots.sourceRevision, snapshot.sourceRevision),
     sql`${evidenceSnapshots.snapshot} = ${JSON.stringify(snapshot.content)}::jsonb`,
   )).orderBy(desc(evidenceSnapshots.capturedAt), desc(evidenceSnapshots.id)).limit(1);
   const evidenceId = existing?.id ?? (await tx.insert(evidenceSnapshots).values({

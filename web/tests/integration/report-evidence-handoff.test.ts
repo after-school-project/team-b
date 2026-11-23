@@ -185,6 +185,54 @@ describe("③ 通報証拠の保全", () => {
     });
   });
 
+  it("証拠に含めない項目だけが変わって版番号が上がっても、同じ内容の証拠を再利用する", async () => {
+    const questionId = await newQuestion("poc_s001");
+    const reportCase = await newCase({ kind: "question", questionId });
+    const first = await preserveEvidence(db, { target: { kind: "question", questionId }, at: new Date() });
+    await db.update(qaQuestions).set({ resolution: "resolved", version: 2 }).where(eq(qaQuestions.id, questionId));
+    const again = await preserveEvidence(db, { target: { kind: "question", questionId }, at: new Date() });
+    expect(again?.evidenceId).toBe(first?.evidenceId);
+    const evidence = await evidenceOf(reportCase.id);
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0].sourceRevision).toBe(1);
+  });
+
+  it("非表示中に保存を続けても、再公開の承認前の版を証拠に保存しない", async () => {
+    const userId = id("poc_staff");
+    const profileCase = await newCase({ kind: "profile", userId });
+    const accountCase = await newCase({ kind: "account", userId });
+    const preserve = (kind: "profile" | "account") => preserveEvidence(db, { target: { kind, userId }, at: new Date() });
+    /** 本人の保存と同じく、新しい版を作って現在版にする。 */
+    const save = async (revisionNo: number, displayName: string) => {
+      const [revision] = await db.insert(community.profileRevisions).values({
+        userId, revisionNo, displayName,
+        optionalValues: { bio: `${displayName}の自己紹介` }, fieldVisibility: { bio: "members" },
+      }).returning({ id: community.profileRevisions.id });
+      await db.update(community.profiles).set({ currentRevisionId: revision.id }).where(eq(community.profiles.userId, userId));
+    };
+
+    expect(await preserve("profile")).not.toBeNull(); // 公開中の版（1版）
+    await db.update(communityUsers).set({ profileState: "hidden" }).where(eq(communityUsers.userId, userId));
+    await save(2, "未承認の表示名二");
+    expect(await preserve("profile")).toBeNull();
+    await preserve("account");
+    await save(3, "未承認の表示名三");
+    expect(await preserve("profile")).toBeNull();
+    await preserve("account");
+
+    const hiddenEvidence = [...await evidenceOf(profileCase.id), ...await evidenceOf(accountCase.id)];
+    expect(hiddenEvidence.map(({ snapshot }) => JSON.stringify(snapshot)).join()).not.toContain("未承認");
+    expect((await evidenceOf(profileCase.id)).map(({ sourceRevision }) => sourceRevision)).toEqual([1]);
+    expect((await evidenceOf(accountCase.id)).map(({ snapshot }) => snapshot)).toEqual([
+      { userId, displayName: null, baseRole: "staff" },
+    ]);
+
+    // 再公開の承認後は、承認された現在版が公開版になる。
+    await db.update(communityUsers).set({ profileState: "public" }).where(eq(communityUsers.userId, userId));
+    await preserve("profile");
+    expect((await evidenceOf(profileCase.id)).map(({ sourceRevision }) => sourceRevision)).toEqual([1, 3]);
+  });
+
   it("AC-03 プロフィール・アカウントの証拠に、本人確認情報と本人のみの任意項目を含めない", async () => {
     const userId = id("poc_s002");
     const profileCase = await newCase({ kind: "profile", userId });
