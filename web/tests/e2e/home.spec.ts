@@ -76,6 +76,75 @@ test("ログイン画面は有効なセッションを戻り先へ送り、ク�
   await expect(page.getByText("ただいま準備中です。")).toBeVisible();
 });
 
+test("ホームに共通レイアウトを表示し、本人メニューに自分の公開表示名を出す。一般利用者には管理導線を出さない", async ({ page, baseURL }) => {
+  await signIn(page, baseURL!, "poc_s001");
+  await page.goto("/");
+  await expect(page.getByRole("heading", { level: 1, name: "ホーム" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "主要メニュー" }).getByRole("link", { name: "ホーム" }))
+    .toHaveAttribute("aria-current", "page");
+  // 未実装の画面への導線はリンクにしない。
+  await expect(page.getByRole("link", { name: /Q&A/ })).toHaveCount(0);
+
+  const accountButton = page.getByRole("button", { name: "マイメニュー" });
+  await accountButton.click();
+  await expect(accountButton).toHaveAttribute("aria-expanded", "true");
+  await expect(page.getByText(/^ログイン中\s*はる$/).filter({ visible: true })).toHaveCount(1);
+  await expect(page.getByText("管理エリアへ")).toHaveCount(0);
+});
+
+test("学校管理者には管理導線を表示する（管理エリアの実装前は準備中）", async ({ page, baseURL }) => {
+  await signIn(page, baseURL!, "poc_school");
+  await page.goto("/");
+  await expect(page.getByText("管理エリアへ")).toBeVisible();
+  await expect(page.getByRole("link", { name: /管理エリアへ/ })).toHaveCount(0);
+});
+
+test("モバイル幅でもキーボードだけでメニューを開閉し、主要導線と管理導線を使える", async ({ page, baseURL }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await signIn(page, baseURL!, "poc_s_mgr");
+  await page.goto("/");
+
+  const menuButton = page.getByRole("button", { name: "メニュー", exact: true });
+  await expect(menuButton).toBeVisible();
+  await expect(page.getByRole("link", { name: "ホーム" })).toBeHidden();
+
+  await menuButton.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("button", { name: "閉じる" })).toHaveAttribute("aria-expanded", "true");
+  await expect(page.getByRole("link", { name: "ホーム" })).toBeVisible();
+  await expect(page.getByText("管理エリアへ")).toBeVisible();
+  await expect(page.getByText(/^ログイン中\s*在校生アプリ管理者$/).filter({ visible: true })).toHaveCount(1);
+
+  // 開いたメニュー内のリンクへ Tab で移動でき、Escape で閉じてボタンへ戻る。
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("link", { name: "ホーム" })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(menuButton).toHaveAttribute("aria-expanded", "false");
+  await expect(menuButton).toBeFocused();
+});
+
+test("画面の高さが低いモバイルでも、開いたメニュー内だけをスクロールし、閉じるボタンを表示したまま全項目を確認できる", async ({ page, baseURL }) => {
+  await page.setViewportSize({ width: 375, height: 500 });
+  await signIn(page, baseURL!, "poc_school");
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "メニュー", exact: true }).click();
+  const closeButton = page.getByRole("button", { name: "閉じる" });
+  await expect(closeButton).toBeInViewport();
+  const header = await page.locator("header").boundingBox();
+  expect(header!.height).toBeLessThanOrEqual(500);
+
+  // メニューの最後の項目（管理導線）までメニュー内でスクロールしても、閉じるボタンは画面内に残る。
+  const adminItem = page.getByText("管理エリアへ");
+  await adminItem.scrollIntoViewIfNeeded();
+  await expect(adminItem).toBeInViewport();
+  await expect(closeButton).toBeInViewport();
+  expect(await page.evaluate(() => window.scrollY)).toBe(0);
+
+  await closeButton.click();
+  await expect(page.getByRole("heading", { level: 1, name: "ホーム" })).toBeInViewport();
+});
+
 test("停止中の利用者はホームを表示せず、ログイン画面の停止案内に留まる", async ({ page, baseURL }) => {
   await signIn(page, baseURL!, "poc_suspended");
   await page.goto("/");

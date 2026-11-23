@@ -210,14 +210,57 @@
   display: flex;
 }
 
+/* 未実装の画面への導線：リンクにせず、位置を保ったまま「準備中」と表示する */
+.navUnavailable,
+.utilityUnavailable,
+.adminUnavailable {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-min-size);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-control);
+  color: var(--color-text-muted);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.4;
+  cursor: default;
+}
+
+.utilityUnavailable {
+  display: inline-flex;
+}
+
+.adminUnavailable {
+  justify-content: center;
+  border: 1px dashed var(--color-control-border);
+}
+
+.soonLabel {
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-control);
+  color: var(--color-neutral);
+  background: var(--color-neutral-bg);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 /* スマートフォン幅：主要メニューを折りたたむ */
 .menuPanel {
   grid-area: panel;
   display: none;
   flex-direction: column;
   gap: var(--space-4);
-  padding: var(--space-2) 0 var(--space-4);
+  /* 左右の余白はフォーカス枠がスクロール領域の端で切れないようにするため */
+  padding: var(--space-2) var(--space-1) var(--space-4);
   border-top: 1px solid var(--color-border);
+  /* 画面の高さが低くても開閉ボタン（ヘッダー1行目）を表示したまま、メニュー内だけをスクロールさせる。
+     1行目の高さ（56px）とヘッダー下線（1px）を除いた高さを上限にする。dvh 非対応の環境は vh を使う。 */
+  max-height: calc(100vh - 57px);
+  max-height: calc(100dvh - 57px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .menuPanel[data-open="true"] {
@@ -284,6 +327,8 @@
     justify-content: space-between;
     gap: var(--space-4);
     padding: var(--space-1) 0;
+    max-height: none;
+    overflow: visible;
   }
 
   .primaryNav .navList {
