@@ -1,12 +1,15 @@
 import { verifyPassword } from "better-auth/crypto";
-import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, expect, it } from "vitest";
+import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { migrateDatabase } from "../../scripts/lib/database-management";
+import { expectExit, runAccountTask as runTask } from "./account-task";
 import { isolatedDatabase } from "./isolated-database";
+
+// 各テストで開発担当のコマンドを別プロセスとして複数回実行するため、既定の15秒より長くする。
+vi.setConfig({ testTimeout: 120_000 });
 
 const fixture = {
   username: "issue33_staff",
@@ -43,15 +46,10 @@ async function issueAccount(input: typeof fixture, output: string) {
 }
 
 function runAccountTask(task: string, ...args: string[]) {
-  return spawnSync("npm", ["run", task, "--", ...args], {
-    encoding: "utf8",
-    timeout: 10_000,
-    env: {
-      ...process.env,
-      DATABASE_URL_DIRECT: database.url.toString(),
-      BETTER_AUTH_URL: "http://localhost:3000",
-      BETTER_AUTH_SECRET: "integration-tests-only-issue-account-fixture",
-    },
+  return runTask(task, args, {
+    DATABASE_URL_DIRECT: database.url.toString(),
+    BETTER_AUTH_URL: "http://localhost:3000",
+    BETTER_AUTH_SECRET: "integration-tests-only-issue-account-fixture",
   });
 }
 
@@ -100,7 +98,7 @@ it("学校確認済みアカウントを発行し、重複時は認証情報・�
   const output = join(directory, "credentials.json");
   const displayName = "𠮷".repeat(50);
   const issued = await issueAccount({ ...fixture, displayName: `  ${displayName}  ` }, output);
-  expect(issued.status).toBe(0);
+  expectExit(issued, 0);
   const { username, password } = JSON.parse(await readFile(output, "utf8")) as {
     username: string; password: string;
   };
@@ -126,7 +124,7 @@ it("学校確認済みアカウントを発行し、重複時は認証情報・�
   const repeated = await issueAccount({
     ...fixture, baseRole: "alumni", schoolManager: false, appManager: true,
   }, duplicateOutput);
-  expect(repeated.status).toBe(1);
+  expectExit(repeated, 1);
   expect(repeated.stderr).toContain("このログインIDは発行済み");
   await expect(readFile(duplicateOutput)).rejects.toMatchObject({ code: "ENOENT" });
   const { password: currentHash, ...after } = await account(fixture.username);
@@ -141,7 +139,7 @@ it("出力先が既にある場合は上書きせず、認証アカウントの�
   await writeFile(output, "既存ファイル");
   const before = await accountAudits();
   const result = await issueAccount({ ...fixture, username }, output);
-  expect(result.status).toBe(1);
+  expectExit(result, 1);
   expect(await readFile(output, "utf8")).toBe("既存ファイル");
   const users = await database.client.query('SELECT id FROM "user" WHERE username = $1', [username]);
   expect(users.rowCount).toBe(0);
@@ -161,7 +159,7 @@ it.each([
   const output = join(directory, "invalid.json");
   const username = "issue33_invalid";
   const result = await issueAccount({ ...fixture, username, ...override }, output);
-  expect(result.status).toBe(1);
+  expectExit(result, 1);
   expect(result.stderr).toContain("発行情報の形式");
   await expect(readFile(output)).rejects.toMatchObject({ code: "ENOENT" });
   expect(await account(override.username ?? username)).toBeUndefined();
@@ -170,7 +168,7 @@ it.each([
 it("再発行は対象の旧パスワードと全セッションだけを無効にする", async () => {
   const username = "issue33_reset";
   const originalFile = join(directory, "before-reset.json");
-  expect((await issueAccount({ ...fixture, username }, originalFile)).status).toBe(0);
+  expectExit(await issueAccount({ ...fixture, username }, originalFile), 0);
   const { password: oldPassword } = JSON.parse(await readFile(originalFile, "utf8")) as { password: string };
   const { password: oldHash, ...before } = await account(username);
 
@@ -206,14 +204,14 @@ it("再発行は対象の旧パスワードと全セッションだけを無効�
   expect(beforePosts).toHaveLength(1);
 
   const failed = runAccountTask("account:reset-password", "--username", username, "--output", originalFile);
-  expect(failed.status).toBe(1);
+  expectExit(failed, 1);
   expect((await account(username)).password === oldHash).toBe(true);
   expect(await sessionIds()).toEqual([...targetSessions, otherSession].sort());
   expect(await accountAudits(before.id)).toEqual([issuedAudit]);
 
   const output = join(directory, "reset.json");
   const reset = runAccountTask("account:reset-password", "--username", username, "--output", output);
-  expect(reset.status).toBe(0);
+  expectExit(reset, 0);
   const issued = JSON.parse(await readFile(output, "utf8")) as { username: string; password: string };
   expect(issued.username).toBe(username);
   expect(typeof issued.password === "string" && /^[A-Za-z0-9_-]{24}$/.test(issued.password)).toBe(true);
@@ -235,7 +233,7 @@ it("再発行は対象の旧パスワードと全セッションだけを無効�
 it("未発行のログインIDに対して受渡用ファイルを作らない", async () => {
   const output = join(directory, "missing-reset.json");
   const result = runAccountTask("account:reset-password", "--username", "issue33_missing", "--output", output);
-  expect(result.status).toBe(1);
+  expectExit(result, 1);
   expect(result.stderr).toContain("再発行できる学校発行アカウントが見つかりません");
   await expect(readFile(output)).rejects.toMatchObject({ code: "ENOENT" });
 });
