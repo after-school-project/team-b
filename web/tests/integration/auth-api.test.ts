@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -8,6 +9,7 @@ import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { seedDevelopmentData } from "../../scripts/development-seed";
 import { migrateDatabase } from "../../scripts/lib/database-management";
 import { GET, POST } from "../../src/app/api/auth/[...auth]/route";
+import { GET as meGet } from "../../src/app/api/v1/me/route";
 import { loginRateLimit } from "../../src/auth/login-rate-limit";
 import { getAuthSession } from "../../src/auth/server";
 import { isolatedDatabase } from "./isolated-database";
@@ -173,6 +175,54 @@ async function expectLoginLimit() {
   // 時間窓の起点から60秒たつと、同じ送信元でも再び認証を試せる。
   vi.setSystemTime(Date.now() + loginRateLimit.window * 1000);
   expect((await send(loginPath, { ip, body })).status).toBe(401);
+}
+
+it("再発行後は旧パスワードと再発行前の全Cookieを認証APIで拒否し、新しいパスワードでログインできる", async () => {
+  const username = "poc_a001";
+  const ip = "192.0.2.17";
+  const oldPassword = credentials[username];
+  const first = await logIn(username, ip);
+  const second = await logIn(username, ip);
+  expect((await me(first.cookie)).status).toBe(200);
+
+  const output = join(credentialsDir, "reset-poc_a001.json");
+  const reset = spawnSync("npm", ["run", "account:reset-password", "--", "--username", username, "--output", output], {
+    encoding: "utf8",
+    timeout: 30_000,
+    env: {
+      ...process.env,
+      DATABASE_URL_DIRECT: target.url.toString(),
+      BETTER_AUTH_URL: origin,
+      BETTER_AUTH_SECRET: randomBytes(32).toString("hex"),
+    },
+  });
+  expect(reset.status).toBe(0);
+  const { password: newPassword } = JSON.parse(await readFile(output, "utf8")) as { password: string };
+  expect(newPassword).not.toBe(oldPassword);
+
+  // 再発行前のセッションは、どのCookieでもセッション確認・保護APIの両方で未認証になる。
+  for (const { cookie } of [first, second]) {
+    const session = await send(sessionPath, { cookie });
+    expect(session.status).toBe(200);
+    expect(await session.json()).toBeNull();
+    expect((await me(cookie)).status).toBe(401);
+  }
+
+  const rejected = await send(loginPath, { ip, body: { username, password: oldPassword } });
+  expect(rejected.status).toBe(401);
+  expect(await rejected.json()).toEqual({ code: "INVALID_USERNAME_OR_PASSWORD" });
+  expect(rejected.headers.getSetCookie()).toHaveLength(0);
+
+  credentials[username] = newPassword;
+  const renewed = await logIn(username, ip);
+  expect(renewed.userId).toBe(first.userId);
+  expect((await me(renewed.cookie)).status).toBe(200);
+}, 60_000); // 再発行コマンドを別プロセスで起動するため、既定の15秒より長くする。
+
+/** 保護API（API-COM-01）の応答。認証されていなければ401になる。 */
+async function me(cookie: string) {
+  const response = await meGet(new Request(origin + "/api/v1/me", { headers: { Cookie: cookie } }), {});
+  return { status: response.status };
 }
 
 it.each([null, "https://other.example", "https://school.example/"])(
