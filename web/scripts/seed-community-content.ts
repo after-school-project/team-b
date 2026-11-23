@@ -1,12 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { eq, like, or } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
+import { notificationEventKey, notificationValues, type NotificationSubject } from "../src/api/notifications";
 import {
   eventRequests, eventRevisions, events, noticeRequests, noticeRevisions, notices, qaQuestions, qaResponses,
 } from "../src/db/content-schema";
-import { recordNotification } from "../src/api/notifications";
 import {
-  auditLogs, evidenceSnapshots, operationReceipts, reportActions, reportCaseEvidence,
+  auditLogs, evidenceSnapshots, notifications, operationReceipts, reportActions, reportCaseEvidence,
   reportCases, reportTargets, reports,
 } from "../src/db/moderation-schema";
 import { graduationChanges, managerRoleChanges, qaCategories } from "../src/db/schema";
@@ -14,11 +14,42 @@ import { graduationChanges, managerRoleChanges, qaCategories } from "../src/db/s
 type SeedTransaction = Parameters<Parameters<NodePgDatabase["transaction"]>[0]>[0];
 const demoQuestionId = "3f11e8d7-925d-4cdd-af58-354378699ded";
 
+/**
+ * #47 より前の seed が保存した旧形式のキー（`qa-answer:<回答ID>` など）を、`<kind>:<対象ID>:<契機ID>` へ更新する。
+ * 同じ行を更新するため、通知のIDと既読状態は変わらない。旧形式のキーは seed だけが作るため、それ以外の通知は変えない。
+ */
+export async function upgradeLegacySeedNotificationKeys(tx: SeedTransaction): Promise<number> {
+  const rows = await tx.select().from(notifications).where(or(
+    like(notifications.eventKey, "qa-answer:%"),
+    like(notifications.eventKey, "notice-request:%"),
+    like(notifications.eventKey, "event-request:%"),
+  ));
+  let updated = 0;
+  for (const row of rows) {
+    let subject: NotificationSubject | null = null;
+    if (row.kind === "qa_answer_created" && row.qaResponseId && row.eventKey === `qa-answer:${row.qaResponseId}`) {
+      subject = { kind: row.kind, responseId: row.qaResponseId };
+    } else if (row.kind === "notice_review_requested" && row.noticeRequestId && row.eventKey === `notice-request:${row.noticeRequestId}`) {
+      subject = { kind: row.kind, noticeRequestId: row.noticeRequestId };
+    } else if (row.kind === "event_review_requested" && row.eventRequestId && row.eventKey === `event-request:${row.eventRequestId}`) {
+      subject = { kind: row.kind, eventRequestId: row.eventRequestId };
+    }
+    if (!subject) continue;
+    await tx.update(notifications).set({ eventKey: notificationEventKey(subject) }).where(eq(notifications.id, row.id));
+    updated += 1;
+  }
+  return updated;
+}
+
 export async function seedCommunityContent(tx: SeedTransaction, userIds: ReadonlyMap<string, string>) {
   // The question, its references, and the rest of the sample data are inserted in one transaction.
   const [existing] = await tx.select({ id: qaQuestions.id }).from(qaQuestions)
     .where(eq(qaQuestions.id, demoQuestionId));
-  if (existing) return;
+  if (existing) {
+    // 既に投入済みの開発DBでも、旧形式のキーで保存した seed の通知を現在の形式へ揃える（#47）。
+    await upgradeLegacySeedNotificationKeys(tx);
+    return;
+  }
 
   function userId(username: string) {
     const id = userIds.get(username);
@@ -136,18 +167,22 @@ export async function seedCommunityContent(tx: SeedTransaction, userIds: Readonl
     beforeState: { status: "unhandled" }, afterState: { status: "in_progress" },
   });
 
-  // 通知は業務処理と同じ共通処理で記録し、event_key と public_message の形式を揃える（#47）。
-  await recordNotification(tx, {
-    recipientId: student, actorId: alumni, subject: { kind: "qa_answer_created", responseId: answer.id }, at: publishedAt,
-  });
-  await recordNotification(tx, {
-    recipientId: schoolManager, actorId: alumni,
-    subject: { kind: "notice_review_requested", noticeRequestId: noticeRequest.id }, at: publishedAt,
-  });
-  await recordNotification(tx, {
-    recipientId: schoolManager, actorId: student,
-    subject: { kind: "event_review_requested", eventRequestId: eventRequest.id }, at: publishedAt,
-  });
+  // 通知の値は業務処理と同じ共通処理で作り、event_key と public_message の形式を揃える（#47）。
+  // seed は並行する更新のない1つのトランザクションで投入するため、受信者の行ロックを取らずに保存する。
+  const seededNotifications = [
+    notificationValues({
+      recipientId: student, actorId: alumni, subject: { kind: "qa_answer_created", responseId: answer.id }, at: publishedAt,
+    }),
+    notificationValues({
+      recipientId: schoolManager, actorId: alumni,
+      subject: { kind: "notice_review_requested", noticeRequestId: noticeRequest.id }, at: publishedAt,
+    }),
+    notificationValues({
+      recipientId: schoolManager, actorId: student,
+      subject: { kind: "event_review_requested", eventRequestId: eventRequest.id }, at: publishedAt,
+    }),
+  ];
+  await tx.insert(notifications).values(seededNotifications.filter((values) => values !== null));
   await tx.insert(managerRoleChanges).values({
     userId: userId("poc_s_mgr"), actorId: schoolManager, beforeAppManager: false, afterAppManager: true,
   });

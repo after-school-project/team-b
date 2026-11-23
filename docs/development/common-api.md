@@ -175,31 +175,39 @@ export const { GET, HEAD, OPTIONS, POST, PUT, DELETE, PATCH } = defineAuthorized
 
 ### 通知・監査ログの記録
 
-通知と監査ログは、`execute` の中で同じ `tx` と `now` を渡して記録します。業務更新が失敗すれば一緒にロールバックされ、再送では `execute` が呼ばれないため重複しません。[DB・ER設計書](../After_School_Project_PoC_DB・ER設計書_v0.1.md) §5・§7
+通知と監査ログは、`execute` の中で同じトランザクションと `now` を渡して記録します。業務更新が失敗すれば一緒にロールバックされ、再送では `execute` が呼ばれないため重複しません。[DB・ER設計書](../After_School_Project_PoC_DB・ER設計書_v0.1.md) §5・§7
 
 | 共通処理 | 使い方 |
 |---|---|
-| [`recordNotification`](../../web/src/api/notifications.ts) | 受信者・実行者・対象（`subject`）を渡して1件記録する。受信者と実行者が同じなら作らない。`event_key`（`<kind>:<対象ID>:<契機ID>`）と `public_message`（定型文と本人向けの理由）は共通処理が作り、対象の題名・本文は保存しない |
-| `recordReviewRequestNotifications` | お知らせ・イベントの審査依頼を、審査できる現在の管理者全員（申請者本人を除く）へ記録する |
-| [`recordAuditLog`](../../web/src/api/audit-log.ts) | 操作（`action`）ごとの許可リストにある項目だけを before/after に記録し、IDを返す。許可外の項目や単純な値でない項目は例外になる。システム処理は `actorId: null` |
+| [`recordNotification`](../../web/src/api/notifications.ts) | `execute` の文脈（`tx`・`requireLockedUsers`）と、受信者・実行者・対象（`subject`）を渡して1件記録する。受信者と実行者が同じなら作らない。`event_key`（`<kind>:<対象ID>:<契機ID>`）と `public_message`（定型文と本人向けの理由）は共通処理が作り、対象の題名・本文は保存しない。非表示とイベント・プロフィール再公開の却下は理由が必須 |
+| `reviewRequestRecipients`・`recordReviewRequestNotifications` | お知らせ・イベントの審査依頼を、審査できる現在の管理者全員（申請者本人を除く）へ記録する。宛先は `resolveUserIds` で `reviewRequestRecipients` を使ってロック計画に含め、記録時にロック後の状態で読み直す |
+| [`recordAuditLog`](../../web/src/api/audit-log.ts) | 操作（`action`）ごとの許可リストにある項目だけを、項目ごとに許可した値（状態の列挙値・版番号など）として before/after に記録し、IDを返す。許可外の項目・値は例外になる。システム処理は `actorId: null` |
+
+通知の受信者は、`resolveUserIds` に含めて利用者行をロックします（共通認可条件表 §5）。通知の外部キー検査は受信者の行を参照するため、ロックせずに記録すると、受信者自身の更新と互いに待ち合ってデッドロックになります。含め忘れた場合も `recordNotification` が `requireLockedUsers` で受信者を含めてやり直しますが、最初から含めればやり直しが起きません。
 
 ```ts
-async execute({ tx, now }) {
-  // 業務更新の後に記録する。
-  const auditLogId = await recordAuditLog(tx, {
-    action: "profile.hidden", actorId: viewer.userId, targetId: userId,
-    before: { profileState: "public" }, after: { profileState: "hidden" }, publicReason, at: now,
-  });
-  // 非表示の通知は、監査ログのIDを契機IDにする。
-  await recordNotification(tx, {
-    recipientId: userId, actorId: viewer.userId,
-    subject: { kind: "profile_hidden", userId, auditLogId, publicReason }, at: now,
-  });
-}
+return commitMutation(db, {
+  // ...
+  resolveUserIds: async () => [userId], // 通知の受信者を含める
+  async execute(context) {
+    const { tx, now } = context;
+    // 業務更新の後に記録する。
+    const auditLogId = await recordAuditLog(tx, {
+      action: "profile.hidden", actorId: viewer.userId, targetId: userId,
+      before: { profileState: "public" }, after: { profileState: "hidden" }, publicReason, at: now,
+    });
+    // 非表示の通知は、監査ログのIDを契機IDにする。
+    await recordNotification(context, {
+      recipientId: userId, actorId: viewer.userId,
+      subject: { kind: "profile_hidden", userId, auditLogId, publicReason }, at: now,
+    });
+    // ...
+  },
+});
 ```
 
-- kind ごとの対象と契機IDは `NotificationSubject` の説明を参照してください。Q&Aの宛先（質問者・直接の親投稿者）の特定は各機能で行います。
-- 監査ログの許可リスト（`auditOperations`）には #8 の操作だけを定めています。新しい操作を記録する機能は、その操作の対象の種類と項目を追加します。
+- kind ごとの対象・契機ID・理由の要否は `NotificationSubject` の説明を参照してください。Q&Aの宛先（質問者・直接の親投稿者）の特定は各機能で行います。
+- 監査ログの許可リスト（`auditOperations`）には #8 の操作だけを定めています。新しい操作を記録する機能は、その操作の対象の種類と、項目ごとに許可する値を追加します。
 
 ## 環境設定
 
