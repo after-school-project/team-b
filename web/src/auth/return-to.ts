@@ -7,15 +7,65 @@
 const appOrigin = "https://after-school.invalid";
 const defaultReturnTo = "/";
 
+const uuidSegment = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const userIdSegment = /^[A-Za-z0-9_-]{1,128}$/;
+
 /**
- * 戻り先として許可する実装済み画面のパス。
- * 画面を実装したら追加する（`components/app-shell/navigation.ts` の導線でも、未実装の画面は含めない）。
+ * 可変パスのパラメーターが受け付ける値。名前は画面遷移・状態遷移設計書 §2 のURLに合わせる。
+ * 1つのパスセグメントだけに一致させ、`/`・`%`・`.` を含む値は受け付けない。
+ */
+const routeParams: Readonly<Record<string, RegExp>> = {
+  questionId: uuidSegment,
+  eventId: uuidSegment,
+  noticeId: uuidSegment,
+  caseId: uuidSegment,
+  userId: userIdSegment,
+};
+
+/**
+ * 実装済みの画面のルート。戻り先の許可と、共通ナビで押せる導線の判定（`components/app-shell/navigation.ts`）に使う。
+ * 可変部分は `/questions/[questionId]` のように書く。画面を実装したら追加し、未実装の画面は含めない。
  * `/login` と `/api/*` は追加しない。
  */
-const allowedReturnPaths: ReadonlySet<string> = new Set(["/"]);
+export const implementedScreenRoutes: readonly string[] = ["/"];
+
+type CompiledRoute = readonly (string | RegExp)[];
+
+function compileRoute(route: string): CompiledRoute {
+  if (!route.startsWith("/")) throw new Error(`画面のルートは / で始めてください: ${route}`);
+  return route === "/" ? [] : route.slice(1).split("/").map((segment) => {
+    const param = /^\[([A-Za-z]+)\]$/.exec(segment)?.[1];
+    if (param === undefined) return segment;
+    const pattern = routeParams[param];
+    if (!pattern) throw new Error(`未定義のルートパラメーターです: ${segment}`);
+    return pattern;
+  });
+}
+
+function matchesCompiled(pathname: string, route: CompiledRoute): boolean {
+  const segments = pathname === "/" ? [] : pathname.slice(1).split("/");
+  return segments.length === route.length &&
+    route.every((part, index) => typeof part === "string" ? segments[index] === part : part.test(segments[index] ?? ""));
+}
+
+const compiledRoutes = new Map<readonly string[], readonly CompiledRoute[]>();
+
+function compiledFor(routes: readonly string[]): readonly CompiledRoute[] {
+  let compiled = compiledRoutes.get(routes);
+  if (!compiled) {
+    compiled = routes.map(compileRoute);
+    compiledRoutes.set(routes, compiled);
+  }
+  return compiled;
+}
+
+/** パス（クエリー・ハッシュを含まない）が実装済みの画面のルートに一致するか。 */
+export function matchesScreenRoute(pathname: string, routes: readonly string[] = implementedScreenRoutes): boolean {
+  return compiledFor(routes).some((route) => matchesCompiled(pathname, route));
+}
 
 /** 許可した同一アプリ内の相対パスだけを返す。未指定・許可外は `/`。 */
-export function resolveReturnTo(value: unknown): string {
+export function resolveReturnTo(value: unknown, routes: readonly string[] = implementedScreenRoutes): string {
   if (typeof value !== "string" || !value.startsWith("/") || value.startsWith("//") || value.includes("\\")) {
     return defaultReturnTo;
   }
@@ -26,7 +76,7 @@ export function resolveReturnTo(value: unknown): string {
       destination.origin !== appOrigin ||
       destination.pathname === "/login" ||
       destination.pathname.startsWith("/api/") ||
-      !allowedReturnPaths.has(destination.pathname)
+      !matchesScreenRoute(destination.pathname, routes)
     ) {
       return defaultReturnTo;
     }
@@ -38,7 +88,7 @@ export function resolveReturnTo(value: unknown): string {
 }
 
 /** 戻り先を付けたログイン画面のURL。許可外の戻り先は付けない。 */
-export function loginPathFor(returnTo: unknown): string {
-  const resolved = resolveReturnTo(returnTo);
+export function loginPathFor(returnTo: unknown, routes: readonly string[] = implementedScreenRoutes): string {
+  const resolved = resolveReturnTo(returnTo, routes);
   return resolved === defaultReturnTo ? "/login" : `/login?returnTo=${encodeURIComponent(resolved)}`;
 }

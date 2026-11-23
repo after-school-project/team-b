@@ -3,14 +3,26 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const navigation = vi.hoisted(() => ({ pathname: "/" }));
+/** true の間は、未実装の画面も含めて全導線を実装済みとして描画する（リンク・現在地・未読表示の確認用）。 */
+const availability = vi.hoisted(() => ({ all: false }));
 
 vi.mock("next/navigation", () => ({
   usePathname: () => navigation.pathname,
 }));
 
+vi.mock("@/components/app-shell/navigation", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/components/app-shell/navigation")>();
+  return {
+    ...actual,
+    isNavItemAvailable: (item: { href: string }) => availability.all || actual.isNavItemAvailable(item),
+  };
+});
+
 import { AppShell, type AppShellProps } from "@/components/app-shell/AppShell";
 import {
   ACCOUNT_NAV_ITEMS,
+  ADMIN_NAV_ITEM,
+  NOTIFICATION_NAV_ITEM,
   PRIMARY_NAV_ITEMS,
   formatUnreadCount,
   getAriaCurrent,
@@ -77,9 +89,52 @@ describe("共通ナビゲーションの導線定義", () => {
   });
 });
 
-describe("AppShell", () => {
+describe("導線の実装状況", () => {
+  it("実装済みの画面（現在はホームだけ）の導線を押せる状態にする", async () => {
+    const actual = await vi.importActual<typeof import("@/components/app-shell/navigation")>(
+      "@/components/app-shell/navigation",
+    );
+    expect(actual.isNavItemAvailable({ href: "/" })).toBe(true);
+    for (const item of [...PRIMARY_NAV_ITEMS.slice(1), ...ACCOUNT_NAV_ITEMS, NOTIFICATION_NAV_ITEM, ADMIN_NAV_ITEM]) {
+      expect(actual.isNavItemAvailable(item)).toBe(false);
+    }
+  });
+});
+
+describe("AppShell（未実装の画面がある状態）", () => {
   beforeEach(() => {
     navigation.pathname = "/";
+    availability.all = false;
+  });
+
+  it("実装済みのホームだけをリンクにし、未実装の画面は押せない「準備中」として表示する", () => {
+    const html = renderShell({ canAccessAdmin: false });
+    expect(html).toContain('href="/"');
+    for (const item of [...PRIMARY_NAV_ITEMS.slice(1), ...ACCOUNT_NAV_ITEMS, NOTIFICATION_NAV_ITEM]) {
+      expect(html).not.toContain(`href="${item.href}"`);
+      expect(html).toContain(item.label.replaceAll("&", "&amp;"));
+    }
+    expect(html).toContain("準備中");
+    expect(html).toContain("（</span>準備中<span");
+  });
+
+  it("管理エリアが未実装でも、有効な管理者には導線を「準備中」として表示する", () => {
+    const admin = renderShell({ canAccessAdmin: true });
+    expect(admin).toContain(ADMIN_NAV_ITEM.label);
+    expect(admin).not.toContain('href="/admin"');
+
+    expect(renderShell({ canAccessAdmin: false })).not.toContain(ADMIN_NAV_ITEM.label);
+  });
+
+  it("通知が未実装の間は未読件数を表示しない", () => {
+    expect(renderShell({ canAccessAdmin: false, unread: 3 })).not.toContain("未読");
+  });
+});
+
+describe("AppShell（全画面を実装済みとした場合）", () => {
+  beforeEach(() => {
+    navigation.pathname = "/";
+    availability.all = true;
   });
 
   it("本文への移動リンク、主要メニュー、通知、本人メニュー、本文を表示する", () => {

@@ -10,6 +10,7 @@ import {
   PRIMARY_NAV_ITEMS,
   formatUnreadCount,
   getAriaCurrent,
+  isNavItemAvailable,
   type AppShellViewer,
   type NavItem,
 } from "./navigation";
@@ -59,20 +60,24 @@ export function AppNavigation({ viewer, unreadNotificationCount }: AppNavigation
   return (
     <>
       <div className={styles.utilities}>
-        <Link
-          className={styles.utilityLink}
-          href={NOTIFICATION_NAV_ITEM.href}
-          aria-current={getAriaCurrent(pathname, NOTIFICATION_NAV_ITEM.href)}
-          onClick={closeAll}
-        >
-          <span>{NOTIFICATION_NAV_ITEM.label}</span>
-          {unreadLabel ? (
-            <span className={styles.badge}>
-              <span aria-hidden="true">{unreadLabel}</span>
-              <span className={styles.visuallyHidden}>（未読{unreadLabel}件）</span>
-            </span>
-          ) : null}
-        </Link>
+        {isNavItemAvailable(NOTIFICATION_NAV_ITEM) ? (
+          <Link
+            className={styles.utilityLink}
+            href={NOTIFICATION_NAV_ITEM.href}
+            aria-current={getAriaCurrent(pathname, NOTIFICATION_NAV_ITEM.href)}
+            onClick={closeAll}
+          >
+            <span>{NOTIFICATION_NAV_ITEM.label}</span>
+            {unreadLabel ? (
+              <span className={styles.badge}>
+                <span aria-hidden="true">{unreadLabel}</span>
+                <span className={styles.visuallyHidden}>（未読{unreadLabel}件）</span>
+              </span>
+            ) : null}
+          </Link>
+        ) : (
+          <UnavailableItem className={styles.utilityUnavailable} label={NOTIFICATION_NAV_ITEM.label} />
+        )}
 
         <div
           className={styles.accountMenu}
@@ -140,7 +145,7 @@ export function AppNavigation({ viewer, unreadNotificationCount }: AppNavigation
           <NavList items={ACCOUNT_NAV_ITEMS} pathname={pathname} onNavigate={closeAll} />
         </nav>
 
-        {viewer.canAccessAdmin ? (
+        {!viewer.canAccessAdmin ? null : isNavItemAvailable(ADMIN_NAV_ITEM) ? (
           <Link
             className={styles.adminLink}
             href={ADMIN_NAV_ITEM.href}
@@ -149,7 +154,9 @@ export function AppNavigation({ viewer, unreadNotificationCount }: AppNavigation
           >
             {ADMIN_NAV_ITEM.label}
           </Link>
-        ) : null}
+        ) : (
+          <UnavailableItem className={styles.adminUnavailable} label={ADMIN_NAV_ITEM.label} />
+        )}
       </div>
     </>
   );
@@ -168,17 +175,33 @@ function NavList({
     <ul className={styles.navList}>
       {items.map((item) => (
         <li key={item.href}>
-          <Link
-            className={styles.navLink}
-            href={item.href}
-            aria-current={getAriaCurrent(pathname, item.href)}
-            onClick={onNavigate}
-          >
-            {item.label}
-          </Link>
+          {isNavItemAvailable(item) ? (
+            <Link
+              className={styles.navLink}
+              href={item.href}
+              aria-current={getAriaCurrent(pathname, item.href)}
+              onClick={onNavigate}
+            >
+              {item.label}
+            </Link>
+          ) : (
+            <UnavailableItem className={styles.navUnavailable} label={item.label} />
+          )}
         </li>
       ))}
     </ul>
+  );
+}
+
+/** 未実装の画面への導線。リンクにせず（フォーカスも受けない）、準備中であることを表示と読み上げの両方で伝える。 */
+function UnavailableItem({ className, label }: { className: string; label: string }) {
+  return (
+    <span className={className}>
+      {label}
+      <span className={styles.soonLabel}>
+        <span className={styles.visuallyHidden}>（</span>準備中<span className={styles.visuallyHidden}>）</span>
+      </span>
+    </span>
   );
 }
 

@@ -1,3 +1,5 @@
+import { matchesScreenRoute } from "@/auth/return-to";
+
 /**
  * ログイン後の共通ナビゲーション（SCR-01）の導線定義。
  * URLは画面遷移・状態遷移設計書 §2 に従う。表示可否はサーバーで判定した値（AppShellViewer）だけで切り替える。
@@ -69,6 +71,14 @@ export function getAriaCurrent(pathname: string, href: string): "page" | "true" 
     return undefined;
   }
   return normalizePath(pathname) === href ? "page" : "true";
+}
+
+/**
+ * 導線の画面が実装済みで、押せる状態にするか。戻り先の許可と同じ「実装済みの画面」の一覧（`auth/return-to.ts`）で判定する。
+ * 未実装の画面は、導線の位置を保ったまま「準備中」として押せない状態で表示する。
+ */
+export function isNavItemAvailable(item: Pick<NavItem, "href">): boolean {
+  return matchesScreenRoute(item.href);
 }
 
 /** 未読件数の表示用ラベル。0件・不明の場合は表示しない。 */
