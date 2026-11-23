@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -143,8 +143,8 @@ describe("③ 通報証拠の保全", () => {
   it("質問の公開内容を保存して未終了案件に関連付け、同じ内容での再実行では重複させない", async () => {
     const questionId = await newQuestion("poc_s001");
     const reportCase = await newCase({ kind: "question", questionId });
-    const first = await preserveInTransaction({ target: { kind: "question", questionId }, at: new Date() });
-    const again = await preserveInTransaction({ target: { kind: "question", questionId }, at: new Date() });
+    const first = await preserveInTransaction({ target: { kind: "question", questionId } });
+    const again = await preserveInTransaction({ target: { kind: "question", questionId } });
     expect(first).toEqual({ evidenceId: again?.evidenceId, caseIds: [reportCase.id] });
 
     const [question] = await db.select().from(qaQuestions).where(eq(qaQuestions.id, questionId));
@@ -159,9 +159,9 @@ describe("③ 通報証拠の保全", () => {
   it("内容が変わった後に保全すると、新しい証拠を追加して同じ案件に関連付ける", async () => {
     const questionId = await newQuestion("poc_s001");
     const reportCase = await newCase({ kind: "question", questionId });
-    await preserveInTransaction({ target: { kind: "question", questionId }, at: new Date() });
+    await preserveInTransaction({ target: { kind: "question", questionId } });
     await db.update(qaQuestions).set({ bodyMarkdown: "編集後の本文", version: 2 }).where(eq(qaQuestions.id, questionId));
-    await preserveInTransaction({ target: { kind: "question", questionId }, at: new Date() });
+    await preserveInTransaction({ target: { kind: "question", questionId } });
     const evidence = await evidenceOf(reportCase.id);
     expect(evidence.map(({ sourceRevision }) => sourceRevision)).toEqual([1, 2]);
     expect(evidence[1].snapshot).toMatchObject({ bodyMarkdown: "編集後の本文" });
@@ -172,8 +172,8 @@ describe("③ 通報証拠の保全", () => {
     const closedOnly = await newQuestion("poc_s001");
     await newCase({ kind: "question", questionId: closedOnly }, { status: "closed" });
     const before = await db.select({ id: evidenceSnapshots.id }).from(evidenceSnapshots);
-    expect(await preserveInTransaction({ target: { kind: "question", questionId: unreported }, at: new Date() })).toBeNull();
-    expect(await preserveInTransaction({ target: { kind: "question", questionId: closedOnly }, at: new Date() })).toBeNull();
+    expect(await preserveInTransaction({ target: { kind: "question", questionId: unreported } })).toBeNull();
+    expect(await preserveInTransaction({ target: { kind: "question", questionId: closedOnly } })).toBeNull();
     expect(await db.select({ id: evidenceSnapshots.id }).from(evidenceSnapshots)).toHaveLength(before.length);
   });
 
@@ -182,7 +182,7 @@ describe("③ 通報証拠の保全", () => {
     const answerId = await newResponse(questionId, "poc_s001");
     const replyId = await newResponse(questionId, "poc_s002", answerId);
     const reportCase = await newCase({ kind: "response", responseId: replyId });
-    await preserveInTransaction({ target: { kind: "response", responseId: replyId }, at: new Date() });
+    await preserveInTransaction({ target: { kind: "response", responseId: replyId } });
     const [reply] = await db.select().from(qaResponses).where(eq(qaResponses.id, replyId));
     const [evidence] = await evidenceOf(reportCase.id);
     expect(evidence.snapshot).toEqual({
@@ -193,9 +193,9 @@ describe("③ 通報証拠の保全", () => {
   it("証拠に含めない項目だけが変わって版番号が上がっても、同じ内容の証拠を再利用する", async () => {
     const questionId = await newQuestion("poc_s001");
     const reportCase = await newCase({ kind: "question", questionId });
-    const first = await preserveInTransaction({ target: { kind: "question", questionId }, at: new Date() });
+    const first = await preserveInTransaction({ target: { kind: "question", questionId } });
     await db.update(qaQuestions).set({ resolution: "resolved", version: 2 }).where(eq(qaQuestions.id, questionId));
-    const again = await preserveInTransaction({ target: { kind: "question", questionId }, at: new Date() });
+    const again = await preserveInTransaction({ target: { kind: "question", questionId } });
     expect(again?.evidenceId).toBe(first?.evidenceId);
     const evidence = await evidenceOf(reportCase.id);
     expect(evidence).toHaveLength(1);
@@ -206,7 +206,7 @@ describe("③ 通報証拠の保全", () => {
     const userId = id("poc_staff");
     const profileCase = await newCase({ kind: "profile", userId });
     const accountCase = await newCase({ kind: "account", userId });
-    const preserve = (kind: "profile" | "account") => preserveInTransaction({ target: { kind, userId }, at: new Date() });
+    const preserve = (kind: "profile" | "account") => preserveInTransaction({ target: { kind, userId } });
     /** 本人の保存と同じく、新しい版を作って現在版にする。 */
     const save = async (revisionNo: number, displayName: string) => {
       const [revision] = await db.insert(community.profileRevisions).values({
@@ -244,18 +244,18 @@ describe("③ 通報証拠の保全", () => {
     const questionCase = await newCase({ kind: "question", questionId });
     const responseCase = await newCase({ kind: "response", responseId });
     // 強制非表示にする処理は、状態を変える前に公開中の内容を保全する。
-    await preserveInTransaction({ target: { kind: "question", questionId }, at: new Date() });
-    await preserveInTransaction({ target: { kind: "response", responseId }, at: new Date() });
+    await preserveInTransaction({ target: { kind: "question", questionId } });
+    await preserveInTransaction({ target: { kind: "response", responseId } });
     const now = new Date();
     await db.update(qaQuestions).set({ forcedHiddenAt: now, bodyMarkdown: "非公開の編集後の質問本文", version: 2 })
       .where(eq(qaQuestions.id, questionId));
     await db.update(qaResponses).set({ forcedHiddenAt: now, bodyMarkdown: "非公開の編集後の回答本文", version: 2 })
       .where(eq(qaResponses.id, responseId));
-    expect(await preserveInTransaction({ target: { kind: "question", questionId }, at: new Date() })).toBeNull();
-    expect(await preserveInTransaction({ target: { kind: "response", responseId }, at: new Date() })).toBeNull();
+    expect(await preserveInTransaction({ target: { kind: "question", questionId } })).toBeNull();
+    expect(await preserveInTransaction({ target: { kind: "response", responseId } })).toBeNull();
 
     await db.update(qaResponses).set({ forcedHiddenAt: null, deletedAt: now }).where(eq(qaResponses.id, responseId));
-    expect(await preserveInTransaction({ target: { kind: "response", responseId }, at: new Date() })).toBeNull();
+    expect(await preserveInTransaction({ target: { kind: "response", responseId } })).toBeNull();
 
     for (const reportCase of [questionCase, responseCase]) {
       const evidence = await evidenceOf(reportCase.id);
@@ -268,7 +268,7 @@ describe("③ 通報証拠の保全", () => {
     const questionId = await newQuestion("poc_s001");
     const reportCase = await newCase({ kind: "question", questionId });
     const results = await Promise.all([1, 2].map(() =>
-      preserveInTransaction({ target: { kind: "question", questionId }, at: new Date() })));
+      preserveInTransaction({ target: { kind: "question", questionId } })));
     expect(results[0]?.evidenceId).toBe(results[1]?.evidenceId);
     expect(await evidenceOf(reportCase.id)).toHaveLength(1);
   });
@@ -277,8 +277,8 @@ describe("③ 通報証拠の保全", () => {
     const userId = id("poc_s002");
     const profileCase = await newCase({ kind: "profile", userId });
     const accountCase = await newCase({ kind: "account", userId });
-    await preserveInTransaction({ target: { kind: "profile", userId }, at: new Date() });
-    await preserveInTransaction({ target: { kind: "account", userId }, at: new Date() });
+    await preserveInTransaction({ target: { kind: "profile", userId } });
+    await preserveInTransaction({ target: { kind: "account", userId } });
 
     const [profileEvidence] = await evidenceOf(profileCase.id);
     expect(profileEvidence.sourceRevision).toBe(1);
@@ -313,7 +313,7 @@ describe("③ 通報証拠の保全", () => {
       authorizeEntry: async () => {},
       authorizeReplay: async () => {},
       async execute({ tx, now }) {
-        await preserveEvidence(tx, { target: { kind: "question", questionId }, at: now });
+        await preserveEvidence(tx, { target: { kind: "question", questionId } });
         await tx.update(qaQuestions).set({ deletedAt: now }).where(eq(qaQuestions.id, questionId));
         throw new Error("fixture failure");
       },
@@ -332,14 +332,16 @@ describe("④ 担当案件の引継ぎ", () => {
     const inProgress = await newCase({ kind: "question", questionId: questions[1] }, { assignee: "poc_s_mgr" });
     const closed = await newCase({ kind: "question", questionId: questions[2] }, { status: "closed", assignee: "poc_s_mgr" });
     const others = await newCase({ kind: "question", questionId: questions[3] }, { assignee: "poc_school" });
+    // 既存の履歴は、引継ぎより前と明確に分かる固定時刻にする（DBのマイクロ秒と Date のミリ秒の差で順序が入れ替わらないように）。
     const [history] = await db.insert(reportActions).values({
       caseId: inProgress.id, actorId: manager, actionType: "status_changed",
       beforeState: { status: "unhandled" }, afterState: { status: "in_progress" }, note: "対応を開始しました。",
+      createdAt: new Date("2026-01-01T00:00:00Z"),
     }).returning();
 
-    const at = new Date();
+    const started = new Date(Date.now() - 1);
     const moved = await withLockedUsers([manager], (context) => handoffCasesAssignedTo(context, {
-      managerId: manager, trigger: "manager_role_revoked", at,
+      managerId: manager, trigger: "manager_role_revoked",
     }));
     expect(new Set(moved)).toEqual(new Set([unhandled.id, inProgress.id]));
 
@@ -356,7 +358,9 @@ describe("④ 担当案件の引継ぎ", () => {
         beforeState: { assigneeId: manager, handoffPending: false },
         afterState: { assigneeId: null, handoffPending: true, trigger: "manager_role_revoked" },
       });
-      expect(actions.at(-1)?.createdAt.toISOString()).toBe(at.toISOString());
+      // 履歴と案件の更新時刻は、案件のロック後のDB時刻で揃える。
+      expect(actions.at(-1)?.createdAt.getTime()).toBeGreaterThanOrEqual(started.getTime());
+      expect(actions.at(-1)?.createdAt.toISOString()).toBe(after.updatedAt.toISOString());
     }
     const [kept] = await db.select().from(reportActions).where(eq(reportActions.id, history.id));
     expect(kept).toEqual(history);
@@ -364,11 +368,44 @@ describe("④ 担当案件の引継ぎ", () => {
     expect(await caseRow(others.id)).toEqual(others);
   });
 
+  it("引継ぎが案件のロックを待つ間に別の処理が同じ案件を更新しても、更新時刻を逆行させない", async () => {
+    const manager = id("poc_a_mgr");
+    const questionId = await newQuestion("poc_s001");
+    const reportCase = await newCase({ kind: "question", questionId }, { assignee: "poc_a_mgr" });
+    let signalLocked = () => {};
+    const caseLocked = new Promise<void>((resolve) => { signalLocked = resolve; });
+    let allowCommit = () => {};
+    const commitAllowed = new Promise<void>((resolve) => { allowCommit = resolve; });
+
+    // 学校管理者による案件の更新（優先度の変更）。案件をロックしたまま、引継ぎを待たせてから確定する。
+    const otherUpdate = db.transaction(async (tx) => {
+      await tx.select({ id: reportCases.id }).from(reportCases).where(eq(reportCases.id, reportCase.id)).for("update");
+      signalLocked();
+      await commitAllowed;
+      const [row] = await tx.update(reportCases)
+        .set({ priority: "high", version: reportCase.version + 1, updatedAt: sql`clock_timestamp()` })
+        .where(eq(reportCases.id, reportCase.id)).returning({ updatedAt: reportCases.updatedAt });
+      return row.updatedAt;
+    });
+    await caseLocked;
+    const handoff = withLockedUsers([manager], (context) => handoffCasesAssignedTo(context, {
+      managerId: manager, trigger: "manager_suspended",
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    allowCommit();
+    const otherUpdatedAt = await otherUpdate;
+    expect(await handoff).toEqual([reportCase.id]);
+
+    const after = await caseRow(reportCase.id);
+    expect(after).toMatchObject({ priority: "high", assigneeId: null, handoffPending: true, version: reportCase.version + 2 });
+    expect(after.updatedAt.getTime()).toBeGreaterThanOrEqual(otherUpdatedAt.getTime());
+  });
+
   it("担当者の利用者行をロックしていなければ、何も変えずにやり直しを求める", async () => {
     const questionId = await newQuestion("poc_s001");
     const reportCase = await newCase({ kind: "question", questionId }, { assignee: "poc_a_mgr" });
     await expect(withLockedUsers([], (context) => handoffCasesAssignedTo(context, {
-      managerId: id("poc_a_mgr"), trigger: "manager_suspended", at: new Date(),
+      managerId: id("poc_a_mgr"), trigger: "manager_suspended",
     }))).rejects.toThrow("ロックしていない利用者です");
     expect(await caseRow(reportCase.id)).toEqual(reportCase);
   });
@@ -382,9 +419,9 @@ describe("④ 担当案件の引継ぎ", () => {
     const responseCase = await newCase({ kind: "response", responseId: answerId }, { status: "unhandled", assignee: "poc_a_mgr" });
 
     const moved = await withLockedUsers([], async (context) => [
-      ...await handoffCasesOfDeletedTarget(context, { target: { kind: "question", questionId: byAppManager }, at: new Date() }),
-      ...await handoffCasesOfDeletedTarget(context, { target: { kind: "question", questionId: bySchool }, at: new Date() }),
-      ...await handoffCasesOfDeletedTarget(context, { target: { kind: "response", responseId: answerId }, at: new Date() }),
+      ...await handoffCasesOfDeletedTarget(context, { target: { kind: "question", questionId: byAppManager } }),
+      ...await handoffCasesOfDeletedTarget(context, { target: { kind: "question", questionId: bySchool } }),
+      ...await handoffCasesOfDeletedTarget(context, { target: { kind: "response", responseId: answerId } }),
     ]);
     expect(new Set(moved)).toEqual(new Set([appManagerCase.id, responseCase.id]));
     expect(await caseRow(appManagerCase.id)).toMatchObject({ assigneeId: null, handoffPending: true, status: "in_progress" });
@@ -404,7 +441,7 @@ describe("④ 担当案件の引継ぎ", () => {
     const questionCase = await newCase({ kind: "question", questionId }, { assignee: "poc_school" });
     const unrelated = await newCase({ kind: "question", questionId: unrelatedQuestion }, { assignee: "poc_a_mgr" });
 
-    const result = await withLockedUsers([userId], (context) => restrictCasesForNewAppManager(context, { userId, at: new Date() }));
+    const result = await withLockedUsers([userId], (context) => restrictCasesForNewAppManager(context, { userId }));
     expect(new Set(result.schoolOnly)).toEqual(new Set([profileCase.id, accountCase.id, questionCase.id]));
     expect(result.handoff).toEqual([profileCase.id]);
     expect(await caseRow(profileCase.id)).toMatchObject({
@@ -423,7 +460,7 @@ describe("④ 担当案件の引継ぎ", () => {
       ["handoff_started", true], ["school_only_applied", true],
     ]);
 
-    const again = await withLockedUsers([userId], (context) => restrictCasesForNewAppManager(context, { userId, at: new Date() }));
+    const again = await withLockedUsers([userId], (context) => restrictCasesForNewAppManager(context, { userId }));
     expect(again).toEqual({ schoolOnly: [], handoff: [] });
   });
 
@@ -440,7 +477,7 @@ describe("④ 担当案件の引継ぎ", () => {
       authorizeReplay: async () => {},
       async execute(context) {
         await context.tx.update(communityUsers).set({ appManager: false }).where(eq(communityUsers.userId, manager));
-        await handoffCasesAssignedTo(context, { managerId: manager, trigger: "manager_role_revoked", at: context.now });
+        await handoffCasesAssignedTo(context, { managerId: manager, trigger: "manager_role_revoked" });
         throw new Error("fixture failure");
       },
     })).rejects.toThrow("fixture failure");

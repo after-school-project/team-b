@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
 import type { ExtractTablesWithRelations } from "drizzle-orm";
-import type { PgQueryResultHKT, PgTransaction } from "drizzle-orm/pg-core";
+import type { NodePgQueryResultHKT } from "drizzle-orm/node-postgres";
+import type { PgTransaction } from "drizzle-orm/pg-core";
 import { projectOptionalProfileFields } from "../auth/visibility";
 import { qaQuestions, qaResponses } from "../db/content-schema";
 import { evidenceSnapshots, reportCaseEvidence, reportCases, reportTargets } from "../db/moderation-schema";
@@ -31,9 +32,21 @@ import { communityUsers, profileRevisions, profiles } from "../db/schema";
  * 確定するため、通常の `db` は受け付けない（`rollback` を持つトランザクションだけを型で許可する）。
  */
 export type CaseWriter = Pick<
-  PgTransaction<PgQueryResultHKT, Record<string, unknown>, ExtractTablesWithRelations<Record<string, unknown>>>,
-  "select" | "insert" | "update" | "rollback"
+  PgTransaction<NodePgQueryResultHKT, Record<string, unknown>, ExtractTablesWithRelations<Record<string, unknown>>>,
+  "select" | "insert" | "update" | "execute" | "rollback"
 >;
+
+/**
+ * 案件の行ロックを取得した後のDB時刻（ミリ秒）。案件の更新時刻・履歴・証拠の取得時刻に使う。
+ * `commitMutation` の `now` は案件をロックする前に取得するため、その間に別の処理が同じ案件を更新して確定すると、
+ * `now` を書き込むと更新時刻が逆行する。ロックの取得後に読むことで、先に確定した更新より前の時刻にならない。
+ */
+export async function lockedCaseTime(tx: CaseWriter): Promise<Date> {
+  const { rows: [time] } = await tx.execute<{ epochMs: number }>(sql`
+    SELECT floor(extract(epoch FROM clock_timestamp()) * 1000)::double precision AS "epochMs"
+  `);
+  return new Date(time.epochMs);
+}
 
 /** 通報対象。プロフィール・アカウントは利用者ID、質問・回答等はそのID。 */
 export type EvidenceTarget =
@@ -152,12 +165,13 @@ export type PreservedEvidence = { evidenceId: string; caseIds: string[] };
  *
  * - 未終了案件の行を `FOR UPDATE` でロックしてから関連付ける。ロック順は本体 → 申請 → 案件（共通認可条件表 §5）のため、
  *   本体・申請のロックを取得した後に呼ぶ。更新・削除の前の内容を残す場合は、ロック後・更新前に呼ぶ。
+ * - 証拠の取得時刻は、案件のロック後のDB時刻（`lockedCaseTime`）にする。
  * - 同じ対象で内容が同じ証拠が既にあれば、版番号が変わっていても新しく保存せず、その証拠を関連付ける。再送・同じ内容での
  *   再実行や、証拠に含めない項目（質問の解決状態など）だけの変更で重複しない。
  */
 export async function preserveEvidence(
   tx: CaseWriter,
-  input: { target: EvidenceTarget; at: Date },
+  input: { target: EvidenceTarget },
 ): Promise<PreservedEvidence | null> {
   const [reportTarget] = await tx.select({ id: reportTargets.id }).from(reportTargets)
     .where(targetCondition(input.target));
@@ -175,7 +189,8 @@ export async function preserveEvidence(
     sql`${evidenceSnapshots.snapshot} = ${JSON.stringify(snapshot.content)}::jsonb`,
   )).orderBy(desc(evidenceSnapshots.capturedAt), desc(evidenceSnapshots.id)).limit(1);
   const evidenceId = existing?.id ?? (await tx.insert(evidenceSnapshots).values({
-    targetId: reportTarget.id, sourceRevision: snapshot.sourceRevision, snapshot: snapshot.content, capturedAt: input.at,
+    targetId: reportTarget.id, sourceRevision: snapshot.sourceRevision, snapshot: snapshot.content,
+    capturedAt: await lockedCaseTime(tx),
   }).returning({ id: evidenceSnapshots.id }))[0].id;
 
   const caseIds = openCases.map(({ id }) => id);

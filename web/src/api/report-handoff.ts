@@ -2,7 +2,7 @@ import { and, asc, eq, inArray, or } from "drizzle-orm";
 import { qaQuestions, qaResponses } from "../db/content-schema";
 import { reportActions, reportCases, reportTargets } from "../db/moderation-schema";
 import { communityUsers } from "../db/schema";
-import type { CaseWriter } from "./report-evidence";
+import { lockedCaseTime, type CaseWriter } from "./report-evidence";
 
 /**
  * 担当案件の引継ぎと学校専用化（Issue #47 ④）。`commitMutation` の `execute` の中で、契機になった業務更新と同じ
@@ -11,6 +11,7 @@ import type { CaseWriter } from "./report-evidence";
  * - 引継ぎ待ちは、担当をなし（`assignee_id=null`）にして `handoff_pending=true` にする。対応状態（未対応／対応中）と
  *   過去の履歴は変えない。対応済みの案件は対象にしない。
  * - 変更した案件ごとに、`report_actions` へシステム操作（実行者なし）として契機と変更前後を記録し、版番号を上げる。
+ *   更新時刻と履歴の時刻には、案件のロック後のDB時刻（`lockedCaseTime`）を使い、先に確定した更新より前にしない。
  * - 案件の行は `FOR UPDATE` でロックしてから判定する。ロック順は本体 → 申請 → 案件（共通認可条件表 §5）のため、
  *   本体・申請のロックを取得した後に呼ぶ。
  */
@@ -35,10 +36,12 @@ async function lockCases(tx: CaseWriter, condition: ReturnType<typeof and>): Pro
 }
 
 /** ロック済みの未終了案件を引継ぎ待ちにする。 */
-async function startHandoff(tx: CaseWriter, cases: LockedCase[], trigger: HandoffTrigger, at: Date): Promise<string[]> {
+async function startHandoff(tx: CaseWriter, cases: LockedCase[], trigger: HandoffTrigger): Promise<string[]> {
   const moved: string[] = [];
-  for (const reportCase of cases) {
-    if (reportCase.status === "closed" || reportCase.handoffPending) continue;
+  const targets = cases.filter(({ status, handoffPending }) => status !== "closed" && !handoffPending);
+  if (targets.length === 0) return moved;
+  const at = await lockedCaseTime(tx);
+  for (const reportCase of targets) {
     await tx.update(reportCases).set({
       assigneeId: null, handoffPending: true, version: reportCase.version + 1, updatedAt: at,
     }).where(eq(reportCases.id, reportCase.id));
@@ -71,13 +74,12 @@ async function assignedToNonSchoolManagers(tx: CaseWriter, cases: LockedCase[]):
 export async function handoffCasesAssignedTo(context: LockedCaseContext, input: {
   managerId: string;
   trigger: Extract<HandoffTrigger, "manager_profile_hidden" | "manager_suspended" | "manager_role_revoked">;
-  at: Date;
 }): Promise<string[]> {
   context.requireLockedUsers(input.managerId);
   const cases = await lockCases(context.tx, and(
     eq(reportCases.assigneeId, input.managerId), inArray(reportCases.status, [...openStatuses]),
   ));
-  return startHandoff(context.tx, cases, input.trigger, input.at);
+  return startHandoff(context.tx, cases, input.trigger);
 }
 
 /**
@@ -87,7 +89,6 @@ export async function handoffCasesAssignedTo(context: LockedCaseContext, input: 
  */
 export async function handoffCasesOfDeletedTarget(context: LockedCaseContext, input: {
   target: { kind: "question"; questionId: string } | { kind: "response"; responseId: string };
-  at: Date;
 }): Promise<string[]> {
   const condition = input.target.kind === "question"
     ? and(eq(reportTargets.kind, "question"), eq(reportTargets.questionId, input.target.questionId))
@@ -97,7 +98,7 @@ export async function handoffCasesOfDeletedTarget(context: LockedCaseContext, in
   const cases = await lockCases(context.tx, and(
     inArray(reportCases.targetId, targets.map(({ id }) => id)), inArray(reportCases.status, [...openStatuses]),
   ));
-  return startHandoff(context.tx, await assignedToNonSchoolManagers(context.tx, cases), "target_deleted", input.at);
+  return startHandoff(context.tx, await assignedToNonSchoolManagers(context.tx, cases), "target_deleted");
 }
 
 /**
@@ -108,7 +109,6 @@ export async function handoffCasesOfDeletedTarget(context: LockedCaseContext, in
  */
 export async function restrictCasesForNewAppManager(context: LockedCaseContext, input: {
   userId: string;
-  at: Date;
 }): Promise<{ schoolOnly: string[]; handoff: string[] }> {
   context.requireLockedUsers(input.userId);
   const { tx } = context;
@@ -124,20 +124,23 @@ export async function restrictCasesForNewAppManager(context: LockedCaseContext, 
 
   const cases = await lockCases(tx, inArray(reportCases.targetId, targets.map(({ id }) => id)));
   const schoolOnly: string[] = [];
-  for (const reportCase of cases) {
-    if (reportCase.schoolOnly) continue;
-    reportCase.version += 1;
-    reportCase.schoolOnly = true;
-    await tx.update(reportCases).set({ schoolOnly: true, version: reportCase.version, updatedAt: input.at })
-      .where(eq(reportCases.id, reportCase.id));
-    await tx.insert(reportActions).values({
-      caseId: reportCase.id, actorId: null, systemAction: true, actionType: "school_only_applied",
-      beforeState: { schoolOnly: false }, afterState: { schoolOnly: true, trigger: "subject_became_app_manager" },
-      createdAt: input.at,
-    });
-    schoolOnly.push(reportCase.id);
+  const restricted = cases.filter((reportCase) => !reportCase.schoolOnly);
+  if (restricted.length) {
+    const at = await lockedCaseTime(tx);
+    for (const reportCase of restricted) {
+      reportCase.version += 1;
+      reportCase.schoolOnly = true;
+      await tx.update(reportCases).set({ schoolOnly: true, version: reportCase.version, updatedAt: at })
+        .where(eq(reportCases.id, reportCase.id));
+      await tx.insert(reportActions).values({
+        caseId: reportCase.id, actorId: null, systemAction: true, actionType: "school_only_applied",
+        beforeState: { schoolOnly: false }, afterState: { schoolOnly: true, trigger: "subject_became_app_manager" },
+        createdAt: at,
+      });
+      schoolOnly.push(reportCase.id);
+    }
   }
   const open = cases.filter(({ status }) => status !== "closed");
-  const handoff = await startHandoff(tx, await assignedToNonSchoolManagers(tx, open), "subject_became_app_manager", input.at);
+  const handoff = await startHandoff(tx, await assignedToNonSchoolManagers(tx, open), "subject_became_app_manager");
   return { schoolOnly, handoff };
 }
