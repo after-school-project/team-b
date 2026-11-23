@@ -69,29 +69,41 @@ export async function requireAdminViewer(headers: Headers, scope: AdminScope, re
 
 /**
  * 管理操作の更新で `commitMutation` の `authorizeEntry` に渡す入口確認。
- * 実行者（と `resolveUserIds` で指定した対象者）の行をロックした後に最新状態を読み直して再判定するため、
- * 管理権限の解除・停止・プロフィール非表示や、対象者のアプリ管理者化と、処理中の更新を直列化できる。
+ * 実行者の行をロックした後に最新状態を読み直し、実行者自身の管理資格だけを再判定する。
+ * これにより、管理権限の解除・停止・プロフィール非表示と処理中の更新を直列化できる。
  *
- * `scope` に関数を渡すと、ロック後のトランザクションで必要な区分を決められる（例：`scopeForTarget` で対象者から決める）。
+ * 入口確認では対象者を参照しない。対象者の有無で拒否応答が変わらないようにし、
+ * 再送キーの照合（409 IDEMPOTENCY_KEY_REUSED）を対象者の判定より先に行うため。
+ * 対象者によって学校専用になる操作は、`scope` を `"any"` にして入口を通し、
+ * 再送キーの照合後の `execute`・`authorizeReplay` で `requireAdminForLockedTarget` を使う。
  */
-export function authorizeAdminEntry(
-  actorId: string,
-  scope: AdminScope | ((tx: AccessReader) => Promise<AdminScope>),
-): (tx: AccessReader) => Promise<void> {
+export function authorizeAdminEntry(actorId: string, scope: AdminScope): (tx: AccessReader) => Promise<void> {
   return async (tx) => {
-    const viewer = requireActive(await loadAccessState(tx, actorId));
-    requireAdmin(viewer, typeof scope === "function" ? await scope(tx) : scope);
+    requireAdmin(requireActive(await loadAccessState(tx, actorId)), scope);
   };
 }
 
+/** `commitMutation` の `execute`・`authorizeReplay` が受け取る文脈のうち、ここで使うもの。 */
+type LockedContext = { tx: AccessReader; requireLockedUsers: (...ids: string[]) => void };
+
 /**
- * 対象者によって学校専用になる更新の区分を、ロック後の対象者の状態から決める。対象者がいなければ 404。
- * `commitMutation` の `resolveUserIds` に対象者のIDを含め、対象者の行もロックしてから使う。
+ * 対象者によって学校専用になる更新で、ロック後の対象者の状態から必要な区分を判定する。
+ * `commitMutation` の `resolveUserIds` に対象者のIDを含め、`execute`・`authorizeReplay` の中で呼ぶ。
+ *
+ * - 対象者の行がロックされていなければ、対象者を含めてやり直す（`requireLockedUsers`）。対象者がいなければ 404。
+ * - 対象者がアプリ管理者なら学校管理者のみ。足りなければ 403 FORBIDDEN。
+ * - 実行者の権限は、入口通過前の Viewer ではなく、ロック後に読み直した最新状態で判定する。
+ *
+ * 操作ごとの条件（学校管理者を対象にできない、自己操作の禁止など）に使えるよう、対象者の管理権限を返す。
  */
-export function scopeForLockedTarget(targetUserId: string): (tx: AccessReader) => Promise<AdminScope> {
-  return async (tx) => {
-    const target = await loadTargetRoles(tx, targetUserId);
-    if (!target) throw new ApiError("NOT_FOUND");
-    return scopeForTarget(target);
-  };
+export async function requireAdminForLockedTarget(
+  { tx, requireLockedUsers }: LockedContext,
+  actorId: string,
+  targetUserId: string,
+): Promise<TargetRoles> {
+  requireLockedUsers(targetUserId);
+  const target = await loadTargetRoles(tx, targetUserId);
+  if (!target) throw new ApiError("NOT_FOUND");
+  requireAdmin(requireActive(await loadAccessState(tx, actorId)), scopeForTarget(target));
+  return target;
 }

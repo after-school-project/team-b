@@ -11,7 +11,7 @@ import { defineAdminApiRoute } from "../../src/api/admin-route";
 import { defineAuthorizedApiRoute } from "../../src/api/authorized-route";
 import { commitMutation } from "../../src/api/mutation";
 import { POST as authPost } from "../../src/app/api/auth/[...auth]/route";
-import { authorizeAdminEntry, scopeForLockedTarget } from "../../src/auth/admin";
+import { authorizeAdminEntry, requireAdminForLockedTarget, type AdminScope } from "../../src/auth/admin";
 import { endPool, isolatedDatabase } from "./isolated-database";
 
 /**
@@ -157,16 +157,34 @@ it("停止中の学校管理者も管理APIを利用できない", async () => {
   await expectDenied(adminRoutes.school, cookie, "ACCOUNT_SUSPENDED");
 });
 
-/** 管理操作の更新。行ロック後に `authorizeAdminEntry` で再判定する。 */
-function adminMutation(actor: string, scope: Parameters<typeof authorizeAdminEntry>[1], related: string[] = []) {
+/** 実行者の管理資格だけで決まる管理操作の更新。行ロック後に `authorizeAdminEntry` で再判定する。 */
+function adminMutation(actor: string, scope: AdminScope) {
   return commitMutation(drizzle(pool), {
     actorId: actor,
     request: { method: "POST", path: "/api/v1/admin/sample", requestKey: randomUUID() },
-    body: { related },
-    resolveUserIds: async () => related,
+    body: {},
     authorizeEntry: authorizeAdminEntry(actor, scope),
     authorizeReplay: async () => {},
     execute: async () => ({ status: 201, resource: { type: "sample", id: randomUUID() }, version: null, state: "done" }),
+  });
+}
+
+/**
+ * 対象者によって学校専用になる管理操作の更新（例：アカウントの停止）。
+ * 入口では実行者の資格だけを確認し、対象者による区分は再送キーの照合後に `execute`・`authorizeReplay` で判定する。
+ */
+function targetMutation(actor: string, subject: string, requestKey = randomUUID()) {
+  return commitMutation(drizzle(pool), {
+    actorId: actor,
+    request: { method: "POST", path: "/api/v1/admin/users/sample", requestKey },
+    body: { subject },
+    resolveUserIds: async () => [subject],
+    authorizeEntry: authorizeAdminEntry(actor, "any"),
+    authorizeReplay: async (context) => { await requireAdminForLockedTarget(context, actor, subject); },
+    async execute(context) {
+      await requireAdminForLockedTarget(context, actor, subject);
+      return { status: 201, resource: { type: "user", id: subject }, version: null, state: "done" };
+    },
   });
 }
 
@@ -184,15 +202,38 @@ it.each([
   ["poc_s_mgr", "poc_a_mgr", "FORBIDDEN"],
   ["poc_school", "poc_a_mgr", null],
   ["poc_school", "poc_s001", null],
+  ["poc_s001", "poc_s002", "FORBIDDEN"],
 ])("対象者によって学校専用になる更新：%s が %s を対象にすると %s", async (actor, subject, expected) => {
-  const update = adminMutation(userId(actor), scopeForLockedTarget(userId(subject)), [userId(subject)]);
-  expect(await errorCode(update)).toBe(expected);
+  expect(await errorCode(targetMutation(userId(actor), userId(subject)))).toBe(expected);
 });
 
-it("存在しない対象者への、対象者によって学校専用になる更新は404", async () => {
-  const missing = randomUUID();
-  expect(await errorCode(adminMutation(userId("poc_school"), scopeForLockedTarget(missing), [missing])))
-    .toBe("NOT_FOUND");
+it("存在しない対象者への、対象者によって学校専用になる更新は、有効な管理者には404", async () => {
+  expect(await errorCode(targetMutation(userId("poc_school"), randomUUID()))).toBe("NOT_FOUND");
+});
+
+it("管理者でない実行者は、対象者の有無にかかわらず同じ403で拒否する", async () => {
+  const actor = userId("poc_s001");
+  expect(await errorCode(targetMutation(actor, userId("poc_s002")))).toBe("FORBIDDEN");
+  expect(await errorCode(targetMutation(actor, randomUUID()))).toBe("FORBIDDEN");
+});
+
+it("再送キーの照合を対象者の判定より先に行い、同じキーを別の内容に使うと409", async () => {
+  const actor = userId("poc_s_mgr");
+  const key = randomUUID();
+  expect(await errorCode(targetMutation(actor, userId("poc_s001"), key))).toBeNull();
+  // 学校専用になる対象者・存在しない対象者でも、対象者の判定より先に再送キーの不一致を返す。
+  expect(await errorCode(targetMutation(actor, userId("poc_a_mgr"), key))).toBe("IDEMPOTENCY_KEY_REUSED");
+  expect(await errorCode(targetMutation(actor, randomUUID(), key))).toBe("IDEMPOTENCY_KEY_REUSED");
+});
+
+it("再送時も対象者の現在の管理権限で再判定する", async () => {
+  const actor = userId("poc_s_mgr");
+  const subject = userId("poc_s001");
+  const key = randomUUID();
+  expect(await errorCode(targetMutation(actor, subject, key))).toBeNull();
+  expect(await errorCode(targetMutation(actor, subject, key))).toBeNull();
+  await setUser("poc_s001", "app_manager = true");
+  expect(await errorCode(targetMutation(actor, subject, key))).toBe("FORBIDDEN");
 });
 
 /** 別の接続で利用者の行をロックしたまま変更し、待機中の更新がコミット後の状態で判定されることを確認する。 */
@@ -235,10 +276,17 @@ it("管理権限の解除と処理中の管理操作を直列化し、解除の�
   expect(await errorCode(adminMutation(actor, "any"))).toBeNull();
 });
 
+it("入口通過後に管理権限を解除された実行者は、対象者の有無にかかわらず同じ403で拒否する", async () => {
+  const actor = userId("poc_staff_mgr");
+  expect(await changeWhileUpdating("poc_staff_mgr", "app_manager = false", () => targetMutation(actor, userId("poc_s001"))))
+    .toBe("FORBIDDEN");
+  await setUser("poc_staff_mgr", "app_manager = true");
+  expect(await changeWhileUpdating("poc_staff_mgr", "app_manager = false", () => targetMutation(actor, randomUUID())))
+    .toBe("FORBIDDEN");
+});
+
 it("対象者のアプリ管理者化と処理中の操作を直列化し、アプリ管理者の操作は学校専用として拒否する", async () => {
   const actor = userId("poc_a_mgr");
-  const subject = userId("poc_s001");
-  expect(await changeWhileUpdating(
-    "poc_s001", "app_manager = true", () => adminMutation(actor, scopeForLockedTarget(subject), [subject]),
-  )).toBe("FORBIDDEN");
+  expect(await changeWhileUpdating("poc_s001", "app_manager = true", () => targetMutation(actor, userId("poc_s001"))))
+    .toBe("FORBIDDEN");
 });
