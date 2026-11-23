@@ -1,4 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import { canonicalJson, type JsonValue } from "./canonical-json";
 import { parseQuery } from "./request";
@@ -49,6 +50,43 @@ export function createCursorCodec<T extends readonly JsonValue[]>(
       throw new ApiError("INVALID_CURSOR");
     },
   };
+}
+
+function allOf(...conditions: (SQL | undefined)[]): SQL {
+  return sql.join(conditions.filter((condition) => condition !== undefined).map((condition) => sql`(${condition})`),
+    sql` AND `);
+}
+
+type ListQuery<T> = {
+  /**
+   * 現在の認可で取得できる範囲（公開条件・所有者など）。件数と各ページの両方に必ず適用する。
+   * 権限外のデータを数えてから取り除くと、件数・カーソルから存在が分かるため、取得条件として渡す。
+   */
+  authorized: SQL;
+  /** 利用者が指定した検索条件。件数にも同じ条件を適用する。 */
+  filters?: SQL;
+  /** 前ページの最後の行より後ろを表す条件。先頭ページでは省略する。件数には適用しない。 */
+  after?: SQL;
+  limit: number;
+  /** `where` を満たす行を並び順で最大 `take` 件取得する。 */
+  rows: (where: SQL, take: number) => Promise<T[]>;
+  /** `where` を満たす行の件数を返す。 */
+  count: (where: SQL) => Promise<number>;
+  cursorFor: (last: T) => string;
+};
+
+/**
+ * 認可条件を件数・各ページ・カーソルに同じように適用して一覧を返す（API設計書 §3）。
+ * 次ページのカーソルは返した行からだけ作るため、権限外のデータの位置もカーソルに含まれない。
+ * トランザクション内でも使えるよう、行と件数は順に取得する。
+ */
+export async function queryListPage<T>(query: ListQuery<T>) {
+  // 括弧のない OR を含む条件を渡されても、認可条件が外れないよう各条件を括弧で囲む。
+  const where = allOf(query.authorized, query.filters);
+  const rows = await query.rows(allOf(where, query.after), query.limit + 1);
+  if (rows.length > query.limit + 1) throw new Error("一覧の取得件数が上限を超えました。");
+  const totalCount = await query.count(where);
+  return listPage(rows, query.limit, totalCount, query.cursorFor);
 }
 
 // Query at most limit + 1 authorized rows in cursor order, and count with the same filters and authorization.
