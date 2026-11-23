@@ -27,7 +27,7 @@ const routeParams: Readonly<Record<string, RegExp>> = {
  * 可変部分は `/questions/[questionId]` のように書く。画面を実装したら追加し、未実装の画面は含めない。
  * `/login` と `/api/*` は追加しない。
  */
-export const implementedScreenRoutes: readonly string[] = ["/"];
+export const implementedScreenRoutes: readonly string[] = ["/", "/me/profile"];
 
 type CompiledRoute = readonly (string | RegExp)[];
 

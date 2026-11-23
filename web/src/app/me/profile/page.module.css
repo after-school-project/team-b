@@ -1,0 +1,327 @@
+/* マイプロフィール（GE-02）。docs/DESIGN.md §5〜§8・§9.3 に従う。フォームの最大幅は640px。 */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  max-width: 640px;
+}
+
+.header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.title {
+  margin: 0;
+  font-size: clamp(1.5rem, 4vw, 2rem);
+  line-height: 1.4;
+}
+
+.lead {
+  margin: 0;
+  color: var(--color-text-muted);
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  margin: 0;
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  background: var(--color-surface);
+}
+
+@media (min-width: 768px) {
+  .card {
+    padding: var(--space-6);
+  }
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: 20px;
+  line-height: 1.5;
+}
+
+.stateRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  margin: 0;
+}
+
+.reviewBox {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-left: 4px solid var(--color-warning);
+  background: var(--color-warning-bg);
+}
+
+.reviewText {
+  margin: 0;
+}
+
+.details {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+}
+
+.details > div {
+  display: grid;
+  gap: var(--space-1);
+}
+
+@media (min-width: 768px) {
+  .details > div {
+    grid-template-columns: 8em 1fr;
+    gap: var(--space-4);
+  }
+}
+
+.details dt {
+  color: var(--color-text-muted);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.details dd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.reason {
+  white-space: pre-wrap;
+}
+
+.badgeSuccess,
+.badgeWarning,
+.badgeDanger,
+.badgeInfo {
+  display: inline-block;
+  padding: 0 var(--space-2);
+  border: 1px solid currentcolor;
+  border-radius: var(--radius-card);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.8;
+  white-space: nowrap;
+}
+
+.badgeSuccess {
+  color: var(--color-success);
+  background: var(--color-success-bg);
+}
+
+.badgeWarning {
+  color: var(--color-warning);
+  background: var(--color-warning-bg);
+}
+
+.badgeDanger {
+  color: var(--color-danger);
+  background: var(--color-danger-bg);
+}
+
+.badgeInfo {
+  color: var(--color-info);
+  background: var(--color-info-bg);
+}
+
+.field,
+.fieldGroup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0;
+  font-weight: 600;
+}
+
+.required,
+.optional {
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-card);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.6;
+}
+
+.required {
+  color: var(--color-danger);
+  background: var(--color-danger-bg);
+}
+
+.optional {
+  color: var(--color-neutral);
+  background: var(--color-neutral-bg);
+}
+
+.input {
+  width: 100%;
+  min-height: var(--control-min-size);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-control-border);
+  border-radius: var(--radius-control);
+  color: var(--color-text);
+  background: var(--color-surface);
+  font: inherit;
+}
+
+.textarea {
+  resize: vertical;
+}
+
+.input[aria-invalid="true"] {
+  border-color: var(--color-danger);
+}
+
+.help {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 14px;
+}
+
+.fieldError {
+  margin: 0;
+  color: var(--color-danger);
+  font-size: 14px;
+}
+
+.formError {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius-card);
+  color: var(--color-danger);
+  background: var(--color-danger-bg);
+}
+
+.formError p {
+  margin: 0;
+}
+
+.visibility {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+}
+
+.visibilityLabel {
+  color: var(--color-text-muted);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.radio,
+.checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-min-size);
+  cursor: pointer;
+}
+
+.radio input,
+.checkbox input {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  accent-color: var(--color-primary);
+}
+
+.checkbox {
+  font-weight: 600;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3) var(--space-4);
+}
+
+.status {
+  margin: 0;
+  color: var(--color-success);
+  font-weight: 600;
+}
+
+.status:empty {
+  display: none;
+}
+
+.primaryButton,
+.secondaryButton {
+  min-height: var(--control-min-size);
+  padding: var(--space-2) var(--space-6);
+  border-radius: var(--radius-control);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color var(--duration-fast);
+}
+
+.primaryButton {
+  border: 1px solid var(--color-primary);
+  color: var(--color-on-primary);
+  background: var(--color-primary);
+}
+
+.primaryButton:hover:not(:disabled) {
+  background: var(--color-primary-hover);
+}
+
+.secondaryButton {
+  border: 1px solid var(--color-control-border);
+  color: var(--color-primary);
+  background: var(--color-surface);
+}
+
+.secondaryButton:hover:not(:disabled) {
+  background: var(--color-surface-subtle);
+}
+
+.primaryButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .primaryButton,
+  .secondaryButton {
+    transition: none;
+  }
+}

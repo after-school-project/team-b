@@ -58,7 +58,7 @@ describe("可変パスを含む画面のルート", () => {
   });
 
   it("実装済みの画面に含まれないルートは、既定では戻り先にしない", () => {
-    expect(implementedScreenRoutes).toEqual(["/"]);
+    expect(implementedScreenRoutes).toEqual(["/", "/me/profile"]);
     expect(resolveReturnTo(`/questions/${questionId}`)).toBe("/");
   });
 
