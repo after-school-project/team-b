@@ -34,9 +34,10 @@ type CompiledRoute = readonly (string | RegExp)[];
 function compileRoute(route: string): CompiledRoute {
   if (!route.startsWith("/")) throw new Error(`画面のルートは / で始めてください: ${route}`);
   return route === "/" ? [] : route.slice(1).split("/").map((segment) => {
-    const param = /^\[([A-Za-z]+)\]$/.exec(segment)?.[1];
-    if (param === undefined) return segment;
-    const pattern = routeParams[param];
+    // 角括弧を含むセグメントは必ずパラメーターとして扱い、`[question_id]` のような誤記を固定パスとして通さない。
+    if (!segment.includes("[") && !segment.includes("]")) return segment;
+    const param = /^\[([^[\]]+)\]$/.exec(segment)?.[1];
+    const pattern = param === undefined || !Object.hasOwn(routeParams, param) ? undefined : routeParams[param];
     if (!pattern) throw new Error(`未定義のルートパラメーターです: ${segment}`);
     return pattern;
   });

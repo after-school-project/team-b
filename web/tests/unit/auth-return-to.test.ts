@@ -66,6 +66,21 @@ describe("可変パスを含む画面のルート", () => {
     expect(() => matchesScreenRoute("/x/1", ["/x/[unknownId]"])).toThrow("未定義のルートパラメーター");
   });
 
+  it.each([
+    "/questions/[questionID]",
+    "/questions/[question_id]",
+    "/questions/[question-id]",
+    "/questions/[]",
+    "/questions/[questionId",
+    "/questions/questionId]",
+    "/questions/x[questionId]",
+    "/questions/[[questionId]]",
+    "/questions/[toString]",
+  ])("角括弧を含むセグメントは定義済みのパラメーター名だけを受け付ける: %s", (route) => {
+    expect(() => matchesScreenRoute("/questions/0b6f2c1e-5d4a-4c3b-9a8f-7e6d5c4b3a21", [route]))
+      .toThrow("未定義のルートパラメーター");
+  });
+
   it("ルート定義の誤記は、正常な戻り先の判定でも吸収せずにエラーにする", () => {
     const typo = ["/", "/questions/[questionID]"];
     expect(() => resolveReturnTo("/?tab=home", typo)).toThrow("未定義のルートパラメーター");
