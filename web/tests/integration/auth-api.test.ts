@@ -12,7 +12,7 @@ import { GET, POST } from "../../src/app/api/auth/[...auth]/route";
 import { GET as meGet } from "../../src/app/api/v1/me/route";
 import { loginRateLimit } from "../../src/auth/login-rate-limit";
 import { getAuthSession } from "../../src/auth/server";
-import { isolatedDatabase } from "./isolated-database";
+import { endPool, isolatedDatabase } from "./isolated-database";
 
 const origin = "https://school.example";
 const loginPath = "/sign-in/username";
@@ -42,7 +42,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   vi.unstubAllEnvs();
-  await pool?.end();
+  await endPool(pool);
   if (credentialsDir) await rm(credentialsDir, { recursive: true, force: true });
   await target?.dispose();
 });

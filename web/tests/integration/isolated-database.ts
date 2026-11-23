@@ -1,6 +1,27 @@
 import { randomUUID } from "node:crypto";
-import { Client } from "pg";
+import { Client, type Pool } from "pg";
 import { requireTestDatabaseUrl } from "../../scripts/lib/test-database";
+
+/**
+ * プールの全接続が実際に閉じるまで待つ。
+ * `pool.end()` は接続の切断完了を待たずに解決する。直後に `dispose()` の `DROP DATABASE ... WITH (FORCE)` を
+ * 実行すると、切断中の接続がサーバーに切られ（57P01）、受け手のないエラーとしてテスト全体が失敗する。
+ * 各接続の切断完了時に出る `remove` を数えてから返す。
+ */
+export async function endPool(pool: Pool | undefined): Promise<void> {
+  if (!pool || pool.ending || pool.ended) return;
+  const open = pool.totalCount;
+  const closed = new Promise<void>((resolve) => {
+    if (open === 0) return resolve();
+    let removed = 0;
+    pool.on("remove", () => {
+      removed += 1;
+      if (removed === open) resolve();
+    });
+  });
+  await pool.end();
+  await closed;
+}
 
 // 明示的なテストDBに接続できた場合だけ、同じ使い捨てクラスタに検証用DBを作る。
 export async function isolatedDatabase(name = `issue5_${randomUUID().replaceAll("-", "")}`, owner?: string) {

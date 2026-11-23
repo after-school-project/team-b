@@ -6,7 +6,7 @@ import { databaseConfig } from "../../src/db/config";
 import { requireApplicationRole } from "../../src/db/permissions";
 import { applicationTables, grantApplicationRole, migrateDatabase } from "../../scripts/lib/database-management";
 import { verifyApplicationRoundTrip } from "../../scripts/lib/poc-database";
-import { isolatedDatabase } from "./isolated-database";
+import { endPool, isolatedDatabase } from "./isolated-database";
 
 vi.mock("server-only", () => ({}));
 
@@ -105,7 +105,7 @@ it("共通プールを使ったDrizzleの読み書きと再読み込みで接続
     expect(pool.totalCount).toBe(1);
     expect(pool.idleCount).toBe(1);
   } finally {
-    await pool.end();
+    await endPool(pool);
     delete (globalThis as { teamBDatabasePool?: unknown }).teamBDatabasePool;
     vi.unstubAllEnvs();
   }
