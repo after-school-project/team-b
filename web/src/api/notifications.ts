@@ -26,8 +26,11 @@ export type LockedRecordContext = { tx: RecordWriter; requireLockedUsers: (...id
 
 export type NotificationKind = (typeof notifications.kind.enumValues)[number];
 
-/** 却下理由が任意の判定（お知らせ。API設計書 §11 ReviewDecision）。 */
-type OptionalReasonDecision = { decision: "approved" } | { decision: "rejected"; publicReason?: string };
+/**
+ * 却下理由が任意の判定（お知らせ。API設計書 §11 ReviewDecision）。
+ * 未入力の理由は入力検証で null に正規化される（API設計書 §3 Reason）ため、省略と null のどちらも理由なしとして扱う。
+ */
+type OptionalReasonDecision = { decision: "approved" } | { decision: "rejected"; publicReason?: string | null };
 /** 却下理由が必須の判定（イベント・プロフィール再公開）。 */
 type RequiredReasonDecision = { decision: "approved" } | { decision: "rejected"; publicReason: string };
 
@@ -149,12 +152,13 @@ function messageFor(subject: NotificationSubject): { message: string; reason: Re
 /** 本人向けの理由を定型文に付ける。理由は管理者が本人向けに入力した値で、対象の本文ではない。 */
 function publicMessage(kind: NotificationKind, message: string, reason: Reason): string {
   if (reason === null) return message;
-  if (reason.value === undefined && !reason.required) return message;
+  // 任意の理由は、省略（undefined）と未入力を正規化した null を理由なしとして扱い、定型文だけを保存する。
+  if ((reason.value === undefined || reason.value === null) && !reason.required) return message;
   const value = typeof reason.value === "string" ? reason.value.trim() : "";
   if (!value) {
     throw new Error(reason.required
       ? `通知 ${kind} には本人向けの理由が必要です。`
-      : `通知 ${kind} の理由が空です。理由がない場合は省略してください。`);
+      : `通知 ${kind} の理由が空です。理由がない場合は省略するか null を渡してください。`);
   }
   return `${message}\n理由：${value}`;
 }
@@ -258,4 +262,3 @@ export async function recordReviewRequestNotifications(context: LockedRecordCont
   }
   return created;
 }
-

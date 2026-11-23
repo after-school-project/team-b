@@ -56,8 +56,18 @@ describe("通知の本文と理由（#47 ①、API設計書 §11）", () => {
     ["Q&Aの回答等の非表示", { kind: "qa_hidden", responseId: target, auditLogId: trigger, publicReason: " " }],
     ["プロフィール再公開の却下", { kind: "profile_review_decided", profileReviewId: target, decision: "rejected" }],
     ["イベント申請の却下", { kind: "event_review_decided", eventRequestId: target, decision: "rejected", publicReason: "" }],
+    ["理由が null のプロフィールの非表示", { kind: "profile_hidden", userId: "user-1", auditLogId: trigger, publicReason: null }],
+    ["理由が null のイベント申請の却下",
+      { kind: "event_review_decided", eventRequestId: target, decision: "rejected", publicReason: null }],
   ])("%s は理由がなければ保存しない", (_name, subject) => {
     expect(() => values(subject as NotificationSubject)).toThrow("本人向けの理由が必要です");
+  });
+
+  it("理由が任意の通知は、省略と未入力を正規化した null のどちらも定型文だけを保存する", () => {
+    for (const publicReason of [undefined, null]) {
+      expect(values({ kind: "notice_review_decided", noticeRequestId: target, decision: "rejected", publicReason })
+        ?.publicMessage).toBe("お知らせの申請が却下されました。");
+    }
   });
 
   it("理由が任意の通知でも、空の理由は保存しない", () => {

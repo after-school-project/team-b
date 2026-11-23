@@ -45,8 +45,8 @@ export type AuditLogInput<A extends AuditAction> = {
   targetId: string;
   before?: AuditState<A>;
   after?: AuditState<A>;
-  /** 本人向けに示す理由。内部メモは記録しない。 */
-  publicReason?: string;
+  /** 本人向けに示す理由。内部メモは記録しない。省略・null は理由なし（未入力の理由は null に正規化される）。 */
+  publicReason?: string | null;
   /** 記録時刻。`commitMutation` の `now` を渡す。 */
   at: Date;
 };
@@ -67,7 +67,9 @@ function allowedState(action: AuditAction, side: "before" | "after", state: unkn
 /** 監査ログを1件記録し、そのIDを返す。非表示の通知では、このIDを契機IDに使う。 */
 export async function recordAuditLog<A extends AuditAction>(tx: RecordWriter, input: AuditLogInput<A>): Promise<string> {
   const reason = input.publicReason?.trim();
-  if (input.publicReason !== undefined && !reason) throw new Error("監査ログの理由が空です。理由がない場合は省略してください。");
+  if (typeof input.publicReason === "string" && !reason) {
+    throw new Error("監査ログの理由が空です。理由がない場合は省略するか null を渡してください。");
+  }
   const [saved] = await tx.insert(auditLogs).values({
     actorId: input.actorId,
     systemAction: input.actorId === null,

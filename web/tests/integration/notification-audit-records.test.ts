@@ -398,6 +398,16 @@ describe("AC-03 記録内容の制限", () => {
     expect(row.afterState).toEqual({ baseRole: "alumni", isGraduating: false, version: 4, batchId });
   });
 
+  it("省略・null の理由は理由なしとして記録する", async () => {
+    for (const publicReason of [undefined, null]) {
+      const logId = await recordAuditLog(db, {
+        action: "profile_review.approved", actorId: id("poc_school"), targetId: randomUUID(), publicReason, at: new Date(),
+      });
+      const [row] = await db.select({ publicReason: auditLogs.publicReason }).from(auditLogs).where(eq(auditLogs.id, logId));
+      expect(row.publicReason).toBeNull();
+    }
+  });
+
   it("空の理由は記録しない", async () => {
     await expect(recordAuditLog(db, {
       action: "profile.hidden", actorId: id("poc_school"), targetId: id("poc_s001"), publicReason: "  ", at: new Date(),
