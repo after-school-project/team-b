@@ -1,5 +1,6 @@
 import { and, asc, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
-import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
+import type { ExtractTablesWithRelations } from "drizzle-orm";
+import type { PgQueryResultHKT, PgTransaction } from "drizzle-orm/pg-core";
 import { projectOptionalProfileFields } from "../auth/visibility";
 import { qaQuestions, qaResponses } from "../db/content-schema";
 import { evidenceSnapshots, reportCaseEvidence, reportCases, reportTargets } from "../db/moderation-schema";
@@ -19,10 +20,20 @@ import { communityUsers, profileRevisions, profiles } from "../db/schema";
  * プロフィールの公開版は、`profile_state=public` のときの現在版だけ（DB・ER設計書 §3）。非表示中は本人の保存で現在版が
  * 更新されても公開されない（再公開の承認前の版）ため、非表示中のプロフィールは保全しない。公開中の内容は、非表示にする
  * 処理（#8 API-US-05）で非表示にする前に保全する。アカウントの証拠でも、非表示中は未承認の版の表示名を保存しない。
+ *
+ * 質問・回答等も、一般の閲覧者に表示できる状態（強制非表示・削除済みでない。`visibleQuestion`・`visibleResponse` と同じ条件）
+ * のときだけ保全する。強制非表示中も本人は編集できる（共通認可条件表 §2 QA-02）が、その内容は一度も公開されないため。
+ * 公開中の内容は、強制非表示にする処理（#10）と削除する処理（#9）で、状態を変える前に保全する。
  */
 
-/** 業務更新と同じトランザクション。 */
-export type CaseWriter = Pick<PgDatabase<PgQueryResultHKT, Record<string, unknown>>, "select" | "insert" | "update">;
+/**
+ * 業務更新と同じトランザクション（`commitMutation` の `tx`）。案件の行ロックと複数の書き込みを1つのトランザクションで
+ * 確定するため、通常の `db` は受け付けない（`rollback` を持つトランザクションだけを型で許可する）。
+ */
+export type CaseWriter = Pick<
+  PgTransaction<PgQueryResultHKT, Record<string, unknown>, ExtractTablesWithRelations<Record<string, unknown>>>,
+  "select" | "insert" | "update" | "rollback"
+>;
 
 /** 通報対象。プロフィール・アカウントは利用者ID、質問・回答等はそのID。 */
 export type EvidenceTarget =
@@ -67,7 +78,7 @@ async function currentProfile(tx: CaseWriter, userId: string) {
   return row ?? null;
 }
 
-/** API設計書 §13 EvidenceSnapshot の content。保全する公開内容がなければ（非表示中のプロフィール）null。 */
+/** API設計書 §13 EvidenceSnapshot の content。保全する公開内容がなければ（非表示中のプロフィール、強制非表示・削除済みの投稿）null。 */
 async function snapshotOf(tx: CaseWriter, target: EvidenceTarget): Promise<Snapshot | null> {
   const missing = () => new Error(`通報対象 ${target.kind} が見つかりません。`);
   switch (target.kind) {
@@ -75,19 +86,24 @@ async function snapshotOf(tx: CaseWriter, target: EvidenceTarget): Promise<Snaps
       const [row] = await tx.select({
         version: qaQuestions.version, title: qaQuestions.title,
         bodyMarkdown: qaQuestions.bodyMarkdown, authorLabel: qaQuestions.authorLabel,
+        forcedHiddenAt: qaQuestions.forcedHiddenAt, deletedAt: qaQuestions.deletedAt,
       }).from(qaQuestions).where(eq(qaQuestions.id, target.questionId));
       if (!row) throw missing();
-      const { version, ...content } = row;
+      const { version, forcedHiddenAt, deletedAt, ...content } = row;
+      // 強制非表示中・削除済みの内容は公開されていないため保存しない。
+      if (forcedHiddenAt || deletedAt) return null;
       return { sourceRevision: version, content };
     }
     case "response": {
       const [row] = await tx.select({
         version: qaResponses.version, bodyMarkdown: qaResponses.bodyMarkdown, authorLabel: qaResponses.authorLabel,
         kind: qaResponses.kind, questionId: qaResponses.questionId, parentResponseId: qaResponses.parentResponseId,
+        forcedHiddenAt: qaResponses.forcedHiddenAt, deletedAt: qaResponses.deletedAt,
       }).from(qaResponses).where(eq(qaResponses.id, target.responseId));
       if (!row) throw missing();
       // 親投稿の本文は含めない（削除済みの親の本文を残存回答の証拠へ追加しない。API設計書 §13）。
-      const { version, ...content } = row;
+      const { version, forcedHiddenAt, deletedAt, ...content } = row;
+      if (forcedHiddenAt || deletedAt) return null;
       return { sourceRevision: version, content };
     }
     case "profile": {
@@ -132,7 +148,7 @@ export type PreservedEvidence = { evidenceId: string; caseIds: string[] };
 
 /**
  * 通報対象の現在の公開内容を証拠として保全し、未終了案件に関連付ける。未終了案件がない場合と、保全する公開内容が
- * ない場合（非表示中のプロフィール）は何もせず null を返す。
+ * ない場合（非表示中のプロフィール、強制非表示・削除済みの投稿）は何もせず null を返す。
  *
  * - 未終了案件の行を `FOR UPDATE` でロックしてから関連付ける。ロック順は本体 → 申請 → 案件（共通認可条件表 §5）のため、
  *   本体・申請のロックを取得した後に呼ぶ。更新・削除の前の内容を残す場合は、ロック後・更新前に呼ぶ。

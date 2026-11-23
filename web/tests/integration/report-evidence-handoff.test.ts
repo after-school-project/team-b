@@ -80,6 +80,11 @@ function withLockedUsers<T>(userIds: string[], run: (context: LockedCaseContext)
   });
 }
 
+/** 証拠の保全は業務更新と同じトランザクションの中で行う。テストでも1つのトランザクションで呼ぶ。 */
+function preserveInTransaction(input: Parameters<typeof preserveEvidence>[1]) {
+  return db.transaction((tx) => preserveEvidence(tx, input));
+}
+
 async function newQuestion(author: string, title = `通報対象の質問 ${randomUUID()}`): Promise<string> {
   const [category] = await db.select({ id: qaCategories.id }).from(qaCategories).limit(1);
   const [row] = await db.insert(qaQuestions).values({
@@ -138,8 +143,8 @@ describe("③ 通報証拠の保全", () => {
   it("質問の公開内容を保存して未終了案件に関連付け、同じ内容での再実行では重複させない", async () => {
     const questionId = await newQuestion("poc_s001");
     const reportCase = await newCase({ kind: "question", questionId });
-    const first = await preserveEvidence(db, { target: { kind: "question", questionId }, at: new Date() });
-    const again = await preserveEvidence(db, { target: { kind: "question", questionId }, at: new Date() });
+    const first = await preserveInTransaction({ target: { kind: "question", questionId }, at: new Date() });
+    const again = await preserveInTransaction({ target: { kind: "question", questionId }, at: new Date() });
     expect(first).toEqual({ evidenceId: again?.evidenceId, caseIds: [reportCase.id] });
 
     const [question] = await db.select().from(qaQuestions).where(eq(qaQuestions.id, questionId));
@@ -154,9 +159,9 @@ describe("③ 通報証拠の保全", () => {
   it("内容が変わった後に保全すると、新しい証拠を追加して同じ案件に関連付ける", async () => {
     const questionId = await newQuestion("poc_s001");
     const reportCase = await newCase({ kind: "question", questionId });
-    await preserveEvidence(db, { target: { kind: "question", questionId }, at: new Date() });
+    await preserveInTransaction({ target: { kind: "question", questionId }, at: new Date() });
     await db.update(qaQuestions).set({ bodyMarkdown: "編集後の本文", version: 2 }).where(eq(qaQuestions.id, questionId));
-    await preserveEvidence(db, { target: { kind: "question", questionId }, at: new Date() });
+    await preserveInTransaction({ target: { kind: "question", questionId }, at: new Date() });
     const evidence = await evidenceOf(reportCase.id);
     expect(evidence.map(({ sourceRevision }) => sourceRevision)).toEqual([1, 2]);
     expect(evidence[1].snapshot).toMatchObject({ bodyMarkdown: "編集後の本文" });
@@ -167,8 +172,8 @@ describe("③ 通報証拠の保全", () => {
     const closedOnly = await newQuestion("poc_s001");
     await newCase({ kind: "question", questionId: closedOnly }, { status: "closed" });
     const before = await db.select({ id: evidenceSnapshots.id }).from(evidenceSnapshots);
-    expect(await preserveEvidence(db, { target: { kind: "question", questionId: unreported }, at: new Date() })).toBeNull();
-    expect(await preserveEvidence(db, { target: { kind: "question", questionId: closedOnly }, at: new Date() })).toBeNull();
+    expect(await preserveInTransaction({ target: { kind: "question", questionId: unreported }, at: new Date() })).toBeNull();
+    expect(await preserveInTransaction({ target: { kind: "question", questionId: closedOnly }, at: new Date() })).toBeNull();
     expect(await db.select({ id: evidenceSnapshots.id }).from(evidenceSnapshots)).toHaveLength(before.length);
   });
 
@@ -177,7 +182,7 @@ describe("③ 通報証拠の保全", () => {
     const answerId = await newResponse(questionId, "poc_s001");
     const replyId = await newResponse(questionId, "poc_s002", answerId);
     const reportCase = await newCase({ kind: "response", responseId: replyId });
-    await preserveEvidence(db, { target: { kind: "response", responseId: replyId }, at: new Date() });
+    await preserveInTransaction({ target: { kind: "response", responseId: replyId }, at: new Date() });
     const [reply] = await db.select().from(qaResponses).where(eq(qaResponses.id, replyId));
     const [evidence] = await evidenceOf(reportCase.id);
     expect(evidence.snapshot).toEqual({
@@ -188,9 +193,9 @@ describe("③ 通報証拠の保全", () => {
   it("証拠に含めない項目だけが変わって版番号が上がっても、同じ内容の証拠を再利用する", async () => {
     const questionId = await newQuestion("poc_s001");
     const reportCase = await newCase({ kind: "question", questionId });
-    const first = await preserveEvidence(db, { target: { kind: "question", questionId }, at: new Date() });
+    const first = await preserveInTransaction({ target: { kind: "question", questionId }, at: new Date() });
     await db.update(qaQuestions).set({ resolution: "resolved", version: 2 }).where(eq(qaQuestions.id, questionId));
-    const again = await preserveEvidence(db, { target: { kind: "question", questionId }, at: new Date() });
+    const again = await preserveInTransaction({ target: { kind: "question", questionId }, at: new Date() });
     expect(again?.evidenceId).toBe(first?.evidenceId);
     const evidence = await evidenceOf(reportCase.id);
     expect(evidence).toHaveLength(1);
@@ -201,7 +206,7 @@ describe("③ 通報証拠の保全", () => {
     const userId = id("poc_staff");
     const profileCase = await newCase({ kind: "profile", userId });
     const accountCase = await newCase({ kind: "account", userId });
-    const preserve = (kind: "profile" | "account") => preserveEvidence(db, { target: { kind, userId }, at: new Date() });
+    const preserve = (kind: "profile" | "account") => preserveInTransaction({ target: { kind, userId }, at: new Date() });
     /** 本人の保存と同じく、新しい版を作って現在版にする。 */
     const save = async (revisionNo: number, displayName: string) => {
       const [revision] = await db.insert(community.profileRevisions).values({
@@ -233,12 +238,47 @@ describe("③ 通報証拠の保全", () => {
     expect((await evidenceOf(profileCase.id)).map(({ sourceRevision }) => sourceRevision)).toEqual([1, 3]);
   });
 
+  it("強制非表示中に編集した質問・回答等の内容と、削除済みの内容を証拠に保存しない", async () => {
+    const questionId = await newQuestion("poc_s001");
+    const responseId = await newResponse(questionId, "poc_s002");
+    const questionCase = await newCase({ kind: "question", questionId });
+    const responseCase = await newCase({ kind: "response", responseId });
+    // 強制非表示にする処理は、状態を変える前に公開中の内容を保全する。
+    await preserveInTransaction({ target: { kind: "question", questionId }, at: new Date() });
+    await preserveInTransaction({ target: { kind: "response", responseId }, at: new Date() });
+    const now = new Date();
+    await db.update(qaQuestions).set({ forcedHiddenAt: now, bodyMarkdown: "非公開の編集後の質問本文", version: 2 })
+      .where(eq(qaQuestions.id, questionId));
+    await db.update(qaResponses).set({ forcedHiddenAt: now, bodyMarkdown: "非公開の編集後の回答本文", version: 2 })
+      .where(eq(qaResponses.id, responseId));
+    expect(await preserveInTransaction({ target: { kind: "question", questionId }, at: new Date() })).toBeNull();
+    expect(await preserveInTransaction({ target: { kind: "response", responseId }, at: new Date() })).toBeNull();
+
+    await db.update(qaResponses).set({ forcedHiddenAt: null, deletedAt: now }).where(eq(qaResponses.id, responseId));
+    expect(await preserveInTransaction({ target: { kind: "response", responseId }, at: new Date() })).toBeNull();
+
+    for (const reportCase of [questionCase, responseCase]) {
+      const evidence = await evidenceOf(reportCase.id);
+      expect(evidence.map(({ sourceRevision }) => sourceRevision)).toEqual([1]);
+      expect(JSON.stringify(evidence[0].snapshot)).not.toContain("非公開の編集後");
+    }
+  });
+
+  it("同じ対象を別のトランザクションから同時に保全しても、証拠は1件になる", async () => {
+    const questionId = await newQuestion("poc_s001");
+    const reportCase = await newCase({ kind: "question", questionId });
+    const results = await Promise.all([1, 2].map(() =>
+      preserveInTransaction({ target: { kind: "question", questionId }, at: new Date() })));
+    expect(results[0]?.evidenceId).toBe(results[1]?.evidenceId);
+    expect(await evidenceOf(reportCase.id)).toHaveLength(1);
+  });
+
   it("AC-03 プロフィール・アカウントの証拠に、本人確認情報と本人のみの任意項目を含めない", async () => {
     const userId = id("poc_s002");
     const profileCase = await newCase({ kind: "profile", userId });
     const accountCase = await newCase({ kind: "account", userId });
-    await preserveEvidence(db, { target: { kind: "profile", userId }, at: new Date() });
-    await preserveEvidence(db, { target: { kind: "account", userId }, at: new Date() });
+    await preserveInTransaction({ target: { kind: "profile", userId }, at: new Date() });
+    await preserveInTransaction({ target: { kind: "account", userId }, at: new Date() });
 
     const [profileEvidence] = await evidenceOf(profileCase.id);
     expect(profileEvidence.sourceRevision).toBe(1);
