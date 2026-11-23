@@ -9,7 +9,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { seedDevelopmentData } from "../../scripts/development-seed";
 import { migrateDatabase } from "../../scripts/lib/database-management";
 import { commitMutation } from "../../src/api/mutation";
-import { lockedCaseTime, preserveEvidence, type EvidenceTarget } from "../../src/api/report-evidence";
+import { lockedCaseTime, preserveEvidence, type CaseWriter, type EvidenceTarget } from "../../src/api/report-evidence";
 import {
   handoffCasesAssignedTo, handoffCasesOfDeletedTarget, restrictCasesForNewAppManager, type LockedCaseContext,
 } from "../../src/api/report-handoff";
@@ -304,6 +304,36 @@ describe("③ 通報証拠の保全", () => {
     expect(saved.status === "fulfilled" && saved.value.map(({ target }) => target.kind)).toEqual(["profile", "account"]);
     expect(await evidenceOf(profileCase.id)).toHaveLength(1);
     expect(await evidenceOf(accountCase.id)).toHaveLength(1);
+  });
+
+  it("多数の対象を渡しても、対象ごとにDBへ往復しない（卒業区分の一括変更の100人分）", async () => {
+    const questionId = await newQuestion("poc_s001");
+    const reportCase = await newCase({ kind: "question", questionId });
+    const unreported = Array.from({ length: 100 }, () => randomUUID())
+      .flatMap((userId): EvidenceTarget[] => [{ kind: "profile", userId }, { kind: "account", userId }]);
+
+    /** 問い合わせ（select）の回数を数えるトランザクション。 */
+    async function countSelects(targets: EvidenceTarget[]) {
+      let selects = 0;
+      const results = await db.transaction((tx) => {
+        const select = ((...args: unknown[]) => {
+          selects += 1;
+          return (tx.select as (...a: unknown[]) => unknown).apply(tx, args);
+        }) as CaseWriter["select"];
+        const counted: CaseWriter = {
+          select, insert: tx.insert.bind(tx), update: tx.update.bind(tx), execute: tx.execute.bind(tx), rollback: tx.rollback.bind(tx),
+        };
+        return preserveEvidence(counted, { targets });
+      });
+      return { selects, results };
+    }
+
+    // 通報されていない200件の対象だけなら、対象の照会1回で終わる。
+    expect(await countSelects(unreported)).toEqual({ selects: 1, results: [] });
+    // 通報された対象が混ざっても、対象の照会・案件のロック・内容・既存の証拠の各1回で済む。
+    const mixed = await countSelects([...unreported, { kind: "question", questionId }]);
+    expect(mixed.results.map(({ caseIds }) => caseIds)).toEqual([[reportCase.id]]);
+    expect(mixed.selects).toBe(4);
   });
 
   it("AC-03 プロフィール・アカウントの証拠に、本人確認情報と本人のみの任意項目を含めない", async () => {

@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, or, sql, type SQL } from "drizzle-orm";
 import type { ExtractTablesWithRelations } from "drizzle-orm";
 import type { NodePgQueryResultHKT } from "drizzle-orm/node-postgres";
 import type { PgTransaction } from "drizzle-orm/pg-core";
@@ -57,14 +57,46 @@ export type EvidenceTarget =
 
 type Snapshot = { sourceRevision: number; content: Record<string, unknown> };
 
-function targetCondition(target: EvidenceTarget): SQL {
+/** 対象を識別するキー。`report_targets` の行と、指定された対象を突き合わせる。 */
+function targetKey(target: EvidenceTarget): string {
   switch (target.kind) {
-    case "question": return and(eq(reportTargets.kind, "question"), eq(reportTargets.questionId, target.questionId))!;
-    case "response": return and(eq(reportTargets.kind, "response"), eq(reportTargets.responseId, target.responseId))!;
+    case "question": return `question:${target.questionId}`;
+    case "response": return `response:${target.responseId}`;
     case "profile":
     case "account":
-      return and(eq(reportTargets.kind, target.kind), eq(reportTargets.subjectUserId, target.userId))!;
+      return `${target.kind}:${target.userId}`;
   }
+}
+
+/**
+ * 指定したすべての対象の `report_targets` の行を、1つの問い合わせで取得する。キーは `targetKey`。
+ * 卒業区分の一括変更（最大100人のプロフィールとアカウント）でも、利用者行をロックしたまま対象ごとに往復しないため。
+ */
+async function findReportTargets(tx: CaseWriter, targets: readonly EvidenceTarget[]): Promise<Map<string, string>> {
+  const ids = { question: new Set<string>(), response: new Set<string>(), profile: new Set<string>(), account: new Set<string>() };
+  for (const target of targets) {
+    if (target.kind === "question") ids.question.add(target.questionId);
+    else if (target.kind === "response") ids.response.add(target.responseId);
+    else ids[target.kind].add(target.userId);
+  }
+  const conditions: SQL[] = [];
+  if (ids.question.size) conditions.push(and(eq(reportTargets.kind, "question"), inArray(reportTargets.questionId, [...ids.question]))!);
+  if (ids.response.size) conditions.push(and(eq(reportTargets.kind, "response"), inArray(reportTargets.responseId, [...ids.response]))!);
+  for (const kind of ["profile", "account"] as const) {
+    if (ids[kind].size) conditions.push(and(eq(reportTargets.kind, kind), inArray(reportTargets.subjectUserId, [...ids[kind]]))!);
+  }
+  if (conditions.length === 0) return new Map();
+  const rows = await tx.select({
+    id: reportTargets.id, kind: reportTargets.kind, questionId: reportTargets.questionId,
+    responseId: reportTargets.responseId, subjectUserId: reportTargets.subjectUserId,
+  }).from(reportTargets).where(or(...conditions));
+  const found = new Map<string, string>();
+  for (const row of rows) {
+    const key = row.kind === "question" ? `question:${row.questionId}`
+      : row.kind === "response" ? `response:${row.responseId}` : `${row.kind}:${row.subjectUserId}`;
+    found.set(key, row.id);
+  }
+  return found;
 }
 
 /**
@@ -165,6 +197,7 @@ const openStatuses = ["unhandled", "in_progress"] as const;
  * 通報対象の現在の公開内容を証拠として保全し、未終了案件に関連付ける。証拠を保存・関連付けた対象ごとの結果を返す。
  * 未終了案件がない対象と、保全する公開内容がない対象（非表示中のプロフィール、強制非表示・削除済みの投稿）は何もしない。
  *
+ * - 対象の `report_targets` は1つの問い合わせでまとめて取得する。通報されていない対象が多くても往復は増えない。
  * - 指定したすべての対象の未終了案件を、1つの問い合わせでID昇順に `FOR UPDATE` でロックしてから関連付ける。
  *   同じ利用者のプロフィールとアカウントなど、複数の対象を保全する場合は1回の呼び出しにまとめる。対象ごとに呼ぶと、
  *   案件のロックがID順にならず、同じ案件をID順にロックする引継ぎ処理とデッドロックする。
@@ -178,10 +211,15 @@ export async function preserveEvidence(
   tx: CaseWriter,
   input: { targets: readonly EvidenceTarget[] },
 ): Promise<PreservedEvidence[]> {
+  const found = await findReportTargets(tx, input.targets);
   const resolved: Array<{ target: EvidenceTarget; reportTargetId: string }> = [];
+  const seen = new Set<string>();
   for (const target of input.targets) {
-    const [reportTarget] = await tx.select({ id: reportTargets.id }).from(reportTargets).where(targetCondition(target));
-    if (reportTarget) resolved.push({ target, reportTargetId: reportTarget.id });
+    const key = targetKey(target);
+    const reportTargetId = found.get(key);
+    // 同じ対象が重複して指定されても1回だけ処理する。
+    if (reportTargetId && !seen.has(key)) resolved.push({ target, reportTargetId });
+    seen.add(key);
   }
   if (resolved.length === 0) return [];
   const openCases = await tx.select({ id: reportCases.id, targetId: reportCases.targetId }).from(reportCases)
