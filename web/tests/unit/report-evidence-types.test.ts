@@ -8,7 +8,7 @@ describe("通報証拠・引継ぎの共通処理の引数（#47 ③④）", () 
     // 実行はしない。型検査（npm run typecheck）で @ts-expect-error が満たされることを確認する。
     const typeOnly = (db: NodePgDatabase) => {
       // @ts-expect-error 証拠の保全は、案件の行ロックと書き込みを1つのトランザクションで確定する。
-      void preserveEvidence(db, { target: { kind: "question", questionId: "question" } });
+      void preserveEvidence(db, { targets: [{ kind: "question", questionId: "question" }] });
       // @ts-expect-error 引継ぎも同じ。
       void handoffCasesOfDeletedTarget({ tx: db, requireLockedUsers: () => {} }, {
         target: { kind: "question", questionId: "question" },

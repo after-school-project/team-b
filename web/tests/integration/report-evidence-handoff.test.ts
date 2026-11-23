@@ -9,7 +9,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { seedDevelopmentData } from "../../scripts/development-seed";
 import { migrateDatabase } from "../../scripts/lib/database-management";
 import { commitMutation } from "../../src/api/mutation";
-import { preserveEvidence, type EvidenceTarget } from "../../src/api/report-evidence";
+import { lockedCaseTime, preserveEvidence, type EvidenceTarget } from "../../src/api/report-evidence";
 import {
   handoffCasesAssignedTo, handoffCasesOfDeletedTarget, restrictCasesForNewAppManager, type LockedCaseContext,
 } from "../../src/api/report-handoff";
@@ -81,8 +81,9 @@ function withLockedUsers<T>(userIds: string[], run: (context: LockedCaseContext)
 }
 
 /** 証拠の保全は業務更新と同じトランザクションの中で行う。テストでも1つのトランザクションで呼ぶ。 */
-function preserveInTransaction(input: Parameters<typeof preserveEvidence>[1]) {
-  return db.transaction((tx) => preserveEvidence(tx, input));
+async function preserveInTransaction(input: { target: EvidenceTarget }) {
+  const [result] = await db.transaction((tx) => preserveEvidence(tx, { targets: [input.target] }));
+  return result ?? null;
 }
 
 async function newQuestion(author: string, title = `通報対象の質問 ${randomUUID()}`): Promise<string> {
@@ -102,7 +103,7 @@ async function newResponse(questionId: string, author: string, parentResponseId:
   return row.id;
 }
 
-type CaseOptions = { status?: "unhandled" | "in_progress" | "closed"; assignee?: string | null };
+type CaseOptions = { status?: "unhandled" | "in_progress" | "closed"; assignee?: string | null; id?: string };
 
 /** 通報対象の行。なければ作る（対象ごとに1行）。 */
 async function reportTargetId(caseTarget: EvidenceTarget): Promise<string> {
@@ -119,9 +120,10 @@ async function reportTargetId(caseTarget: EvidenceTarget): Promise<string> {
 }
 
 /** 案件を作る。担当なしは引継ぎ待ちとして作る。 */
-async function newCase(caseTarget: EvidenceTarget, { status = "in_progress", assignee = "poc_school" }: CaseOptions = {}) {
+async function newCase(caseTarget: EvidenceTarget, { status = "in_progress", assignee = "poc_school", id: caseId }: CaseOptions = {}) {
   const assigneeId = assignee === null ? null : id(assignee);
   const [row] = await db.insert(reportCases).values({
+    ...(caseId ? { id: caseId } : {}),
     targetId: await reportTargetId(caseTarget), status, assigneeId, handoffPending: assigneeId === null,
     closedAt: status === "closed" ? new Date() : null,
   }).returning();
@@ -145,7 +147,7 @@ describe("③ 通報証拠の保全", () => {
     const reportCase = await newCase({ kind: "question", questionId });
     const first = await preserveInTransaction({ target: { kind: "question", questionId } });
     const again = await preserveInTransaction({ target: { kind: "question", questionId } });
-    expect(first).toEqual({ evidenceId: again?.evidenceId, caseIds: [reportCase.id] });
+    expect(first).toEqual({ target: { kind: "question", questionId }, evidenceId: again?.evidenceId, caseIds: [reportCase.id] });
 
     const [question] = await db.select().from(qaQuestions).where(eq(qaQuestions.id, questionId));
     const evidence = await evidenceOf(reportCase.id);
@@ -273,6 +275,37 @@ describe("③ 通報証拠の保全", () => {
     expect(await evidenceOf(reportCase.id)).toHaveLength(1);
   });
 
+  it("プロフィールとアカウントの証拠を1回で保全し、案件をID順にロックする（ID順にロックする引継ぎとデッドロックしない）", async () => {
+    const userId = id("poc_suspended");
+    // アカウントの案件のIDを小さく、プロフィールの案件のIDを大きくする。対象の順（プロフィール → アカウント）に
+    // ロックすると、ID順（アカウント → プロフィール）にロックする処理と互いに待ち合う。
+    const suffix = randomUUID().slice(-12);
+    const accountCase = await newCase({ kind: "account", userId }, { id: `00000000-0000-4000-8000-${suffix}` });
+    const profileCase = await newCase({ kind: "profile", userId }, { id: `ffffffff-ffff-4fff-8fff-${suffix}` });
+
+    // 担当者の権限解除の引継ぎと同じく、案件をID順にロックする別のトランザクション。小さいIDの案件を先にロックし、
+    // 保全が始まってから大きいIDの案件をロックする。
+    let signalLocked = () => {};
+    const firstLocked = new Promise<void>((resolve) => { signalLocked = resolve; });
+    const handoffLike = db.transaction(async (tx) => {
+      await tx.select({ id: reportCases.id }).from(reportCases).where(eq(reportCases.id, accountCase.id)).for("update");
+      signalLocked();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      await tx.select({ id: reportCases.id }).from(reportCases).where(eq(reportCases.id, profileCase.id)).for("update");
+    });
+    await firstLocked;
+    const preserved = db.transaction((tx) => preserveEvidence(tx, {
+      targets: [{ kind: "profile", userId }, { kind: "account", userId }],
+    }));
+
+    const results = await Promise.allSettled([handoffLike, preserved]);
+    expect(results.map(({ status }) => status)).toEqual(["fulfilled", "fulfilled"]);
+    const [, saved] = results;
+    expect(saved.status === "fulfilled" && saved.value.map(({ target }) => target.kind)).toEqual(["profile", "account"]);
+    expect(await evidenceOf(profileCase.id)).toHaveLength(1);
+    expect(await evidenceOf(accountCase.id)).toHaveLength(1);
+  });
+
   it("AC-03 プロフィール・アカウントの証拠に、本人確認情報と本人のみの任意項目を含めない", async () => {
     const userId = id("poc_s002");
     const profileCase = await newCase({ kind: "profile", userId });
@@ -313,7 +346,7 @@ describe("③ 通報証拠の保全", () => {
       authorizeEntry: async () => {},
       authorizeReplay: async () => {},
       async execute({ tx, now }) {
-        await preserveEvidence(tx, { target: { kind: "question", questionId } });
+        await preserveEvidence(tx, { targets: [{ kind: "question", questionId }] });
         await tx.update(qaQuestions).set({ deletedAt: now }).where(eq(qaQuestions.id, questionId));
         throw new Error("fixture failure");
       },
@@ -325,6 +358,20 @@ describe("③ 通報証拠の保全", () => {
 });
 
 describe("④ 担当案件の引継ぎ", () => {
+  it("案件のロック後のDB時刻を、ミリ秒に切り捨てずDBの精度のまま書き込む", async () => {
+    const result = await db.transaction(async (tx) => {
+      const { rows: [{ before }] } = await tx.execute<{ before: string }>(sql`SELECT clock_timestamp()::text AS "before"`);
+      const times = [await lockedCaseTime(tx), await lockedCaseTime(tx), await lockedCaseTime(tx)];
+      const { rows: [row] } = await tx.execute<{ notBefore: boolean; subMillisecond: boolean }>(sql`
+        SELECT bool_and(t >= ${before}::timestamptz) AS "notBefore",
+          bool_or(extract(microseconds FROM t)::bigint % 1000 <> 0) AS "subMillisecond"
+        FROM (VALUES (${times[0]}), (${times[1]}), (${times[2]})) AS v(t)`);
+      return row;
+    });
+    // 先に読んだ時刻より前にならず、マイクロ秒の桁が残る（3回のうち1回でもミリ秒未満の桁があれば、切り捨てていない）。
+    expect(result).toEqual({ notBefore: true, subMillisecond: true });
+  });
+
   it("AC-04 管理者の未終了の担当案件だけを引継ぎ待ちにし、対応状態と過去の履歴を維持して、システム操作として記録する", async () => {
     const manager = id("poc_s_mgr");
     const questions = await Promise.all([1, 2, 3, 4].map(() => newQuestion("poc_s001")));
@@ -384,7 +431,7 @@ describe("④ 担当案件の引継ぎ", () => {
       await commitAllowed;
       const [row] = await tx.update(reportCases)
         .set({ priority: "high", version: reportCase.version + 1, updatedAt: sql`clock_timestamp()` })
-        .where(eq(reportCases.id, reportCase.id)).returning({ updatedAt: reportCases.updatedAt });
+        .where(eq(reportCases.id, reportCase.id)).returning({ updatedAt: sql<string>`${reportCases.updatedAt}::text` });
       return row.updatedAt;
     });
     await caseLocked;
@@ -398,7 +445,12 @@ describe("④ 担当案件の引継ぎ", () => {
 
     const after = await caseRow(reportCase.id);
     expect(after).toMatchObject({ priority: "high", assigneeId: null, handoffPending: true, version: reportCase.version + 2 });
-    expect(after.updatedAt.getTime()).toBeGreaterThanOrEqual(otherUpdatedAt.getTime());
+    // JavaScript の Date はミリ秒までのため、DBの精度（マイクロ秒）のままDB上で比較する。
+    const { rows: [order] } = await pool.query<{ notBefore: boolean; sameAsHistory: boolean }>(`
+      SELECT c.updated_at >= $2::timestamptz AS "notBefore",
+        c.updated_at = (SELECT max(a.created_at) FROM report_actions a WHERE a.case_id = c.id) AS "sameAsHistory"
+      FROM report_cases c WHERE c.id = $1`, [reportCase.id, otherUpdatedAt]);
+    expect(order).toEqual({ notBefore: true, sameAsHistory: true });
   });
 
   it("担当者の利用者行をロックしていなければ、何も変えずにやり直しを求める", async () => {

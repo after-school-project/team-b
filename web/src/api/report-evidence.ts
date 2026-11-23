@@ -37,15 +37,15 @@ export type CaseWriter = Pick<
 >;
 
 /**
- * 案件の行ロックを取得した後のDB時刻（ミリ秒）。案件の更新時刻・履歴・証拠の取得時刻に使う。
+ * 案件の行ロックを取得した後のDB時刻。案件の更新時刻・履歴・証拠の取得時刻に、SQLの値として使う。
  * `commitMutation` の `now` は案件をロックする前に取得するため、その間に別の処理が同じ案件を更新して確定すると、
  * `now` を書き込むと更新時刻が逆行する。ロックの取得後に読むことで、先に確定した更新より前の時刻にならない。
+ * JavaScript の `Date`（ミリ秒）を経由するとDBのマイクロ秒が切り捨てられ、同じミリ秒内の先行更新より前になるため、
+ * DBの精度のまま文字列で受け取り、`timestamptz` に戻して書き込む。
  */
-export async function lockedCaseTime(tx: CaseWriter): Promise<Date> {
-  const { rows: [time] } = await tx.execute<{ epochMs: number }>(sql`
-    SELECT floor(extract(epoch FROM clock_timestamp()) * 1000)::double precision AS "epochMs"
-  `);
-  return new Date(time.epochMs);
+export async function lockedCaseTime(tx: CaseWriter): Promise<SQL> {
+  const { rows: [time] } = await tx.execute<{ at: string }>(sql`SELECT clock_timestamp()::text AS "at"`);
+  return sql`${time.at}::timestamptz`;
 }
 
 /** 通報対象。プロフィール・アカウントは利用者ID、質問・回答等はそのID。 */
@@ -157,44 +157,65 @@ async function snapshotOf(tx: CaseWriter, target: EvidenceTarget): Promise<Snaps
   }
 }
 
-export type PreservedEvidence = { evidenceId: string; caseIds: string[] };
+export type PreservedEvidence = { target: EvidenceTarget; evidenceId: string; caseIds: string[] };
+
+const openStatuses = ["unhandled", "in_progress"] as const;
 
 /**
- * 通報対象の現在の公開内容を証拠として保全し、未終了案件に関連付ける。未終了案件がない場合と、保全する公開内容が
- * ない場合（非表示中のプロフィール、強制非表示・削除済みの投稿）は何もせず null を返す。
+ * 通報対象の現在の公開内容を証拠として保全し、未終了案件に関連付ける。証拠を保存・関連付けた対象ごとの結果を返す。
+ * 未終了案件がない対象と、保全する公開内容がない対象（非表示中のプロフィール、強制非表示・削除済みの投稿）は何もしない。
  *
- * - 未終了案件の行を `FOR UPDATE` でロックしてから関連付ける。ロック順は本体 → 申請 → 案件（共通認可条件表 §5）のため、
- *   本体・申請のロックを取得した後に呼ぶ。更新・削除の前の内容を残す場合は、ロック後・更新前に呼ぶ。
+ * - 指定したすべての対象の未終了案件を、1つの問い合わせでID昇順に `FOR UPDATE` でロックしてから関連付ける。
+ *   同じ利用者のプロフィールとアカウントなど、複数の対象を保全する場合は1回の呼び出しにまとめる。対象ごとに呼ぶと、
+ *   案件のロックがID順にならず、同じ案件をID順にロックする引継ぎ処理とデッドロックする。
+ * - ロック順は本体 → 申請 → 案件（共通認可条件表 §5）のため、本体・申請のロックを取得した後に呼ぶ。
+ *   更新・削除の前の内容を残す場合は、ロック後・更新前に呼ぶ。
  * - 証拠の取得時刻は、案件のロック後のDB時刻（`lockedCaseTime`）にする。
  * - 同じ対象で内容が同じ証拠が既にあれば、版番号が変わっていても新しく保存せず、その証拠を関連付ける。再送・同じ内容での
  *   再実行や、証拠に含めない項目（質問の解決状態など）だけの変更で重複しない。
  */
 export async function preserveEvidence(
   tx: CaseWriter,
-  input: { target: EvidenceTarget },
-): Promise<PreservedEvidence | null> {
-  const [reportTarget] = await tx.select({ id: reportTargets.id }).from(reportTargets)
-    .where(targetCondition(input.target));
-  if (!reportTarget) return null;
-  const openCases = await tx.select({ id: reportCases.id }).from(reportCases)
-    .where(and(eq(reportCases.targetId, reportTarget.id), inArray(reportCases.status, ["unhandled", "in_progress"])))
+  input: { targets: readonly EvidenceTarget[] },
+): Promise<PreservedEvidence[]> {
+  const resolved: Array<{ target: EvidenceTarget; reportTargetId: string }> = [];
+  for (const target of input.targets) {
+    const [reportTarget] = await tx.select({ id: reportTargets.id }).from(reportTargets).where(targetCondition(target));
+    if (reportTarget) resolved.push({ target, reportTargetId: reportTarget.id });
+  }
+  if (resolved.length === 0) return [];
+  const openCases = await tx.select({ id: reportCases.id, targetId: reportCases.targetId }).from(reportCases)
+    .where(and(
+      inArray(reportCases.targetId, resolved.map(({ reportTargetId }) => reportTargetId)),
+      inArray(reportCases.status, [...openStatuses]),
+    ))
     .orderBy(asc(reportCases.id)).for("update");
-  if (openCases.length === 0) return null;
+  if (openCases.length === 0) return [];
 
-  const snapshot = await snapshotOf(tx, input.target);
-  if (!snapshot) return null;
+  let capturedAt: SQL | null = null;
+  const results: PreservedEvidence[] = [];
+  for (const { target, reportTargetId } of resolved) {
+    const caseIds = openCases.filter(({ targetId }) => targetId === reportTargetId).map(({ id }) => id);
+    if (caseIds.length === 0) continue;
+    const snapshot = await snapshotOf(tx, target);
+    if (!snapshot) continue;
 
-  const [existing] = await tx.select({ id: evidenceSnapshots.id }).from(evidenceSnapshots).where(and(
-    eq(evidenceSnapshots.targetId, reportTarget.id),
-    sql`${evidenceSnapshots.snapshot} = ${JSON.stringify(snapshot.content)}::jsonb`,
-  )).orderBy(desc(evidenceSnapshots.capturedAt), desc(evidenceSnapshots.id)).limit(1);
-  const evidenceId = existing?.id ?? (await tx.insert(evidenceSnapshots).values({
-    targetId: reportTarget.id, sourceRevision: snapshot.sourceRevision, snapshot: snapshot.content,
-    capturedAt: await lockedCaseTime(tx),
-  }).returning({ id: evidenceSnapshots.id }))[0].id;
+    const [existing] = await tx.select({ id: evidenceSnapshots.id }).from(evidenceSnapshots).where(and(
+      eq(evidenceSnapshots.targetId, reportTargetId),
+      sql`${evidenceSnapshots.snapshot} = ${JSON.stringify(snapshot.content)}::jsonb`,
+    )).orderBy(desc(evidenceSnapshots.capturedAt), desc(evidenceSnapshots.id)).limit(1);
+    let evidenceId = existing?.id;
+    if (!evidenceId) {
+      // 同じ呼び出しで保存する証拠は、同じ取得時刻にする。
+      capturedAt ??= await lockedCaseTime(tx);
+      [{ id: evidenceId }] = await tx.insert(evidenceSnapshots).values({
+        targetId: reportTargetId, sourceRevision: snapshot.sourceRevision, snapshot: snapshot.content, capturedAt,
+      }).returning({ id: evidenceSnapshots.id });
+    }
 
-  const caseIds = openCases.map(({ id }) => id);
-  await tx.insert(reportCaseEvidence).values(caseIds.map((caseId) => ({ caseId, evidenceId })))
-    .onConflictDoNothing({ target: [reportCaseEvidence.caseId, reportCaseEvidence.evidenceId] });
-  return { evidenceId, caseIds };
+    await tx.insert(reportCaseEvidence).values(caseIds.map((caseId) => ({ caseId, evidenceId })))
+      .onConflictDoNothing({ target: [reportCaseEvidence.caseId, reportCaseEvidence.evidenceId] });
+    results.push({ target, evidenceId, caseIds });
+  }
+  return results;
 }
