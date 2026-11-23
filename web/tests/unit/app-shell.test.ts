@@ -126,8 +126,12 @@ describe("AppShell（未実装の画面がある状態）", () => {
     expect(renderShell({ canAccessAdmin: false })).not.toContain(ADMIN_NAV_ITEM.label);
   });
 
-  it("通知が未実装の間は未読件数を表示しない", () => {
-    expect(renderShell({ canAccessAdmin: false, unread: 3 })).not.toContain("未読");
+  it("通知が未実装でも、渡された未読件数は表示する（開発用プレビューで確認できるようにする）", () => {
+    const html = renderShell({ canAccessAdmin: false, unread: 3 });
+    expect(html).toContain("（未読3件）");
+    expect(html).not.toContain('href="/notifications"');
+    expect(renderShell({ canAccessAdmin: false, unread: 0 })).not.toContain("未読");
+    expect(renderShell({ canAccessAdmin: false })).not.toContain("未読");
   });
 });
 

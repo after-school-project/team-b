@@ -123,6 +123,28 @@ test("モバイル幅でもキーボードだけでメニューを開閉し、�
   await expect(menuButton).toBeFocused();
 });
 
+test("画面の高さが低いモバイルでも、開いたメニュー内だけをスクロールし、閉じるボタンを表示したまま全項目を確認できる", async ({ page, baseURL }) => {
+  await page.setViewportSize({ width: 375, height: 500 });
+  await signIn(page, baseURL!, "poc_school");
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "メニュー", exact: true }).click();
+  const closeButton = page.getByRole("button", { name: "閉じる" });
+  await expect(closeButton).toBeInViewport();
+  const header = await page.locator("header").boundingBox();
+  expect(header!.height).toBeLessThanOrEqual(500);
+
+  // メニューの最後の項目（管理導線）までメニュー内でスクロールしても、閉じるボタンは画面内に残る。
+  const adminItem = page.getByText("管理エリアへ");
+  await adminItem.scrollIntoViewIfNeeded();
+  await expect(adminItem).toBeInViewport();
+  await expect(closeButton).toBeInViewport();
+  expect(await page.evaluate(() => window.scrollY)).toBe(0);
+
+  await closeButton.click();
+  await expect(page.getByRole("heading", { level: 1, name: "ホーム" })).toBeInViewport();
+});
+
 test("停止中の利用者はホームを表示せず、ログイン画面の停止案内に留まる", async ({ page, baseURL }) => {
   await signIn(page, baseURL!, "poc_suspended");
   await page.goto("/");

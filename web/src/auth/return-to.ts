@@ -59,6 +59,9 @@ function compiledFor(routes: readonly string[]): readonly CompiledRoute[] {
   return compiled;
 }
 
+// 一覧の誤記（未定義のパラメーター名など）は、読み込み時（ビルド・テスト）に設定エラーとして止める。
+compiledFor(implementedScreenRoutes);
+
 /** パス（クエリー・ハッシュを含まない）が実装済みの画面のルートに一致するか。 */
 export function matchesScreenRoute(pathname: string, routes: readonly string[] = implementedScreenRoutes): boolean {
   return compiledFor(routes).some((route) => matchesCompiled(pathname, route));
@@ -66,6 +69,8 @@ export function matchesScreenRoute(pathname: string, routes: readonly string[] =
 
 /** 許可した同一アプリ内の相対パスだけを返す。未指定・許可外は `/`。 */
 export function resolveReturnTo(value: unknown, routes: readonly string[] = implementedScreenRoutes): string {
+  // ルート定義の誤りは、下の URL 解析の失敗（利用者の入力の誤り）と区別し、吸収せずに投げる。
+  compiledFor(routes);
   if (typeof value !== "string" || !value.startsWith("/") || value.startsWith("//") || value.includes("\\")) {
     return defaultReturnTo;
   }

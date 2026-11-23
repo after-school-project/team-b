@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useId, useRef, useState, type KeyboardEvent, type RefObject } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import {
   ACCOUNT_NAV_ITEMS,
   ADMIN_NAV_ITEM,
@@ -36,6 +36,13 @@ export function AppNavigation({ viewer, unreadNotificationCount }: AppNavigation
   useDismissOnOutsideClick(accountRef, accountOpen, () => setAccountOpen(false));
 
   const unreadLabel = formatUnreadCount(unreadNotificationCount);
+  // 未読件数は渡された場合だけ表示する。通知画面の実装状況（導線を押せるか）とは独立させる。
+  const unreadBadge = unreadLabel ? (
+    <span className={styles.badge}>
+      <span aria-hidden="true">{unreadLabel}</span>
+      <span className={styles.visuallyHidden}>（未読{unreadLabel}件）</span>
+    </span>
+  ) : null;
   const closeAll = () => {
     setMenuOpen(false);
     setAccountOpen(false);
@@ -68,15 +75,12 @@ export function AppNavigation({ viewer, unreadNotificationCount }: AppNavigation
             onClick={closeAll}
           >
             <span>{NOTIFICATION_NAV_ITEM.label}</span>
-            {unreadLabel ? (
-              <span className={styles.badge}>
-                <span aria-hidden="true">{unreadLabel}</span>
-                <span className={styles.visuallyHidden}>（未読{unreadLabel}件）</span>
-              </span>
-            ) : null}
+            {unreadBadge}
           </Link>
         ) : (
-          <UnavailableItem className={styles.utilityUnavailable} label={NOTIFICATION_NAV_ITEM.label} />
+          <UnavailableItem className={styles.utilityUnavailable} label={NOTIFICATION_NAV_ITEM.label}>
+            {unreadBadge}
+          </UnavailableItem>
         )}
 
         <div
@@ -194,10 +198,11 @@ function NavList({
 }
 
 /** 未実装の画面への導線。リンクにせず（フォーカスも受けない）、準備中であることを表示と読み上げの両方で伝える。 */
-function UnavailableItem({ className, label }: { className: string; label: string }) {
+function UnavailableItem({ className, label, children }: { className: string; label: string; children?: ReactNode }) {
   return (
     <span className={className}>
       {label}
+      {children}
       <span className={styles.soonLabel}>
         <span className={styles.visuallyHidden}>（</span>準備中<span className={styles.visuallyHidden}>）</span>
       </span>

@@ -65,6 +65,13 @@ describe("可変パスを含む画面のルート", () => {
   it("未定義のパラメーター名を含むルートは設定の誤りとして扱う", () => {
     expect(() => matchesScreenRoute("/x/1", ["/x/[unknownId]"])).toThrow("未定義のルートパラメーター");
   });
+
+  it("ルート定義の誤記は、正常な戻り先の判定でも吸収せずにエラーにする", () => {
+    const typo = ["/", "/questions/[questionID]"];
+    expect(() => resolveReturnTo("/?tab=home", typo)).toThrow("未定義のルートパラメーター");
+    expect(() => resolveReturnTo("https://example.com/", typo)).toThrow("未定義のルートパラメーター");
+    expect(() => loginPathFor("/?tab=home", typo)).toThrow("未定義のルートパラメーター");
+  });
 });
 
 describe("戻り先付きのログイン画面URL", () => {
