@@ -158,6 +158,20 @@ describe("③ 通報証拠の保全", () => {
     });
   });
 
+  it("大文字を含むUUIDで質問・回答等を指定しても、同じ対象として保全する", async () => {
+    const questionId = await newQuestion("poc_s001");
+    const responseId = await newResponse(questionId, "poc_s002");
+    const questionCase = await newCase({ kind: "question", questionId });
+    const responseCase = await newCase({ kind: "response", responseId });
+    const results = await db.transaction((tx) => preserveEvidence(tx, { targets: [
+      { kind: "question", questionId: questionId.toUpperCase() },
+      { kind: "response", responseId: responseId.toUpperCase() },
+    ] }));
+    expect(results.map(({ caseIds }) => caseIds)).toEqual([[questionCase.id], [responseCase.id]]);
+    expect(await evidenceOf(questionCase.id)).toHaveLength(1);
+    expect(await evidenceOf(responseCase.id)).toHaveLength(1);
+  });
+
   it("内容が変わった後に保全すると、新しい証拠を追加して同じ案件に関連付ける", async () => {
     const questionId = await newQuestion("poc_s001");
     const reportCase = await newCase({ kind: "question", questionId });

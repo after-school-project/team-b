@@ -57,11 +57,15 @@ export type EvidenceTarget =
 
 type Snapshot = { sourceRevision: number; content: Record<string, unknown> };
 
-/** 対象を識別するキー。`report_targets` の行と、指定された対象を突き合わせる。 */
+/**
+ * 対象を識別するキー。`report_targets` の行と、指定された対象を突き合わせる。
+ * 質問・回答等のIDはUUIDで、PostgreSQL は大文字を含む入力も同じ値として検索し、小文字で返すため、小文字にそろえる。
+ * 利用者IDは大文字と小文字を区別する文字列なので、そのまま使う。
+ */
 function targetKey(target: EvidenceTarget): string {
   switch (target.kind) {
-    case "question": return `question:${target.questionId}`;
-    case "response": return `response:${target.responseId}`;
+    case "question": return `question:${target.questionId.toLowerCase()}`;
+    case "response": return `response:${target.responseId.toLowerCase()}`;
     case "profile":
     case "account":
       return `${target.kind}:${target.userId}`;
@@ -92,9 +96,10 @@ async function findReportTargets(tx: CaseWriter, targets: readonly EvidenceTarge
   }).from(reportTargets).where(or(...conditions));
   const found = new Map<string, string>();
   for (const row of rows) {
-    const key = row.kind === "question" ? `question:${row.questionId}`
-      : row.kind === "response" ? `response:${row.responseId}` : `${row.kind}:${row.subjectUserId}`;
-    found.set(key, row.id);
+    // 種類に対応する参照列は、report_targets_reference のCHECK制約で必ず設定されている。
+    found.set(targetKey(row.kind === "question" ? { kind: "question", questionId: row.questionId! }
+      : row.kind === "response" ? { kind: "response", responseId: row.responseId! }
+        : { kind: row.kind, userId: row.subjectUserId! }), row.id);
   }
   return found;
 }
