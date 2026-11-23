@@ -28,6 +28,11 @@ export function runAccountTask(task: string, args: readonly string[], env: Recor
  * コマンドは秘密値を出力しない（出力に含まれないことは各テストで確認する）ため、標準エラーをそのまま示してよい。
  */
 export function expectExit(result: TaskResult, code: number): void {
-  expect(result.error, `コマンドを起動できないか時間切れになりました: ${result.error?.message ?? ""}`).toBeUndefined();
-  expect(result.status, `終了コード ${result.status ?? "なし"}（signal: ${result.signal ?? "なし"}）\n${result.stderr}`).toBe(code);
+  // 時間切れで停止した場合も、停止までに取得した標準エラーを原因の調査に使えるよう、どちらの失敗にも含める。
+  const stderr = result.stderr ? `\n標準エラー:\n${result.stderr}` : "\n標準エラー: なし";
+  expect(
+    result.error,
+    `コマンドを起動できないか時間切れになりました: ${result.error?.message ?? ""}${stderr}`,
+  ).toBeUndefined();
+  expect(result.status, `終了コード ${result.status ?? "なし"}（signal: ${result.signal ?? "なし"}）${stderr}`).toBe(code);
 }
