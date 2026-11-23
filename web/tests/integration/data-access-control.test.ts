@@ -10,7 +10,7 @@ import { z } from "zod";
 import { seedDevelopmentData } from "../../scripts/development-seed";
 import { migrateDatabase } from "../../scripts/lib/database-management";
 import { defineAuthorizedApiRoute } from "../../src/api/authorized-route";
-import { createCursorCodec, parseListQuery, queryListPage } from "../../src/api/pagination";
+import { createCursorCodec, cursorTimestamp, parseListQuery, queryListPage } from "../../src/api/pagination";
 import { parsePathParams, userId as userIdSchema, uuid } from "../../src/api/request";
 import { ApiError } from "../../src/api/response";
 import { POST as authPost } from "../../src/app/api/auth/[...auth]/route";
@@ -98,15 +98,15 @@ async function addContent() {
   const alumni = userId("poc_a001");
   const staff = userId("poc_staff");
 
-  // カーソルの位置がミリ秒単位で一意になるよう、作成日時を揃える。
-  await query("UPDATE qa_questions SET created_at = '2026-11-01T00:00:00.000Z'");
+  // DBの日時はマイクロ秒まで保持する。同じミリ秒内の投稿でも、カーソルでページをたどったときに抜けないことを確認する。
   const { rows: [{ id: categoryId }] } = await query("SELECT id FROM qa_categories WHERE code = 'learning'");
   const question = (title: string, createdAt: string, state = "") => query(`
     INSERT INTO qa_questions (author_id, category_id, title, body_markdown, author_label, created_at${state ? ", " + state : ""})
     VALUES ($1, $2, $3, '本文', 'はる', $4${state ? ", now()" : ""})
   `, [student, categoryId, title, createdAt]);
-  await question("公開中の質問（検証用）", "2026-11-02T00:00:00.000Z");
-  await question(hidden.question, "2026-11-03T00:00:00.000Z", "forced_hidden_at");
+  await question("公開中の質問（検証用）", "2026-11-02T00:00:00.000200Z");
+  await question(hidden.question, "2026-11-02T00:00:00.000150Z", "forced_hidden_at");
+  await question("同じミリ秒内の公開中の質問（検証用）", "2026-11-02T00:00:00.000100Z");
   await question(hidden.deletedQuestion, "2026-11-04T00:00:00.000Z", "deleted_at");
 
   async function notice(title: string, author: string, publish: boolean, state = "") {
@@ -196,10 +196,10 @@ const questionsRoute = defineAuthorizedApiRoute<{ params: Promise<Record<string,
       authorized: visibleQuestion(),
       after: last ? sql`(${qaQuestions.createdAt}, ${qaQuestions.id}) < (${last[0]}::timestamptz, ${last[1]}::uuid)` : undefined,
       limit,
-      rows: (where, take) => database().select({ id: qaQuestions.id, title: qaQuestions.title, createdAt: qaQuestions.createdAt })
+      rows: (where, take) => database().select({ id: qaQuestions.id, title: qaQuestions.title, cursorAt: cursorTimestamp(qaQuestions.createdAt) })
         .from(qaQuestions).where(where).orderBy(desc(qaQuestions.createdAt), desc(qaQuestions.id)).limit(take),
       count: async (where) => (await database().select({ n: count() }).from(qaQuestions).where(where))[0].n,
-      cursorFor: (row) => codec.encode([row.createdAt.toISOString(), row.id]),
+      cursorFor: (row) => codec.encode([row.cursorAt, row.id]),
     });
   },
 });
@@ -322,13 +322,15 @@ describe("AC-07：未承認版・強制非表示・削除済みを一覧・件�
       const { status, body, text } = await get(questionsRoute, cookie, path);
       expect(status).toBe(200);
       expectNoForbiddenText(text);
-      expect(body.meta.page!.totalCount).toBe(2);
+      expect(body.meta.page!.totalCount).toBe(3);
       titles.push(...body.data!.items!.map((item) => item.title as string));
       cursor = body.meta.page!.nextCursor;
       pages += 1;
     } while (cursor && pages < 10);
-    expect(titles).toEqual(["公開中の質問（検証用）", "チーム開発で最初に揃えておくとよいことは？"]);
-    expect(pages).toBe(2);
+    expect(titles).toEqual([
+      "チーム開発で最初に揃えておくとよいことは？", "公開中の質問（検証用）", "同じミリ秒内の公開中の質問（検証用）",
+    ]);
+    expect(pages).toBe(3);
   });
 
   it("お知らせの一覧は公開版の本文だけを返し、審査中の版・未公開・強制非表示・削除済みを含めない", async () => {

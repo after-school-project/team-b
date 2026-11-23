@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { sql, type SQL } from "drizzle-orm";
+import { sql, type SQL, type SQLWrapper } from "drizzle-orm";
 import { z } from "zod";
 import { canonicalJson, type JsonValue } from "./canonical-json";
 import { parseQuery } from "./request";
@@ -50,6 +50,15 @@ export function createCursorCodec<T extends readonly JsonValue[]>(
       throw new ApiError("INVALID_CURSOR");
     },
   };
+}
+
+/**
+ * カーソルに入れる日時を、DBの精度（マイクロ秒）のまま UTC の文字列として取得する。
+ * `Date` を経由するとミリ秒に切り捨てられ、同じミリ秒内の行がページの境目で抜けるため、
+ * カーソルの日時はこの値を使い、比較では `::timestamptz` に戻す。
+ */
+export function cursorTimestamp(column: SQLWrapper): SQL<string> {
+  return sql<string>`to_char(${column} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
 }
 
 function allOf(...conditions: (SQL | undefined)[]): SQL {

@@ -118,10 +118,10 @@ export const { GET, HEAD, OPTIONS, POST, PUT, DELETE, PATCH } = defineAdminApiRo
 | 一般の閲覧者向けの公開条件 | [`visibleQuestion`・`visibleResponse`・`publishedNotice`・`publishedEvent`](../../web/src/auth/visibility.ts) | 強制非表示・削除済み・公開版のないものを除く条件。お知らせ・イベントの本文は `publicRevisionId` の版から取得し、審査中の版を返さない |
 | 削除済みお知らせの本文 | `retainedDeletedNotice` | 削除から180日の期間内の条件。本人・学校管理者の判定と組み合わせる。更新では `commitMutation` の `now` を渡す |
 | プロフィール | `publicProfileState`・`projectOptionalProfileFields` | 公開中のプロフィールの条件と、任意項目の返却範囲。本人には全項目、本人以外には `members` の項目だけを返し、本人のみの項目はキーごと省略する |
-| 一覧・件数・カーソル | [`queryListPage`](../../web/src/api/pagination.ts) | `authorized`（認可条件）と `filters`（検索条件）を件数と各ページの両方に適用し、返した行からだけ次ページのカーソルを作る |
+| 一覧・件数・カーソル | [`queryListPage`](../../web/src/api/pagination.ts) | `authorized`（認可条件）と `filters`（検索条件）を件数と各ページの両方に適用し、返した行からだけ次ページのカーソルを作る。カーソルの日時は `cursorTimestamp` でDBの精度のまま取得する |
 
 ```ts
-import { createCursorCodec, parseListQuery, queryListPage } from "@/api/pagination";
+import { createCursorCodec, cursorTimestamp, parseListQuery, queryListPage } from "@/api/pagination";
 import { visibleQuestion } from "@/auth/visibility";
 
 export const { GET, HEAD, OPTIONS, POST, PUT, DELETE, PATCH } = defineAuthorizedApiRoute({
@@ -134,14 +134,15 @@ export const { GET, HEAD, OPTIONS, POST, PUT, DELETE, PATCH } = defineAuthorized
       filters: q ? ilike(qaQuestions.title, `%${q}%`) : undefined,
       after: last ? sql`(${qaQuestions.createdAt}, ${qaQuestions.id}) < (${last[0]}::timestamptz, ${last[1]}::uuid)` : undefined,
       limit,
-      rows: (where, take) => db.select(/* 返却項目だけ */).from(qaQuestions).where(where).orderBy(/* 並び順 */).limit(take),
+      rows: (where, take) => db.select({ /* 返却項目だけ */ id: qaQuestions.id, cursorAt: cursorTimestamp(qaQuestions.createdAt) }).from(qaQuestions).where(where).orderBy(/* 並び順 */).limit(take),
       count: async (where) => (await db.select({ n: count() }).from(qaQuestions).where(where))[0].n,
-      cursorFor: (row) => codec.encode([row.createdAt.toISOString(), row.id]),
+      cursorFor: (row) => codec.encode([row.cursorAt, row.id]),
     });
   },
 });
 ```
 
+- カーソルに入れる日時は `cursorTimestamp` で取得します。DBの日時はマイクロ秒まで保持しますが、`Date`（`toISOString()`）を経由するとミリ秒に切り捨てられ、同じミリ秒内の行がページの境目で抜けます。
 - 返却項目は、DTO に入れる列だけを選びます。非公開値をブラウザーへ送って表示だけを隠す実装はしません。
 - 公開条件は一般の閲覧者向けです。本人・管理者向けの取得、親質問が削除された回答の扱い、所属による投稿可否など、機能ごとの条件は各機能でこれらと組み合わせて判定します。
 - 本人用の一覧・申請・通知を他人が要求した場合は、存在の有無を明かさない404にします。存在するスレッドの状態案内として本文なしで返せるQ&Aなど、許可された投影は各機能のDTOに従います。

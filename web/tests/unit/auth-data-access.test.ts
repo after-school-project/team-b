@@ -1,7 +1,8 @@
 import { sql, type SQL } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
 import { describe, expect, it, vi } from "vitest";
-import { queryListPage } from "../../src/api/pagination";
+import { cursorTimestamp, queryListPage } from "../../src/api/pagination";
+import { qaQuestions } from "../../src/db/content-schema";
 import { ApiError } from "../../src/api/response";
 import { notifications } from "../../src/db/moderation-schema";
 import { isOwner, ownedBy, requireOwned } from "../../src/auth/ownership";
@@ -149,6 +150,11 @@ describe("認可条件を適用した一覧", () => {
     const page = await queryListPage({ authorized, limit: 20, rows, count, cursorFor: () => "unused" });
     expect(render(rows.mock.calls[0][0]).sql).toBe('(("owner_id" = $1))');
     expect(page.page).toEqual({ limit: 20, hasMore: false, nextCursor: null, totalCount: 1 });
+  });
+
+  it("カーソルの日時は、DBでマイクロ秒までの UTC の文字列にする（Date を経由しない）", () => {
+    expect(render(cursorTimestamp(qaQuestions.createdAt)).sql)
+      .toBe(`to_char("qa_questions"."created_at" AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`);
   });
 
   it("取得件数が上限を超えたら、誤った件数のまま返さない", async () => {
