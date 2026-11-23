@@ -4,8 +4,9 @@ import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import {
   eventRequests, eventRevisions, events, noticeRequests, noticeRevisions, notices, qaQuestions, qaResponses,
 } from "../src/db/content-schema";
+import { recordNotification } from "../src/api/notifications";
 import {
-  auditLogs, evidenceSnapshots, notifications, operationReceipts, reportActions, reportCaseEvidence,
+  auditLogs, evidenceSnapshots, operationReceipts, reportActions, reportCaseEvidence,
   reportCases, reportTargets, reports,
 } from "../src/db/moderation-schema";
 import { graduationChanges, managerRoleChanges, qaCategories } from "../src/db/schema";
@@ -135,20 +136,18 @@ export async function seedCommunityContent(tx: SeedTransaction, userIds: Readonl
     beforeState: { status: "unhandled" }, afterState: { status: "in_progress" },
   });
 
-  await tx.insert(notifications).values([
-    {
-      recipientId: student, kind: "qa_answer_created", qaResponseId: answer.id,
-      eventKey: `qa-answer:${answer.id}`, publicMessage: "質問に回答が付きました。",
-    },
-    {
-      recipientId: schoolManager, kind: "notice_review_requested", noticeRequestId: noticeRequest.id,
-      eventKey: `notice-request:${noticeRequest.id}`, publicMessage: "お知らせの審査依頼が届きました。",
-    },
-    {
-      recipientId: schoolManager, kind: "event_review_requested", eventRequestId: eventRequest.id,
-      eventKey: `event-request:${eventRequest.id}`, publicMessage: "イベントの審査依頼が届きました。",
-    },
-  ]);
+  // 通知は業務処理と同じ共通処理で記録し、event_key と public_message の形式を揃える（#47）。
+  await recordNotification(tx, {
+    recipientId: student, actorId: alumni, subject: { kind: "qa_answer_created", responseId: answer.id }, at: publishedAt,
+  });
+  await recordNotification(tx, {
+    recipientId: schoolManager, actorId: alumni,
+    subject: { kind: "notice_review_requested", noticeRequestId: noticeRequest.id }, at: publishedAt,
+  });
+  await recordNotification(tx, {
+    recipientId: schoolManager, actorId: student,
+    subject: { kind: "event_review_requested", eventRequestId: eventRequest.id }, at: publishedAt,
+  });
   await tx.insert(managerRoleChanges).values({
     userId: userId("poc_s_mgr"), actorId: schoolManager, beforeAppManager: false, afterAppManager: true,
   });

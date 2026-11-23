@@ -173,6 +173,34 @@ export const { GET, HEAD, OPTIONS, POST, PUT, DELETE, PATCH } = defineAuthorized
 4. 新しい操作は `execute` 内で対象への操作権限を確認し、`assertExpectedVersion` で版番号を比較します。権限判定に必要な利用者が追加で判明したら `requireLockedUsers` を呼び、ロックの取得をやり直します。期限判定、更新、通知・履歴・監査にはロック取得後のDB時刻 `now` と同じ `tx` を使います。
 5. `commitMutation` は業務変更と確定済み操作記録を同時に保存します。戻り値はRoute Handlerからそのまま返せます。通報受付のような専用形式では、`data` を設計書の公開DTOに変換します。
 
+### 通知・監査ログの記録
+
+通知と監査ログは、`execute` の中で同じ `tx` と `now` を渡して記録します。業務更新が失敗すれば一緒にロールバックされ、再送では `execute` が呼ばれないため重複しません。[DB・ER設計書](../After_School_Project_PoC_DB・ER設計書_v0.1.md) §5・§7
+
+| 共通処理 | 使い方 |
+|---|---|
+| [`recordNotification`](../../web/src/api/notifications.ts) | 受信者・実行者・対象（`subject`）を渡して1件記録する。受信者と実行者が同じなら作らない。`event_key`（`<kind>:<対象ID>:<契機ID>`）と `public_message`（定型文と本人向けの理由）は共通処理が作り、対象の題名・本文は保存しない |
+| `recordReviewRequestNotifications` | お知らせ・イベントの審査依頼を、審査できる現在の管理者全員（申請者本人を除く）へ記録する |
+| [`recordAuditLog`](../../web/src/api/audit-log.ts) | 操作（`action`）ごとの許可リストにある項目だけを before/after に記録し、IDを返す。許可外の項目や単純な値でない項目は例外になる。システム処理は `actorId: null` |
+
+```ts
+async execute({ tx, now }) {
+  // 業務更新の後に記録する。
+  const auditLogId = await recordAuditLog(tx, {
+    action: "profile.hidden", actorId: viewer.userId, targetId: userId,
+    before: { profileState: "public" }, after: { profileState: "hidden" }, publicReason, at: now,
+  });
+  // 非表示の通知は、監査ログのIDを契機IDにする。
+  await recordNotification(tx, {
+    recipientId: userId, actorId: viewer.userId,
+    subject: { kind: "profile_hidden", userId, auditLogId, publicReason }, at: now,
+  });
+}
+```
+
+- kind ごとの対象と契機IDは `NotificationSubject` の説明を参照してください。Q&Aの宛先（質問者・直接の親投稿者）の特定は各機能で行います。
+- 監査ログの許可リスト（`auditOperations`）には #8 の操作だけを定めています。新しい操作を記録する機能は、その操作の対象の種類と項目を追加します。
+
 ## 環境設定
 
 `BETTER_AUTH_URL` にはブラウザーからアクセスする正規のOriginを設定します。HTTPSを使い、開発・テストのループバックのみHTTPを許可します。Better AuthのHTTP入口を実装するときは [web-config.ts](../../web/src/auth/web-config.ts) の `authWebOptions()` を既存の `authOptions()` と組み合わせ、同じOriginとセッションCookie属性を適用します。
