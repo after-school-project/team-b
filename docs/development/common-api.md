@@ -106,6 +106,20 @@ export const { GET, HEAD, OPTIONS, POST, PUT, DELETE, PATCH } = defineAdminApiRo
 - 区分を満たさない場合は403 `FORBIDDEN` を返し、どの権限が足りないかは返しません。停止中・未完了は管理権限より先に、一般の業務APIと同じ403で拒否します。
 - 自己審査の禁止、学校管理者を対象にできない操作、通報案件の学校専用属性など、操作ごとの条件は各機能の処理で判定します。
 
+### 管理エリアの画面
+
+管理エリアの画面（`/admin/*`）は、ページの先頭で [`requireAdminScreen`](../../web/src/components/app-shell/screen.ts) に管理APIと同じ区分を渡します。未認証・利用準備中・停止中は `requireAppScreen` と同じくログイン画面へ移動します。管理権限が足りない場合（一般利用者、権限解除・プロフィール非表示中のアプリ管理者、学校専用画面のアプリ管理者）は `access: "denied"` を返すので、管理データを読まずに [`AdminAccessDenied`](../../web/src/components/app-shell/AdminAccessDenied.tsx) だけを表示します。ログインは維持され、権限変更の案内とホームへの導線が表示されます（[画面遷移・状態遷移設計書](../After_School_Project_PoC_画面遷移・状態遷移設計書_v0.1.md) §4）。
+
+```tsx
+export default async function AdminUsersPage({ searchParams }: { searchParams: Promise<ScreenSearchParams> }) {
+  const screen = await requireAdminScreen("any", "/admin/users", await searchParams);
+  if (screen.access === "denied") {
+    return <AppShell viewer={screen.shell}><AdminAccessDenied /></AppShell>;
+  }
+  // ここから管理データを取得する。
+}
+```
+
 ## 所有者・公開範囲による取得制御
 
 本人用データ・公開範囲・対象状態による制限は、取得したデータから後で取り除くのではなく、取得条件と返却項目の段階で適用します。[共通認可条件表](../After_School_Project_PoC_共通認可条件表_v0.1.md) §1〜§3
