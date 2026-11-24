@@ -5,15 +5,14 @@ import { ApiError } from "@/api/response";
 import type { ScreenSearchParams } from "@/auth/screen";
 import { AppShell } from "@/components/app-shell/AppShell";
 import { requireAppScreen } from "@/components/app-shell/screen";
-import { EmptyState } from "@/components/feedback/StateMessage";
 import { parseAlumniQuery, searchAlumni, type PublicProfile } from "@/profile/public-profile";
+import { AlumniResults } from "./alumni-results";
 import styles from "./page.module.css";
 
 export const metadata: Metadata = { title: "卒業生検索" };
 
 const filterNames = ["q", "department", "entryYear", "graduationYear"] as const;
 type FilterName = (typeof filterNames)[number];
-const baseRoleLabels: Record<PublicProfile["baseRole"], string> = { student: "在校生", alumni: "卒業生", staff: "学校職員" };
 
 /** 画面のクエリーから、検索条件（空欄は指定なし）とカーソルを取り出す。配列（同名の複数指定）は形式の誤りとして扱う。 */
 function readParams(searchParams: ScreenSearchParams) {
@@ -107,41 +106,13 @@ export default async function AlumniPage({ searchParams }: { searchParams: Promi
             {result.cursorExpired ? <Link href={firstPage}>最初のページを表示する</Link> : null}
           </div>
         ) : (
-          <section className={styles.results} aria-labelledby="alumni-results">
-            <h2 id="alumni-results" className={styles.sectionTitle}>
-              検索結果 <span className={styles.count}>{result.page.totalCount}件</span>
-            </h2>
-            {result.items.length === 0 ? (
-              <EmptyState title="条件に合う卒業生・卒業予定者はいません。" headingLevel={3}
-                description="キーワードや年度を変えて検索してください。" />
-            ) : (
-              <ul className={styles.list}>
-                {result.items.map((profile) => (
-                  <li key={profile.userId} className={styles.item}>
-                    <p className={styles.badges}>
-                      <span className={styles.badgeInfo}>{baseRoleLabels[profile.baseRole]}</span>
-                      {profile.isGraduating ? <span className={styles.badgeInfo}>卒業予定</span> : null}
-                    </p>
-                    <h3 className={styles.itemTitle}>
-                      <Link href={`/users/${encodeURIComponent(profile.userId)}`}>{profile.fields.displayName}</Link>
-                    </h3>
-                    {profile.fields.optionalFields.occupation?.value ? (
-                      <p className={styles.summary}>{profile.fields.optionalFields.occupation.value}</p>
-                    ) : null}
-                    <p className={styles.meta}>
-                      {[profile.fields.department, profile.fields.graduationYear ? `${profile.fields.graduationYear}年度卒業` : null]
-                        .filter(Boolean).join("・") || "学科・年度の登録なし"}
-                    </p>
-                  </li>
-                ))}
-              </ul>
-            )}
-            {result.page.nextCursor ? (
-              <p className={styles.pager}>
-                <Link className={styles.secondaryLink} href={`/alumni?${nextQuery}`}>次の{result.page.limit}件を表示</Link>
-              </p>
-            ) : null}
-          </section>
+          <AlumniResults
+            items={result.items}
+            page={result.page}
+            continued={query.has("cursor")}
+            firstPageHref={firstPage}
+            nextPageHref={result.page.nextCursor ? `/alumni?${nextQuery}` : null}
+          />
         )}
       </div>
     </AppShell>

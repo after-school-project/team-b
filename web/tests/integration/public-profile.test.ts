@@ -238,6 +238,17 @@ describe("API-PRO-04 卒業生検索", () => {
     expect((await search("poc_a001", { limit: "1", cursor })).body.error?.code).toBe("INVALID_CURSOR");
   });
 
+  it("ページ送りの途中で掲載が取り消されると、続きは空になり、件数には残っている該当者を返す", async () => {
+    const first = await search("poc_s001", { limit: "1" });
+    expect(names(first.body)).toEqual(["あおい"]);
+    await db.update(profiles).set({ searchOptIn: false }).where(eq(profiles.userId, id("poc_s002")));
+    const next = await search("poc_s001", { limit: "1", cursor: first.body.meta.page!.nextCursor! });
+    expect(next.status).toBe(200);
+    expect(names(next.body)).toEqual([]);
+    // 画面は、続きが空でも件数が残っていることから、先頭ページへ戻る案内を出す。
+    expect(next.body.meta.page).toMatchObject({ totalCount: 1, hasMore: false, nextCursor: null });
+  });
+
   it("検索条件の形式の誤りは400にする", async () => {
     const invalid: Array<Record<string, string>> = [
       { q: "あ".repeat(101) }, { q: "   " }, { entryYear: "26" }, { graduationYear: "２０２６" }, { sort: "name" },

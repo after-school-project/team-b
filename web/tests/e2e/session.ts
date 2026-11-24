@@ -50,3 +50,27 @@ export async function signIn(page: Page, baseURL: string, username: string) {
   }
   if (status !== 200) throw new Error(`${username} でサインインできませんでした（HTTP ${status}）。`);
 }
+
+/**
+ * ログイン画面のフォームから送信した認証要求を、seed のパスワードと正規オリジンに置き換えて送り直す。
+ * フォームの送信・応答の処理・遷移は画面の実装のまま確認し、seed のパスワードは画面に入力しない。
+ * フォームに入力したログインIDが `username` と違う場合は送信しない。
+ */
+export async function routeFormSignIn(page: Page, baseURL: string, username: string) {
+  const password = passwordFor(username);
+  const origin = canonicalOrigin ?? new URL(baseURL).origin;
+  await page.route("**/api/auth/sign-in/username", async (route) => {
+    try {
+      const submitted: unknown = route.request().postDataJSON();
+      if ((submitted as { username?: unknown } | null)?.username !== username) return await route.abort();
+      const response = await route.fetch({
+        headers: { ...await route.request().allHeaders(), origin },
+        postData: { username, password },
+      });
+      await route.fulfill({ response });
+    } catch {
+      // 要求の内容（秘密値）を含み得る元の例外は出さない。画面には認証の失敗として表示される。
+      await route.abort().catch(() => {});
+    }
+  });
+}

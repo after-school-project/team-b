@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { signIn } from "./session";
+import { routeFormSignIn, signIn } from "./session";
 
 /**
  * 卒業生検索（GE-04）と公開プロフィール（GE-03）を実セッションで確認する（#8 ③④、#48 から移管した AC-03）。
@@ -25,8 +25,19 @@ test("#48 AC-03 未認証で可変パスの画面を開くと、戻り先付き�
   await page.goto(path);
   await expect(page).toHaveURL(`/login?returnTo=${encodeURIComponent(path)}`);
 
+  // フォームを送信し、ログイン成功後の遷移で戻り先へ戻ることを確認する（再読み込みによる既存セッションの経路ではない）。
+  await routeFormSignIn(page, baseURL!, "poc_s001");
+  await page.getByLabel("ログインID").fill("poc_s001");
+  await page.getByLabel("パスワード").fill("dummy-password-for-e2e");
+  await page.getByRole("button", { name: "ログイン" }).click();
+  await expect(page).toHaveURL(path);
+  await expect(page.getByRole("heading", { level: 1, name: "あおい" })).toBeVisible();
+});
+
+test("有効なセッションでログイン画面の戻り先を開くと、可変パスの画面へ移動する", async ({ page, baseURL }) => {
   await signIn(page, baseURL!, "poc_s001");
-  await page.reload();
+  const path = await openProfileFromSearch(page, "あおい");
+  await page.goto(`/login?returnTo=${encodeURIComponent(path)}`);
   await expect(page).toHaveURL(path);
   await expect(page.getByRole("heading", { level: 1, name: "あおい" })).toBeVisible();
 });
