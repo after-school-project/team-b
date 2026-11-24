@@ -1,0 +1,96 @@
+import { expect, test, type Page } from "@playwright/test";
+import { signIn } from "./session";
+
+/**
+ * 卒業生検索（GE-04）と公開プロフィール（GE-03）を実セッションで確認する（#8 ③④、#48 から移管した AC-03）。
+ * 準備手順は docs/development/quality-and-poc.md の「ホストでのE2E」を参照する。seed のパスワードを記録に残さないため、
+ * トレースなどを無効にする。
+ */
+test.use({ trace: "off", screenshot: "off", video: "off" });
+
+/** 卒業生検索から、公開表示名のリンクで公開プロフィールを開き、そのパスを返す。 */
+async function openProfileFromSearch(page: Page, displayName: string): Promise<string> {
+  await page.goto(`/alumni?q=${encodeURIComponent(displayName)}`);
+  await page.getByRole("link", { name: displayName, exact: true }).click();
+  await expect(page.getByRole("heading", { level: 1, name: displayName })).toBeVisible();
+  return new URL(page.url()).pathname;
+}
+
+test("#48 AC-03 未認証で可変パスの画面を開くと、戻り先付きでログイン画面に移り、ログイン後にその画面へ戻る", async ({ page, baseURL }) => {
+  await signIn(page, baseURL!, "poc_s001");
+  const path = await openProfileFromSearch(page, "あおい");
+  expect(path).toMatch(/^\/users\/[A-Za-z0-9_-]+$/);
+
+  await page.context().clearCookies();
+  await page.goto(path);
+  await expect(page).toHaveURL(`/login?returnTo=${encodeURIComponent(path)}`);
+
+  await signIn(page, baseURL!, "poc_s001");
+  await page.reload();
+  await expect(page).toHaveURL(path);
+  await expect(page.getByRole("heading", { level: 1, name: "あおい" })).toBeVisible();
+});
+
+test("共通ナビから卒業生検索を開き、キーボードだけで検索してプロフィールを開ける", async ({ page, baseURL }) => {
+  await signIn(page, baseURL!, "poc_s001");
+  await page.goto("/");
+  await page.getByRole("navigation", { name: "主要メニュー" }).getByRole("link", { name: "卒業生検索" }).click();
+  await expect(page).toHaveURL("/alumni");
+  await expect(page.getByRole("heading", { level: 1, name: "卒業生検索" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "主要メニュー" }).getByRole("link", { name: "卒業生検索" }))
+    .toHaveAttribute("aria-current", "page");
+
+  await page.getByRole("textbox", { name: "キーワード" }).focus();
+  await page.keyboard.type("あおい");
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(/\/alumni\?q=/);
+  await expect(page.getByRole("heading", { name: /検索結果/ })).toContainText("1件");
+
+  const result = page.getByRole("link", { name: "あおい", exact: true });
+  await result.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("heading", { level: 1, name: "あおい" })).toBeVisible();
+  // 公開を許可された自己紹介は表示し、本人のみの関心分野は表示しない。
+  await expect(page.getByText("開発用のサンプルプロフィールです。")).toBeVisible();
+  await expect(page.getByText("関心分野")).toHaveCount(0);
+});
+
+test("本人が自分の公開プロフィールを開くと、ほかの利用者向けの表示と編集への導線を示す", async ({ page, baseURL }) => {
+  await signIn(page, baseURL!, "poc_a001");
+  await openProfileFromSearch(page, "あおい");
+  await expect(page.getByText("あなたのプロフィールです。ほかの利用者には、この内容が表示されます。")).toBeVisible();
+  await page.getByRole("link", { name: "マイプロフィールを編集" }).click();
+  await expect(page).toHaveURL("/me/profile");
+});
+
+test("該当者がいない検索と、形式の誤った年度を画面内で案内する", async ({ page, baseURL }) => {
+  await signIn(page, baseURL!, "poc_s001");
+  await page.goto("/alumni?q=" + encodeURIComponent("該当者のいないキーワード"));
+  await expect(page.getByRole("heading", { name: /検索結果/ })).toContainText("0件");
+  await expect(page.getByText("条件に合う卒業生・卒業予定者はいません。")).toBeVisible();
+
+  await page.goto("/alumni?graduationYear=26");
+  await expect(page.getByRole("alert").filter({ hasText: "検索条件を確認してください。" })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "卒業年度" })).toHaveValue("26");
+});
+
+test("存在しない利用者のプロフィールは見つからない表示にする", async ({ page, baseURL }) => {
+  await signIn(page, baseURL!, "poc_s001");
+  const response = await page.goto("/users/no-such-user");
+  expect(response?.status()).toBe(404);
+});
+
+test("モバイル幅でも横スクロールなしで、検索条件と結果を使える", async ({ page, baseURL }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await signIn(page, baseURL!, "poc_s001");
+  await page.goto("/alumni");
+  await expect(page.getByRole("heading", { level: 1, name: "卒業生検索" })).toBeVisible();
+  for (const label of ["キーワード", "学科", "入学年度", "卒業年度"]) {
+    await expect(page.getByRole("textbox", { name: label })).toBeVisible();
+  }
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(overflow).toBeLessThanOrEqual(0);
+  const button = page.getByRole("button", { name: "検索する" });
+  expect((await button.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  await expect(page.getByRole("link", { name: "あおい", exact: true })).toBeVisible();
+});
