@@ -7,19 +7,18 @@ import { AppShell } from "@/components/app-shell/AppShell";
 import { requireAppScreen } from "@/components/app-shell/screen";
 import { parseAlumniQuery, searchAlumni, type PublicProfile } from "@/profile/public-profile";
 import { AlumniResults } from "./alumni-results";
+import { AlumniSearchForm } from "./alumni-search-form";
+import { alumniFieldErrors, alumniFilterNames, type AlumniFieldErrors, type AlumniFilterValues } from "./field-errors";
 import styles from "./page.module.css";
 
 export const metadata: Metadata = { title: "卒業生検索" };
 
-const filterNames = ["q", "department", "entryYear", "graduationYear"] as const;
-type FilterName = (typeof filterNames)[number];
-
 /** 画面のクエリーから、検索条件（空欄は指定なし）とカーソルを取り出す。配列（同名の複数指定）は形式の誤りとして扱う。 */
 function readParams(searchParams: ScreenSearchParams) {
-  const values: Partial<Record<FilterName, string>> = {};
+  const values: AlumniFilterValues = {};
   const query = new URLSearchParams();
   let malformed = false;
-  for (const name of [...filterNames, "cursor"] as const) {
+  for (const name of [...alumniFilterNames, "cursor"] as const) {
     const raw = searchParams[name];
     if (Array.isArray(raw)) malformed = true;
     const value = typeof raw === "string" ? raw : "";
@@ -31,6 +30,9 @@ function readParams(searchParams: ScreenSearchParams) {
 
 type SearchResult =
   | { kind: "ok"; items: PublicProfile[]; page: PageInfo }
+  /** 修正が必要な欄がある。案内は検索フォームに表示する。 */
+  | { kind: "fields"; errors: AlumniFieldErrors }
+  /** 特定の欄によらない誤り。 */
   | { kind: "invalid"; message: string; cursorExpired?: true };
 
 /** GE-04 卒業生検索。掲載希望があり、プロフィール公開中の卒業生・卒業予定の在校生だけを表示する。 */
@@ -38,10 +40,13 @@ export default async function AlumniPage({ searchParams }: { searchParams: Promi
   const resolved = await searchParams;
   const { viewer, shell } = await requireAppScreen("/alumni", resolved);
   const { values, query, malformed } = readParams(resolved);
+  const errors = alumniFieldErrors(values);
 
   let result: SearchResult;
   if (malformed) {
     result = { kind: "invalid", message: "検索条件を確認してください。" };
+  } else if (Object.keys(errors).length > 0) {
+    result = { kind: "fields", errors };
   } else {
     try {
       // DBクライアントは描画時に読み込む（ビルド時にDB接続情報を必要としない）。
@@ -52,7 +57,7 @@ export default async function AlumniPage({ searchParams }: { searchParams: Promi
       if (!(error instanceof ApiError)) throw error;
       result = error.code === "INVALID_CURSOR"
         ? { kind: "invalid", message: "検索結果の続きを表示できませんでした。最初のページから表示し直してください。", cursorExpired: true }
-        : { kind: "invalid", message: "検索条件を確認してください。キーワードと学科は100文字以内、年度は4桁の数字で入力してください。" };
+        : { kind: "invalid", message: "検索条件を確認してください。" };
     }
   }
 
@@ -70,44 +75,15 @@ export default async function AlumniPage({ searchParams }: { searchParams: Promi
         </header>
 
         {/* 適用中の条件が変わる画面内の遷移（共通ナビなど）では、未送信の入力を残さず入力欄を作り直す。 */}
-        <form key={firstPage} className={styles.filters} action="/alumni" method="get" role="search" aria-label="卒業生の検索条件">
-          <div className={styles.field}>
-            <label className={styles.label} htmlFor="alumni-q">キーワード</label>
-            {/* maxLength はUTF-16単位で切り詰めるため付けない。文字数はサーバーがコードポイントで検証する（API設計書 §3）。 */}
-            <input id="alumni-q" className={styles.input} name="q" defaultValue={values.q} aria-describedby="alumni-q-help" />
-            <p id="alumni-q-help" className={styles.help}>公開表示名・学科と、公開されている自己紹介・職種・関心分野から探します。</p>
-          </div>
-          <div className={styles.field}>
-            <label className={styles.label} htmlFor="alumni-department">学科</label>
-            <input id="alumni-department" className={styles.input} name="department" defaultValue={values.department} />
-          </div>
-          <div className={styles.years}>
-            <div className={styles.field}>
-              <label className={styles.label} htmlFor="alumni-entry">入学年度</label>
-              <input id="alumni-entry" className={styles.input} name="entryYear" defaultValue={values.entryYear}
-                inputMode="numeric" pattern="[0-9]{4}" maxLength={4} aria-describedby="alumni-year-help" />
-            </div>
-            <div className={styles.field}>
-              <label className={styles.label} htmlFor="alumni-graduation">卒業年度</label>
-              <input id="alumni-graduation" className={styles.input} name="graduationYear" defaultValue={values.graduationYear}
-                inputMode="numeric" pattern="[0-9]{4}" maxLength={4} aria-describedby="alumni-year-help" />
-            </div>
-          </div>
-          <p id="alumni-year-help" className={styles.help}>年度は4桁の数字（例：2026）で入力します。</p>
-          <div className={styles.actions}>
-            <button type="submit" className={styles.primaryButton}>検索する</button>
-            <button type="submit" form="alumni-clear" className={styles.textButton}>条件をクリア</button>
-          </div>
-        </form>
-        {/* 条件のクリアは項目のない別のフォームで送信する。検索前（同じURL）でもページを読み直し、未送信の入力も消す。 */}
-        <form id="alumni-clear" action="/alumni" method="get" hidden />
+        <AlumniSearchForm key={firstPage} values={values} errors={result.kind === "fields" ? result.errors : {}} />
 
         {result.kind === "invalid" ? (
           <div className={styles.error} role="alert">
             <p>{result.message}</p>
             {result.cursorExpired ? <Link href={firstPage}>最初のページを表示する</Link> : null}
           </div>
-        ) : (
+        ) : null}
+        {result.kind === "ok" ? (
           <AlumniResults
             items={result.items}
             page={result.page}
@@ -115,7 +91,7 @@ export default async function AlumniPage({ searchParams }: { searchParams: Promi
             firstPageHref={firstPage}
             nextPageHref={result.page.nextCursor ? `/alumni?${nextQuery}` : null}
           />
-        )}
+        ) : null}
       </div>
     </AppShell>
   );

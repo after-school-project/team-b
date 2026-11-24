@@ -83,6 +83,8 @@ test("該当者がいない検索と、形式の誤った年度を画面内で�
   await page.goto("/alumni?graduationYear=26");
   await expect(page.getByRole("alert").filter({ hasText: "検索条件を確認してください。" })).toBeVisible();
   await expect(page.getByRole("textbox", { name: "卒業年度" })).toHaveValue("26");
+  await expect(page.getByRole("textbox", { name: "卒業年度" })).toHaveAccessibleDescription(/卒業年度は4桁の半角数字で入力してください。/);
+  await expect(page.getByRole("textbox", { name: "入学年度" })).not.toHaveAttribute("aria-invalid");
 });
 
 test("キーワードと学科はコードポイントで100文字まで送信でき、超えた場合は入力を保って案内する", async ({ page, baseURL }) => {
@@ -102,8 +104,20 @@ test("キーワードと学科はコードポイントで100文字まで送信�
     await page.getByRole("textbox", { name: label }).focus();
     await page.keyboard.insertText(rejected);
     await page.keyboard.press("Enter");
-    await expect(page.getByRole("alert").filter({ hasText: "キーワードと学科は100文字以内" })).toBeVisible();
-    await expect(page.getByRole("textbox", { name: label })).toHaveValue(rejected);
+    await expect(page.getByRole("alert").filter({ hasText: "検索条件を確認してください。（1件）" })).toBeVisible();
+    // エラーは該当する欄だけに関連付ける。
+    for (const other of ["キーワード", "学科", "入学年度", "卒業年度"]) {
+      const input = page.getByRole("textbox", { name: other });
+      if (other === label) {
+        await expect(input).toHaveValue(rejected);
+        await expect(input).toHaveAttribute("aria-invalid", "true");
+        await expect(input).toHaveAccessibleDescription(new RegExp(label + "は100文字以内で入力してください。"));
+      } else {
+        await expect(input).not.toHaveAttribute("aria-invalid");
+        await expect(input).not.toHaveAccessibleDescription(/100文字以内/);
+      }
+    }
+    await expect(page.getByText(label + "は100文字以内で入力してください。")).toBeVisible();
   }
 });
 
