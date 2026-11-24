@@ -73,14 +73,13 @@ export default async function AlumniPage({ searchParams }: { searchParams: Promi
         <form key={firstPage} className={styles.filters} action="/alumni" method="get" role="search" aria-label="卒業生の検索条件">
           <div className={styles.field}>
             <label className={styles.label} htmlFor="alumni-q">キーワード</label>
-            <input id="alumni-q" className={styles.input} name="q" defaultValue={values.q} maxLength={100}
-              aria-describedby="alumni-q-help" />
+            {/* maxLength はUTF-16単位で切り詰めるため付けない。文字数はサーバーがコードポイントで検証する（API設計書 §3）。 */}
+            <input id="alumni-q" className={styles.input} name="q" defaultValue={values.q} aria-describedby="alumni-q-help" />
             <p id="alumni-q-help" className={styles.help}>公開表示名・学科と、公開されている自己紹介・職種・関心分野から探します。</p>
           </div>
           <div className={styles.field}>
             <label className={styles.label} htmlFor="alumni-department">学科</label>
-            <input id="alumni-department" className={styles.input} name="department" defaultValue={values.department}
-              maxLength={100} />
+            <input id="alumni-department" className={styles.input} name="department" defaultValue={values.department} />
           </div>
           <div className={styles.years}>
             <div className={styles.field}>

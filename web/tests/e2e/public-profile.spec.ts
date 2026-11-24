@@ -85,6 +85,28 @@ test("該当者がいない検索と、形式の誤った年度を画面内で�
   await expect(page.getByRole("textbox", { name: "卒業年度" })).toHaveValue("26");
 });
 
+test("キーワードと学科はコードポイントで100文字まで送信でき、超えた場合は入力を保って案内する", async ({ page, baseURL }) => {
+  await signIn(page, baseURL!, "poc_s001");
+  for (const [label, name] of [["キーワード", "q"], ["学科", "department"]] as const) {
+    // 「𠮷」はUTF-16では2単位。画面で切り詰めず、APIと同じコードポイントの数え方で受け付ける。
+    const accepted = "𠮷".repeat(100);
+    await page.goto("/alumni");
+    await page.getByRole("textbox", { name: label }).focus();
+    await page.keyboard.insertText(accepted);
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL((url) => url.searchParams.get(name) === accepted);
+    await expect(page.getByRole("heading", { name: /検索結果/ })).toContainText("0件");
+
+    const rejected = "𠮷".repeat(101);
+    await page.goto("/alumni");
+    await page.getByRole("textbox", { name: label }).focus();
+    await page.keyboard.insertText(rejected);
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("alert").filter({ hasText: "キーワードと学科は100文字以内" })).toBeVisible();
+    await expect(page.getByRole("textbox", { name: label })).toHaveValue(rejected);
+  }
+});
+
 const filterLabels = ["キーワード", "学科", "入学年度", "卒業年度"] as const;
 
 async function fillFilters(page: Page) {
