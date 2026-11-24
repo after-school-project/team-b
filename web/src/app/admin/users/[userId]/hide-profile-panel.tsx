@@ -19,7 +19,8 @@ const unavailableMessages: Record<Exclude<ProfileHidingAvailability, "available"
 /** AD-11 のプロフィール非表示の操作。許可される場合だけ入力欄とボタンを表示する。 */
 export function HideProfilePanel({ userId, displayName, version, appManager, availability }: {
   userId: string;
-  displayName: string;
+  /** 公開表示名。非表示中は null（非表示にできる場合は必ずある）。 */
+  displayName: string | null;
   /** 表示した利用者の版番号。 */
   version: number;
   appManager: boolean;

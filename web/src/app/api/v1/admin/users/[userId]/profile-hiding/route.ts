@@ -6,7 +6,7 @@ import { ApiError } from "@/api/response";
 import { authorizeAdminEntry } from "@/auth/admin";
 import { reportCases } from "@/db/moderation-schema";
 import { profiles } from "@/db/schema";
-import { authorizeProfileHiding, hideProfile, profileHidingSchema } from "@/profile/profile-hiding";
+import { authorizeProfileHidingReplay, hideProfile, profileHidingSchema } from "@/profile/profile-hiding";
 
 export const runtime = "nodejs";
 
@@ -28,15 +28,17 @@ export const { GET, HEAD, OPTIONS, POST, PUT, DELETE, PATCH } = defineAdminApiRo
       body: hiding,
       resolveUserIds: async () => [userId],
       authorizeEntry: authorizeAdminEntry(actorId, "any"),
-      targets: async (tx, replayed) => replayed ? [] : [
-        { stage: "resource", table: profiles, idColumn: profiles.userId, ids: [userId] },
-        {
-          stage: "case", table: reportCases, idColumn: reportCases.id,
-          ids: [...await openCaseIdsOfUser(tx, userId), ...hiding.sourceCaseId ? [hiding.sourceCaseId] : []],
-        },
-      ],
+      async targets(tx, replayed) {
+        const sourceCaseIds = hiding.sourceCaseId === undefined ? [] : [hiding.sourceCaseId];
+        // 再送では更新しないため、閲覧権限を確認する起点の案件だけをロックする。
+        const caseIds = replayed ? sourceCaseIds : [...await openCaseIdsOfUser(tx, userId), ...sourceCaseIds];
+        return [
+          { stage: "resource", table: profiles, idColumn: profiles.userId, ids: replayed ? [] : [userId] },
+          { stage: "case", table: reportCases, idColumn: reportCases.id, ids: caseIds },
+        ];
+      },
       async authorizeReplay(locked, original) {
-        await authorizeProfileHiding(locked, actorId, userId);
+        await authorizeProfileHidingReplay(locked, { actorId, userId, hiding });
         if (original.resource.type !== "user" || original.resource.id !== userId) throw new ApiError("NOT_FOUND");
       },
       async execute(locked) {

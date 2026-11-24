@@ -3,19 +3,33 @@ import { Client } from "pg";
 /**
  * 画面からはまだ変更できない利用者の状態（権限の解除など）を、E2E専用の使い捨てDBで直接用意する。
  * 接続には、アプリと同じ `DATABASE_URL`（アプリ用ロール）を使う。準備手順は docs/development/quality-and-poc.md を参照する。
+ *
+ * 利用者の状態を書き換え、再公開申請と通知を削除するため、使い捨てDBとして起動したサーバーだけで実行する。
+ * 接続URLのホスト名・DB名だけでは、ポートを公開した通常の開発DBと区別できないため、サーバー自身の `cluster_name` でも判定する。
+ * 既定値は空で、E2E専用のDBを起動するときのオプション（`-c cluster_name=team-b-e2e`）でだけ設定する。
  */
+export const disposableClusterName = "team-b-e2e";
+
+class NotDisposableDatabase extends Error {}
+
+const refusal = "DATABASE_URL の接続先がE2E専用の使い捨てDBではないため、状態を変更しません。"
+  + "docs/development/quality-and-poc.md の手順でDBを起動してください。";
 
 async function withDatabase<T>(run: (client: Client) => Promise<T>): Promise<T> {
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) throw new Error("E2E用DBの DATABASE_URL を設定してください。");
   const { hostname, pathname } = new URL(connectionString);
-  // 利用者の状態を書き換えるため、ホストのE2E用DB以外では実行しない。
-  if (hostname !== "127.0.0.1" || pathname !== "/team_b_dev") throw new Error("E2E用のローカルDBだけで実行できます。");
+  if (hostname !== "127.0.0.1" || pathname !== "/team_b_dev") throw new NotDisposableDatabase(refusal);
   const client = new Client({ connectionString });
   try {
     await client.connect();
+    const { rows } = await client.query<{ name: string }>("SELECT current_setting('cluster_name') AS name");
+    if (rows[0]?.name !== disposableClusterName) {
+      throw new NotDisposableDatabase(refusal);
+    }
     return await run(client);
   } catch (error) {
+    if (error instanceof NotDisposableDatabase) throw error;
     // 接続情報を含み得る元の例外は出さない。
     throw new Error(`E2E用DBの操作に失敗しました（${(error as { code?: string }).code ?? "接続エラー"}）。`);
   } finally {

@@ -35,24 +35,18 @@ export async function openCaseIdsOfUser(reader: AccessReader, userId: string): P
   return rows.map(({ id }) => id);
 }
 
-export type MeasureCase = Pick<typeof reportCases.$inferSelect, "id" | "version">;
+type CaseAccess = { actor: Pick<Viewer, "roles">; caseId: string; now: Date };
 
 /**
- * 利用者への措置の起点にする案件を確認する。案件の行は `targets` でロックしておく。
+ * 措置の起点の案件を、実行者が現在閲覧できることを確認する。案件の行は `targets` でロックしておく。
+ * 閲覧できない案件は、存在しない案件と同じ 404。アプリ管理者は、学校専用・引継ぎ待ち・対象者がアプリ管理者の案件を
+ * 閲覧できない（共通認可条件表 §4 AD-08／AD-09）。終了から1年を過ぎた案件は、学校管理者も閲覧できない。
  *
- * - 閲覧できない案件は、存在しない案件と同じ 404。アプリ管理者は、学校専用・引継ぎ待ち・対象者がアプリ管理者の案件を
- *   閲覧できない（共通認可条件表 §4 AD-08／AD-09）。終了から1年を過ぎた案件は、学校管理者も閲覧できない。
- * - 案件の対象者（プロフィール・アカウントの利用者本人、質問・回答等の投稿者。ReportCaseSummary の `subjectUserId`）が
- *   措置の対象と違えば 422。別の対象への操作を案件の履歴へ記録しない。
- * - 対応済みなら 409 CASE_CLOSED。
+ * 再送（`authorizeReplay`）でも使う。確定済みの操作の結果を返すため、対応済みかどうかはここでは判定しない。
  */
-export async function requireMeasureCase(
-  tx: CaseWriter,
-  input: { actor: Pick<Viewer, "roles">; caseId: string; userId: string; now: Date },
-): Promise<MeasureCase> {
+export async function requireViewableMeasureCase(tx: CaseWriter, input: CaseAccess) {
   const [row] = await tx.select({
     id: reportCases.id,
-    version: reportCases.version,
     status: reportCases.status,
     schoolOnly: reportCases.schoolOnly,
     handoffPending: reportCases.handoffPending,
@@ -79,14 +73,25 @@ export async function requireMeasureCase(
       .from(communityUsers).where(eq(communityUsers.userId, subjectUserId));
     if (subject?.appManager) throw new ApiError("NOT_FOUND");
   }
+  return { id: row.id, status: row.status, subjectUserId };
+}
 
+/**
+ * 利用者への措置の起点にする案件を確認する。案件の行は `targets` でロックしておく。
+ *
+ * - 閲覧できない案件は 404（`requireViewableMeasureCase`）。
+ * - 案件の対象者（プロフィール・アカウントの利用者本人、質問・回答等の投稿者。ReportCaseSummary の `subjectUserId`）が
+ *   措置の対象と違えば 422。別の対象への操作を案件の履歴へ記録しない。
+ * - 対応済みなら 409 CASE_CLOSED。
+ */
+export async function requireMeasureCase(tx: CaseWriter, input: CaseAccess & { userId: string }): Promise<void> {
+  const { subjectUserId, status } = await requireViewableMeasureCase(tx, input);
   if (subjectUserId !== input.userId) {
     throw new ApiError("VALIDATION_FAILED", {
       fields: [{ path: "sourceCaseId", code: "case_target_mismatch", message: "この案件の対象者ではありません。" }],
     });
   }
-  if (row.status === "closed") throw new ApiError("CASE_CLOSED");
-  return { id: row.id, version: row.version };
+  if (status === "closed") throw new ApiError("CASE_CLOSED");
 }
 
 /**

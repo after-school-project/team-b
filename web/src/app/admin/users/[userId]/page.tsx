@@ -53,7 +53,7 @@ export default async function AdminUserPage({ params, searchParams }: {
         </header>
 
         <section className={styles.card} aria-labelledby="admin-user-summary">
-          <h2 id="admin-user-summary" className={styles.sectionTitle}>{user.displayName}</h2>
+          <h2 id="admin-user-summary" className={styles.sectionTitle}>{user.displayName ?? "非表示のプロフィール"}</h2>
           <dl className={styles.details}>
             <div>
               <dt>ユーザーID</dt>

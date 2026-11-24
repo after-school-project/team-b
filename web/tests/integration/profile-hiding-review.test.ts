@@ -13,6 +13,7 @@ import * as content from "../../src/db/content-schema";
 import * as moderation from "../../src/db/moderation-schema";
 import * as community from "../../src/db/schema";
 import { endPool, isolatedDatabase } from "./isolated-database";
+import type { Viewer } from "../../src/auth/access";
 
 /**
  * プロフィールの非表示（API-US-05）と再公開審査（API-PR-01〜03）。実際の Route Handler を実セッションで呼ぶ（#8 ⑤）。
@@ -468,6 +469,66 @@ describe("API-US-05 sourceCaseId（通報案件を起点にした非表示）", 
     expect((await attempt("poc_school", "poc_s002", schoolOnly)).status).toBe(200);
   });
 
+  it("再送時も起点の案件の現在の閲覧権限を確認し、閲覧できなくなった管理者には結果を返さない", async () => {
+    const { version } = await userRow("poc_s002");
+    const caseId = await newCase({ kind: "profile", userId: id("poc_s002") }, { assignee: "poc_s_mgr" });
+    const key = `retry-${randomUUID()}`;
+    const body = { expectedVersion: version, reason, sourceCaseId: caseId };
+    const first = await hide("poc_s_mgr", id("poc_s002"), body, key);
+    expect(first.status).toBe(200);
+    const replay = async () => {
+      const again = await hide("poc_s_mgr", id("poc_s002"), body, key);
+      if (again.status === 200) expect(again.body.data).toEqual(first.body.data);
+      else expect(again.text).not.toContain(id("poc_s002"));
+      return again.status;
+    };
+    expect(await replay()).toBe(200);
+
+    // 学校専用・引継ぎ待ちになった案件は、アプリ管理者の閲覧の対象外。
+    const setCase = (values: Partial<typeof reportCases.$inferInsert>) =>
+      db.update(reportCases).set(values).where(eq(reportCases.id, caseId));
+    await setCase({ schoolOnly: true });
+    expect(await replay()).toBe(404);
+    await setCase({ schoolOnly: false, handoffPending: true, assigneeId: null });
+    expect(await replay()).toBe(404);
+    // その後に対応済みになっただけなら、確定済みの操作の結果を返す。閲覧期限を過ぎたら返さない。
+    await setCase({ handoffPending: false, assigneeId: id("poc_s_mgr"), status: "closed", closedAt: new Date() });
+    expect(await replay()).toBe(200);
+    await setCase({ closedAt: new Date(Date.now() - 367 * 24 * 60 * 60 * 1000) });
+    expect(await replay()).toBe(404);
+    expect(await audits()).toHaveLength(1);
+    expect(await db.select().from(reportActions)).toHaveLength(1);
+  });
+
+  it("再送時の閲覧権限は、処理中の案件の変更が確定した後の状態で判定する", async () => {
+    const { version } = await userRow("poc_s002");
+    const caseId = await newCase({ kind: "profile", userId: id("poc_s002") }, { assignee: "poc_s_mgr" });
+    const key = `retry-${randomUUID()}`;
+    const body = { expectedVersion: version, reason, sourceCaseId: caseId };
+    expect((await hide("poc_s_mgr", id("poc_s002"), body, key)).status).toBe(200);
+    const client = await pool.connect();
+    let replayed: Promise<Result> | undefined;
+    try {
+      await client.query("BEGIN");
+      await client.query("UPDATE report_cases SET school_only = true WHERE id = $1", [caseId]);
+      replayed = hide("poc_s_mgr", id("poc_s002"), body, key);
+      await vi.waitFor(async () => {
+        const { rows } = await target.client.query(
+          "SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND datname = current_database()",
+        );
+        expect(rows.length).toBeGreaterThan(0);
+      });
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+      await replayed?.catch(() => {});
+    }
+    expect((await replayed).status).toBe(404);
+  });
+
   it("関係する案件（措置の起点・証拠の保全・担当の引継ぎ）を、まとめてID順にロックする", async () => {
     const source = await newCase({ kind: "profile", userId: id("poc_a_mgr") }, { schoolOnly: true });
     const assigned: string[] = [];
@@ -507,6 +568,43 @@ describe("API-US-05 sourceCaseId（通報案件を起点にした非表示）", 
     expect((await hiding).status).toBe(200);
     for (const caseId of assigned) expect(await caseRow(caseId)).toMatchObject({ handoffPending: true, version: 2 });
     expect(await caseRow(last)).toMatchObject({ assigneeId: id("poc_school"), version: 2 });
+  });
+});
+
+describe("AD-11 利用者の基本情報", () => {
+  const viewerOf = (username: string, schoolManager: boolean): Viewer => ({
+    userId: id(username), baseRole: "staff", isGraduating: false, profileState: "public", userVersion: 1,
+    roles: { schoolManager, appManager: !schoolManager },
+  });
+
+  it("公開中は公開表示名を返し、本人確認情報・停止理由を返さない", async () => {
+    const { loadAdminUser } = await import("../../src/admin/users");
+    const user = await loadAdminUser(db, viewerOf("poc_s_mgr", false), id("poc_suspended"));
+    expect(user).toEqual({
+      userId: id("poc_suspended"), displayName: "りく", baseRole: "student", isGraduating: false, accountStatus: "suspended",
+      profileState: "public", roles: { schoolManager: false, appManager: false },
+      version: (await userRow("poc_suspended")).version, profileHiding: "available",
+    });
+    await expect(loadAdminUser(db, viewerOf("poc_school", true), "no-such-user")).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it.each(["poc_a_mgr", "poc_s001"])("非表示中の %s が保存した審査前の表示名を、どちらの管理者にも返さない", async (username) => {
+    const { loadAdminUser } = await import("../../src/admin/users");
+    const { version } = await userRow(username);
+    expect((await hide("poc_school", id(username), { expectedVersion: version, reason })).status).toBe(200);
+    const { profileVersion } = await userRow(username);
+    expect((await saveProfile(username, { expectedVersion: profileVersion, displayName: "審査前の表示名" })).status).toBe(200);
+    for (const viewer of [viewerOf("poc_s_mgr", false), viewerOf("poc_school", true)]) {
+      const user = await loadAdminUser(db, viewer, id(username));
+      expect(user).toMatchObject({ userId: id(username), displayName: null, profileState: "hidden" });
+      expect(JSON.stringify(user)).not.toContain("審査前の表示名");
+    }
+
+    // 承認で公開されると、公開表示名として返す。
+    const [pending] = (await list("poc_school")).body.data!.items!;
+    expect((await decide("poc_school", String(pending.id), { expectedVersion: 1, decision: "approve" })).status).toBe(200);
+    expect(await loadAdminUser(db, viewerOf("poc_s_mgr", false), id(username)))
+      .toMatchObject({ displayName: "審査前の表示名", profileState: "public" });
   });
 });
 

@@ -209,6 +209,9 @@ test.describe("プロフィールの非表示と再公開審査", () => {
     await expect(page.getByText("非表示", { exact: true })).toBeVisible();
     await expect(submit).toHaveCount(0);
     expect(requests).toEqual(["POST"]);
+    // 非表示中は公開表示名がない（審査前の内容の可能性があるため表示しない）。
+    await expect(page.getByRole("heading", { level: 2, name: "非表示のプロフィール" })).toBeVisible();
+    await expect(page.getByText("学校職員（サンプル）")).toHaveCount(0);
 
     // 一般の画面では状態案内だけになる。
     await page.goto(`/users/${await userIdOf("poc_staff")}`);

@@ -22,7 +22,11 @@ export type ProfileHidingAvailability =
 /** API設計書 §12 AdminUserSummary の項目と、非表示の操作の可否。本人確認情報・停止理由は含めない。 */
 export type AdminUserOverview = {
   userId: string;
-  displayName: string;
+  /**
+   * 公開表示名。非表示中は公開版がなく（DB・ER設計書 §3）、現在版は本人が保存した審査前の内容の可能性があるため null。
+   * 審査前の内容は、審査できる管理者だけが再公開審査（`profile-reviews.ts`）で取得する。
+   */
+  displayName: string | null;
   baseRole: Viewer["baseRole"];
   isGraduating: boolean;
   accountStatus: "active" | "suspended";
@@ -60,7 +64,12 @@ export async function loadAdminUser(reader: AccessReader, viewer: Viewer, userId
       eq(communityUsers.provisioningStatus, "ready"), eq(communityUsers.eligibilityStatus, "verified"),
     ));
   if (!row) throw new ApiError("NOT_FOUND");
-  const { schoolManager, appManager, ...user } = row;
+  const { schoolManager, appManager, displayName, ...user } = row;
   const roles = { schoolManager, appManager };
-  return { ...user, roles, profileHiding: profileHidingFor(viewer, { roles, profileState: row.profileState }) };
+  return {
+    ...user,
+    displayName: row.profileState === "public" ? displayName : null,
+    roles,
+    profileHiding: profileHidingFor(viewer, { roles, profileState: row.profileState }),
+  };
 }

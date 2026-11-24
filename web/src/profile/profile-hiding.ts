@@ -6,7 +6,7 @@ import { recordNotification } from "@/api/notifications";
 import { expectedVersion, requiredReason, uuid } from "@/api/request";
 import { preserveEvidence, type CaseWriter } from "@/api/report-evidence";
 import { handoffCasesAssignedTo } from "@/api/report-handoff";
-import { recordCaseMeasure, requireMeasureCase } from "@/api/report-measures";
+import { recordCaseMeasure, requireMeasureCase, requireViewableMeasureCase } from "@/api/report-measures";
 import { ApiError } from "@/api/response";
 import { loadAccessState, requireActive } from "@/auth/access";
 import { requireAdminForLockedTarget } from "@/auth/admin";
@@ -34,10 +34,9 @@ export type ProfileHiding = z.infer<typeof profileHidingSchema>;
 type LockedContext = { tx: CaseWriter; now: Date; requireLockedUsers: (...ids: string[]) => void };
 
 /**
- * 対象者への非表示操作の権限を、ロック後の最新状態で確認する。`execute` と `authorizeReplay` で呼ぶ。
- * 発行準備中の利用者は存在しないものとして扱う（公開プロフィールと同じ）。
+ * 対象者への非表示操作の権限を、ロック後の最新状態で確認する。発行準備中の利用者は存在しないものとして扱う（公開プロフィールと同じ）。
  */
-export async function authorizeProfileHiding(
+async function authorizeProfileHiding(
   context: LockedContext, actorId: string, userId: string,
 ): Promise<{ appManager: boolean }> {
   const roles = await requireAdminForLockedTarget(context, actorId, userId);
@@ -51,6 +50,27 @@ export async function authorizeProfileHiding(
   return { appManager: roles.appManager };
 }
 
+/** 起点の案件の閲覧権限の判定に使う、実行者の現在の権限。実行者の行はロック済み。 */
+async function currentActor(tx: CaseWriter, actorId: string) {
+  return requireActive(await loadAccessState(tx, actorId));
+}
+
+/**
+ * 再送で確定済みの結果を返す前に、対象者への操作の権限と、起点の案件の閲覧権限を現在の状態で確認する
+ * （API設計書 §3 再送キー）。`commitMutation` の `authorizeReplay` で呼び、起点の案件を `targets` でロックしておく。
+ */
+export async function authorizeProfileHidingReplay(
+  context: LockedContext, input: { actorId: string; userId: string; hiding: ProfileHiding },
+): Promise<void> {
+  const { actorId, userId, hiding } = input;
+  await authorizeProfileHiding(context, actorId, userId);
+  if (hiding.sourceCaseId !== undefined) {
+    await requireViewableMeasureCase(context.tx, {
+      actor: await currentActor(context.tx, actorId), caseId: hiding.sourceCaseId, now: context.now,
+    });
+  }
+}
+
 /**
  * プロフィールを非表示にする。`commitMutation` の `execute` の中で呼び、`resolveUserIds` に対象者、`targets` に
  * 対象者の `profiles`（本体）と関係する案件をロックしておく。戻り値は変更後の利用者の版番号。
@@ -61,9 +81,9 @@ export async function hideProfile(
   const { tx, now } = context;
   const { actorId, userId, hiding } = input;
   const { appManager } = await authorizeProfileHiding(context, actorId, userId);
-  const sourceCase = hiding.sourceCaseId === undefined ? null : await requireMeasureCase(tx, {
-    actor: requireActive(await loadAccessState(tx, actorId)), caseId: hiding.sourceCaseId, userId, now,
-  });
+  if (hiding.sourceCaseId !== undefined) {
+    await requireMeasureCase(tx, { actor: await currentActor(tx, actorId), caseId: hiding.sourceCaseId, userId, now });
+  }
 
   const [user] = await tx.select({ version: communityUsers.version, profileState: communityUsers.profileState })
     .from(communityUsers).where(eq(communityUsers.userId, userId));
@@ -80,9 +100,9 @@ export async function hideProfile(
 
   // アプリ管理者は管理機能を失うため、担当する未終了案件を引継ぎ待ちにする。
   if (appManager) await handoffCasesAssignedTo(context, { managerId: userId, trigger: "manager_profile_hidden" });
-  if (sourceCase) {
+  if (hiding.sourceCaseId !== undefined) {
     await recordCaseMeasure(tx, {
-      caseId: sourceCase.id, actorId,
+      caseId: hiding.sourceCaseId, actorId,
       measure: { actionType: "profile_hidden", before: { profileState: "public" }, after: { profileState: "hidden" } },
     });
   }
