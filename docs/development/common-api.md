@@ -18,6 +18,7 @@ export const { GET, HEAD, OPTIONS, POST, PUT, DELETE, PATCH } = defineApiRoute({
 - `parsePathParams` にNext.jsのデコード済みパス変数とIDのスキーマを渡します。クエリーは `parseQuery` で検証します。
 - 更新のOrigin、Content-Type、再送キーはRoute Handlerの共通処理が確認します。確認の順序は[ログイン後の業務API](#ログイン後の業務api)を参照してください。本文は `readJson` で読み、入れ子の各オブジェクトに `z.strictObject` を使います。DB保存と再送照合には、検証・正規化した値を渡します。`isoDateTime` はISO 8601の入力をUTCへ正規化します。
 - タイトルと本文には `title`・`longText`・`shortText` を使います。NUL（U+0000）や単独のUTF-16サロゲートを含む値には、該当フィールドを示す422を返します。
+- 理由（API設計書 §3 Reason）には、必須なら `requiredReason`、任意なら `optionalReason` を使います。`optionalReason` は省略・null・空白だけの入力を null にそろえます。画面の案内には同じ上限の `reasonMaxLength`（[`input-limits.ts`](../../web/src/api/input-limits.ts)）を使います。
 - 一覧は `parseListQuery` で絞り込みを検証し、認証済み利用者、一覧の識別子、正規化済み条件、並び順を `createCursorCodec` に渡します。署名には環境ごとの `BETTER_AUTH_SECRET` を使用します。毎ページで現在の認可を適用し、同じ絞り込みと認可条件で件数を数えます。`limit + 1` 件まで読み込み、`listPage` で次ページの情報を生成します。
 
 ## ログイン後の業務API
@@ -219,6 +220,8 @@ return commitMutation(db, {
 | [`handoffCasesAssignedTo`](../../web/src/api/report-handoff.ts) | アプリ管理者のプロフィール非表示・停止・権限解除。その管理者が担当する未終了案件を引継ぎ待ちにする。管理者を `resolveUserIds` に含める |
 | `handoffCasesOfDeletedTarget` | 通報対象の質問・回答等の削除。アプリ管理者が担当する未終了案件を引継ぎ待ちにする（削除前に `preserveEvidence` で保全する） |
 | `restrictCasesForNewAppManager` | アプリ管理者の付与。その利用者が対象者の案件（プロフィール・アカウントと、投稿した質問・回答等への通報）を学校専用にし、アプリ管理者が担当する未終了案件を引継ぎ待ちにする。対象者を `resolveUserIds` に含める |
+| [`requireMeasureCase`・`recordCaseMeasure`](../../web/src/api/report-measures.ts) | 通報案件を起点にした措置（`sourceCaseId`。API設計書 §11）。案件の閲覧権限・対象者の一致・未終了を確認し、措置を案件の対応履歴に記録する。現在はプロフィールの非表示（API-US-05）だけが使う |
+| `openCaseIdsOfUser` | プロフィールの非表示のように、証拠の保全・引継ぎ・措置の記録が1つの更新で重なる場合。関係する未終了案件のIDを返すので、起点の案件と合わせて `commitMutation` の `targets`（`case`）に渡し、先にまとめてID順にロックする |
 
 - 引継ぎ待ちにしても対応状態と過去の履歴は変えません。変更した案件には、`report_actions` へシステム操作（実行者なし）として契機（`afterState.trigger`）と変更前後を記録し、版番号を上げます。
 - プロフィールの証拠には本人以外が見られる任意項目だけを保存し、本人確認情報・管理権限は保存しません。

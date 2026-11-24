@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { authOrigin } from "../auth/web-config";
+import { reasonMaxLength } from "./input-limits";
 import { ApiError } from "./response";
 
 export const maxJsonBytes = 128 * 1024;
@@ -164,3 +165,23 @@ export function optionalProfileText(maxLength: number) {
   return storableText.transform((value) => value.replace(/\r\n?/g, "\n"))
     .refine((value) => [...value].length <= maxLength);
 }
+
+/**
+ * 空白として扱う文字のうち、JavaScript の `trim` が取り除かないもの。DBの「空白だけの理由」を拒否する制約
+ * （`[^[:space:]]`）は、ロケールによってこれらも空白とみなす。入力検証を通った理由がDBの制約で失敗しないようにする。
+ */
+const extraBlankCodes = new Set([0x1c, 0x1d, 0x1e, 0x1f, 0x85, 0x180e]);
+
+function isBlank(value: string): boolean {
+  return [...value].every((character) => character.trim() === "" || extraBlankCodes.has(character.codePointAt(0)!));
+}
+
+// 改行をLFへ正規化し、文字数をコードポイントで数える点は、プロフィールの任意項目と同じ。
+const reasonText = optionalProfileText(reasonMaxLength);
+
+/** 必須の理由（API設計書 §3 Reason）。空白だけの入力を拒否する。 */
+export const requiredReason = reasonText.refine((value) => !isBlank(value));
+
+/** 任意の理由（API設計書 §3 Reason）。省略・null・空白だけの入力は、理由なし（null）にそろえる。 */
+export const optionalReason = reasonText.nullish()
+  .transform((value) => value === null || value === undefined || isBlank(value) ? null : value);

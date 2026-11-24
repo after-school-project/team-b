@@ -79,6 +79,8 @@ docker rm -f team-b-e2e-db
 
 実セッションのテストは、パスワードを画面に入力せず要求コンテキストからサインインし、トレース・スクリーンショット・動画を無効にします。失敗時のレポートにパスワードを残さないためです。`web/.seed/` と `web/test-results/` はコミットしないでください。
 
+[admin-profiles.spec.ts](../../web/tests/e2e/admin-profiles.spec.ts) は、画面からまだ変更できない利用者の状態（アプリ管理者の権限解除など）を、テストの実行環境の `DATABASE_URL` でE2E用DBに直接設定します（[database.ts](../../web/tests/e2e/database.ts)）。`127.0.0.1` の `team_b_dev` 以外では実行しません。
+
 ## 接続済みの公開環境
 
 | 項目 | 接続先・設定 |
