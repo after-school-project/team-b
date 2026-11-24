@@ -98,10 +98,16 @@
   background: var(--color-primary-hover);
 }
 
-.textLink {
-  display: inline-flex;
-  align-items: center;
+/* 補助操作（文字による操作。docs/DESIGN.md §8.1）。 */
+.textButton {
   min-height: var(--control-min-size);
+  padding: 0;
+  border: 0;
+  color: var(--color-link);
+  background: none;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
 }
 
 .error {

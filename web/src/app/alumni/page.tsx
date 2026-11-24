@@ -69,7 +69,8 @@ export default async function AlumniPage({ searchParams }: { searchParams: Promi
           <p className={styles.lead}>卒業生検索への掲載を希望した、卒業生と卒業予定の在校生を探せます。</p>
         </header>
 
-        <form className={styles.filters} action="/alumni" method="get" role="search" aria-label="卒業生の検索条件">
+        {/* 適用中の条件が変わる画面内の遷移（共通ナビなど）では、未送信の入力を残さず入力欄を作り直す。 */}
+        <form key={firstPage} className={styles.filters} action="/alumni" method="get" role="search" aria-label="卒業生の検索条件">
           <div className={styles.field}>
             <label className={styles.label} htmlFor="alumni-q">キーワード</label>
             <input id="alumni-q" className={styles.input} name="q" defaultValue={values.q} maxLength={100}
@@ -96,9 +97,11 @@ export default async function AlumniPage({ searchParams }: { searchParams: Promi
           <p id="alumni-year-help" className={styles.help}>年度は4桁の数字（例：2026）で入力します。</p>
           <div className={styles.actions}>
             <button type="submit" className={styles.primaryButton}>検索する</button>
-            <Link className={styles.textLink} href="/alumni">条件をクリア</Link>
+            <button type="submit" form="alumni-clear" className={styles.textButton}>条件をクリア</button>
           </div>
         </form>
+        {/* 条件のクリアは項目のない別のフォームで送信する。検索前（同じURL）でもページを読み直し、未送信の入力も消す。 */}
+        <form id="alumni-clear" action="/alumni" method="get" hidden />
 
         {result.kind === "invalid" ? (
           <div className={styles.error} role="alert">

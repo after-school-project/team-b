@@ -85,6 +85,52 @@ test("該当者がいない検索と、形式の誤った年度を画面内で�
   await expect(page.getByRole("textbox", { name: "卒業年度" })).toHaveValue("26");
 });
 
+const filterLabels = ["キーワード", "学科", "入学年度", "卒業年度"] as const;
+
+async function fillFilters(page: Page) {
+  await page.getByRole("textbox", { name: "キーワード" }).fill("みなと");
+  await page.getByRole("textbox", { name: "学科" }).fill("未送信の学科");
+  await page.getByRole("textbox", { name: "入学年度" }).fill("2024");
+  await page.getByRole("textbox", { name: "卒業年度" }).fill("2025");
+}
+
+async function expectFiltersEmpty(page: Page) {
+  for (const label of filterLabels) await expect(page.getByRole("textbox", { name: label })).toHaveValue("");
+}
+
+test("検索前でも「条件をクリア」で未送信の入力を消し、そのまま検索しても消した条件を送らない", async ({ page, baseURL }) => {
+  await signIn(page, baseURL!, "poc_s001");
+  await page.goto("/alumni");
+  await fillFilters(page);
+  await page.getByRole("button", { name: "条件をクリア" }).click();
+  await expectFiltersEmpty(page);
+
+  await page.getByRole("button", { name: "検索する" }).click();
+  await expect(page).toHaveURL((url) => url.pathname === "/alumni" && url.searchParams.has("q"));
+  expect([...new URL(page.url()).searchParams.values()].every((value) => value === "")).toBe(true);
+  await expect(page.getByRole("heading", { name: /検索結果/ })).toContainText("2件");
+});
+
+test("検索後に「条件をクリア」をキーボードで押すと、適用済みと未送信の条件を両方消す", async ({ page, baseURL }) => {
+  await signIn(page, baseURL!, "poc_s001");
+  await page.goto("/alumni?q=" + encodeURIComponent("あおい"));
+  await expect(page.getByRole("heading", { name: /検索結果/ })).toContainText("1件");
+  await fillFilters(page);
+  await page.getByRole("button", { name: "条件をクリア" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("heading", { name: /検索結果/ })).toContainText("2件");
+  await expectFiltersEmpty(page);
+});
+
+test("検索後に共通ナビから卒業生検索を開き直すと、入力欄を適用中の条件にそろえる", async ({ page, baseURL }) => {
+  await signIn(page, baseURL!, "poc_s001");
+  await page.goto("/alumni?q=" + encodeURIComponent("あおい"));
+  await fillFilters(page);
+  await page.getByRole("navigation", { name: "主要メニュー" }).getByRole("link", { name: "卒業生検索" }).click();
+  await expect(page.getByRole("heading", { name: /検索結果/ })).toContainText("2件");
+  await expectFiltersEmpty(page);
+});
+
 test("存在しない利用者のプロフィールは見つからない表示にする", async ({ page, baseURL }) => {
   await signIn(page, baseURL!, "poc_s001");
   const response = await page.goto("/users/no-such-user");
