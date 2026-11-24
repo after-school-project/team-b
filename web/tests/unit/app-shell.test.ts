@@ -30,6 +30,9 @@ import {
 } from "@/components/app-shell/navigation";
 import { EmptyState, ErrorState, LoadingState } from "@/components/feedback/StateMessage";
 
+/** 共通ナビの導線のうち、実装済みの画面（`implementedScreenRoutes`）。ほかは「準備中」として押せない状態にする。 */
+const implementedNavHrefs = new Set(["/", "/alumni", "/me/profile"]);
+
 function renderShell(options: { canAccessAdmin: boolean; pathname?: string; unread?: number }) {
   navigation.pathname = options.pathname ?? "/";
   const props: Omit<AppShellProps, "children"> = {
@@ -90,14 +93,12 @@ describe("共通ナビゲーションの導線定義", () => {
 });
 
 describe("導線の実装状況", () => {
-  it("実装済みの画面（現在はホームとマイプロフィール）の導線を押せる状態にする", async () => {
+  it("実装済みの画面（現在はホーム・卒業生検索・マイプロフィール）の導線を押せる状態にする", async () => {
     const actual = await vi.importActual<typeof import("@/components/app-shell/navigation")>(
       "@/components/app-shell/navigation",
     );
-    expect(actual.isNavItemAvailable({ href: "/" })).toBe(true);
-    expect(actual.isNavItemAvailable({ href: "/me/profile" })).toBe(true);
-    for (const item of [...PRIMARY_NAV_ITEMS.slice(1), ...ACCOUNT_NAV_ITEMS.slice(1), NOTIFICATION_NAV_ITEM, ADMIN_NAV_ITEM]) {
-      expect(actual.isNavItemAvailable(item)).toBe(false);
+    for (const item of [...PRIMARY_NAV_ITEMS, ...ACCOUNT_NAV_ITEMS, NOTIFICATION_NAV_ITEM, ADMIN_NAV_ITEM]) {
+      expect(actual.isNavItemAvailable(item), item.href).toBe(implementedNavHrefs.has(item.href));
     }
   });
 });
@@ -108,11 +109,11 @@ describe("AppShell（未実装の画面がある状態）", () => {
     availability.all = false;
   });
 
-  it("実装済みのホームとマイプロフィールだけをリンクにし、未実装の画面は押せない「準備中」として表示する", () => {
+  it("実装済みの画面だけをリンクにし、未実装の画面は押せない「準備中」として表示する", () => {
     const html = renderShell({ canAccessAdmin: false });
-    expect(html).toContain('href="/"');
-    expect(html).toContain('href="/me/profile"');
-    for (const item of [...PRIMARY_NAV_ITEMS.slice(1), ...ACCOUNT_NAV_ITEMS.slice(1), NOTIFICATION_NAV_ITEM]) {
+    for (const href of implementedNavHrefs) expect(html).toContain(`href="${href}"`);
+    for (const item of [...PRIMARY_NAV_ITEMS, ...ACCOUNT_NAV_ITEMS, NOTIFICATION_NAV_ITEM]) {
+      if (implementedNavHrefs.has(item.href)) continue;
       expect(html).not.toContain(`href="${item.href}"`);
       expect(html).toContain(item.label.replaceAll("&", "&amp;"));
     }

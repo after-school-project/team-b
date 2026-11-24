@@ -58,8 +58,16 @@ describe("可変パスを含む画面のルート", () => {
   });
 
   it("実装済みの画面に含まれないルートは、既定では戻り先にしない", () => {
-    expect(implementedScreenRoutes).toEqual(["/", "/me/profile"]);
+    expect(implementedScreenRoutes).toEqual(["/", "/me/profile", "/users/[userId]", "/alumni"]);
     expect(resolveReturnTo(`/questions/${questionId}`)).toBe("/");
+  });
+
+  it("実装済みの可変パスの画面（公開プロフィール）は、既定の許可で戻り先にする（#48 AC-03）", () => {
+    expect(resolveReturnTo("/users/abcDEF_123-x")).toBe("/users/abcDEF_123-x");
+    expect(loginPathFor("/users/abcDEF_123-x")).toBe("/login?returnTo=%2Fusers%2FabcDEF_123-x");
+    expect(resolveReturnTo("/users/abc/edit")).toBe("/");
+    expect(resolveReturnTo("/alumni?q=%E5%8D%92%E6%A5%AD&graduationYear=2026"))
+      .toBe("/alumni?q=%E5%8D%92%E6%A5%AD&graduationYear=2026");
   });
 
   it("未定義のパラメーター名を含むルートは設定の誤りとして扱う", () => {
