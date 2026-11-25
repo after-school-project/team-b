@@ -123,6 +123,24 @@ export default async function AdminUsersPage({ searchParams }: { searchParams: P
 }
 ```
 
+### 想定外の失敗のサーバーログ
+
+業務API・認証API・画面の想定外の失敗（5xx）は、[`describeFailure`](../../web/src/api/safe-failure.ts) で原因の種類（`cause`：SQLSTATE・接続エラーのコード・アプリの原因コード、なければ例外の種類名）と呼び出し元（`at`）だけをサーバーログに残します。例外のメッセージ・SQL・引数・接続文字列は残しません。例外をそのまま `console.error` へ渡さないでください。
+
+アプリが意図して5xxを返す場合は、`ApiError` の `cause` に `E_` で始まる固定の `code` を持つ例外を渡し、ログで区別できるようにします。利用者IDなどの値は持たせません。
+
+| 原因コード | 意味 |
+|---|---|
+| `E_USER_LOCK_RETRY_LIMIT` | `commitMutation` で必要な利用者ロックが変わり続け、やり直しの上限に達した（503） |
+
+| 入口 | ログの内容 |
+|---|---|
+| 業務API | `requestId`（応答と同じ値）・`code`・`cause`・`at` |
+| 認証API | `path`（公開する経路だけ）・`status`・`cause`・`at`。401・429など利用者側の拒否は残さない |
+| 画面 | `ScreenReadError` のメッセージに `cause`、スタックに `at` |
+
+認証APIでは、Better Authの既定の出力がDBの例外をそのまま印字するため、[認証サーバーの設定](../../web/src/auth/server.ts)の `logger` と `onAPIError.throw` を外さないでください。
+
 ### 画面からのDBの読み取り
 
 Next.jsは、画面（Server Component）の描画中の例外をそのままサーバーログに出します。DBの例外はSQLと引数（セッショントークンや入力値）を含むため、`web/src/app/` の画面では `@/db/client` を直接読み込まず、[`readForScreen`](../../web/src/db/screen-read.ts) を使います（ESLintで確認します）。

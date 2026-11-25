@@ -4,6 +4,7 @@ import { betterAuth } from "better-auth";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import { z } from "zod";
 import * as schema from "@/db/auth-schema";
+import { receiveAuthLog } from "./failure";
 import { authOptions } from "./options";
 import { loginRateLimit } from "./login-rate-limit";
 import { fixedWindowRateLimitStorage } from "./rate-limit-storage";
@@ -29,8 +30,10 @@ async function createAuthServer() {
         "/sign-in/username": loginRateLimit,
       },
     },
-    // SDK database errors may contain SQL parameters with authentication secrets.
-    logger: { disabled: true },
+    // SDK database errors may contain SQL parameters with authentication secrets, so nothing may print them:
+    // the logger only hands errors to the HTTP entry, and the router rethrows instead of printing (# SERVER_ERROR).
+    logger: { level: "error", log: receiveAuthLog },
+    onAPIError: { throw: true },
     hooks: {
       before: createAuthMiddleware(async (context) => {
         if (context.path === "/sign-in/username" && !loginBody.safeParse(context.body).success) {

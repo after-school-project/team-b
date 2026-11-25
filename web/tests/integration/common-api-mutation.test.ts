@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { inspect } from "node:util";
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
@@ -54,7 +55,7 @@ afterAll(async () => {
   await target?.dispose();
 });
 
-function mutationRoute(actorId = actor, options: { rollback?: boolean; discoverUser?: boolean } = {}) {
+function mutationRoute(actorId = actor, options: { rollback?: boolean; discoverUser?: boolean; requireUser?: () => string } = {}) {
   const update = async (request: Request, _context: unknown, input: MutationRequest) => {
     const body = await readJson(request, requestSchema);
     return commitMutation(db, {
@@ -74,6 +75,7 @@ function mutationRoute(actorId = actor, options: { rollback?: boolean; discoverU
       },
       async execute({ tx, now, requireLockedUsers }) {
         requireLockedUsers(owner);
+        if (options.requireUser) requireLockedUsers(options.requireUser());
         const [profile] = await tx.select().from(profiles).where(eq(profiles.userId, owner));
         assertExpectedVersion(profile.version, body.expectedVersion);
         const version = profile.version + 1;
@@ -223,4 +225,27 @@ it("ロックの待機上限を503に変換し、解除後の再試行で確定�
   const response = await send(route);
   expect(response.status).toBe(200);
   expect(Date.parse((await response.json()).data.committedAt)).toBeGreaterThanOrEqual(time.now.getTime());
+});
+
+it("必要な利用者ロックが変わり続けて上限に達すると、何も確定せず503とし、固定の原因コードだけをログに残す", async () => {
+  const log = vi.spyOn(console, "error").mockImplementation(() => {});
+  const required: string[] = [];
+  // やり直すたびに、まだロックしていない別の利用者が必要になる。
+  const route = mutationRoute(actor, { requireUser: () => { required.push(randomUUID()); return required.at(-1)!; } });
+  log.mockClear();
+  const response = await send(route, { key: "retry-limit-key" });
+  const calls = [...log.mock.calls];
+  log.mockRestore();
+
+  expect(response.status).toBe(503);
+  const { error, meta } = await response.json();
+  expect(error).toEqual({ code: "TEMPORARILY_UNAVAILABLE", message: "時間をおいて同じ内容で再試行してください。", fields: [] });
+  expect(required).toHaveLength(3);
+  expect(calls).toEqual([[expect.any(String), {
+    requestId: meta.requestId, code: "TEMPORARILY_UNAVAILABLE", cause: "E_USER_LOCK_RETRY_LIMIT",
+    at: expect.arrayContaining([expect.stringContaining("mutation.ts")]),
+  }]]);
+  const output = inspect(calls, { depth: null });
+  expect([actor, owner, ...required].some((id) => output.includes(id))).toBe(false);
+  expect(await saved()).toEqual({ version: 1, receipt: [], notices: [], audit: [] });
 });

@@ -1,3 +1,4 @@
+import { inspect } from "node:util";
 import { getCookies } from "better-auth/cookies";
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
@@ -143,12 +144,12 @@ describe("業務 Route Handler", () => {
     expect((await response.json()).error.code).toBe("PAYLOAD_TOO_LARGE");
   });
 
-  it("内部エラーとDBの一時障害で原因・SQL・秘密値を応答やログへ含めない", async () => {
+  it("内部エラーとDBの一時障害で、原因の種類と呼び出し元だけをログに残し、SQL・秘密値を応答やログへ含めない", async () => {
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     const sensitive = "SELECT secret FROM postgres://private:test@db";
     const queryError = new Error(sensitive, { cause: Object.assign(new Error(sensitive), { code: "55P03" }) });
-    for (const [reason, status, code] of [
-      [new Error(sensitive), 500, "INTERNAL_ERROR"], [queryError, 503, "TEMPORARILY_UNAVAILABLE"],
+    for (const [reason, status, code, cause] of [
+      [new Error(sensitive), 500, "INTERNAL_ERROR", "Error"], [queryError, 503, "TEMPORARILY_UNAVAILABLE", "55P03"],
     ] as const) {
       const handler = defineApiRoute({ GET: () => { throw reason; } });
       const response = await handler.GET(new Request(url), {});
@@ -157,7 +158,10 @@ describe("業務 Route Handler", () => {
       expect(result).not.toContain(sensitive);
       const parsed = JSON.parse(result);
       expect(parsed.error).toMatchObject({ code, fields: [] });
-      expect(log).toHaveBeenLastCalledWith(expect.any(String), { requestId: parsed.meta.requestId, code });
+      expect(log).toHaveBeenLastCalledWith(expect.any(String), {
+        requestId: parsed.meta.requestId, code, cause, at: expect.arrayContaining([expect.stringContaining("common-api.test.ts")]),
+      });
+      expect(inspect(log.mock.lastCall, { depth: null })).not.toContain(sensitive);
     }
   });
 

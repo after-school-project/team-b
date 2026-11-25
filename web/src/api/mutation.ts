@@ -54,6 +54,11 @@ class MissingUserLocks extends Error {
   }
 }
 
+/** 必要な利用者ロックが変わり続け、やり直しの上限に達したこと。ログで区別するための固定の原因コードだけを持つ。 */
+class UserLockRetryLimit extends Error {
+  readonly code = "E_USER_LOCK_RETRY_LIMIT";
+}
+
 async function lockTargets(tx: Transaction, targets: readonly TargetLock[]) {
   const groups = new Map<string, { table: PgTable; column: PgColumn; ids: Set<string> }>();
   for (const { stage, table, idColumn, ids } of targets) {
@@ -154,5 +159,5 @@ export async function commitMutation(database: Database, mutation: Mutation): Pr
       for (const id of error.ids) requiredUsers.add(id);
     }
   }
-  throw new ApiError("TEMPORARILY_UNAVAILABLE");
+  throw new ApiError("TEMPORARILY_UNAVAILABLE", { cause: new UserLockRetryLimit() });
 }

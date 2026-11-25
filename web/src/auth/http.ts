@@ -1,5 +1,7 @@
 import { toNextJsHandler } from "better-auth/next-js";
 import { z } from "zod";
+import { describeFailure } from "@/api/safe-failure";
+import { collectAuthFailure } from "./failure";
 import { getAuthServer, getAuthSession } from "./server";
 import { authOrigin } from "./web-config";
 
@@ -24,6 +26,19 @@ export async function handleAuthRequest(request: Request): Promise<Response> {
 
   if (!responseSchema) return errorResponse(404, "NOT_FOUND");
 
+  return collectAuthFailure(async (failure) => {
+    const response = await respond(request, path, responseSchema, failure);
+    if (response.status >= 500) {
+      // path は公開する経路（publicRoutes）のどれか。入力値・SQL・引数は出さない。
+      console.error("認証APIの処理に失敗しました。", { path, status: response.status, ...describeFailure(failure.error) });
+    }
+    return response;
+  });
+}
+
+async function respond(
+  request: Request, path: string, responseSchema: z.ZodType, failure: { error?: unknown },
+): Promise<Response> {
   try {
     if (request.method === "POST" && request.headers.get("Origin") !== authOrigin()) {
       return errorResponse(403, "ORIGIN_NOT_ALLOWED");
@@ -49,7 +64,8 @@ export async function handleAuthRequest(request: Request): Promise<Response> {
     }
     for (const cookie of response.headers.getSetCookie()) headers.append("Set-Cookie", cookie);
     return Response.json(body, { headers });
-  } catch {
+  } catch (error) {
+    failure.error = error;
     return errorResponse(500, "AUTH_REQUEST_FAILED");
   }
 }
