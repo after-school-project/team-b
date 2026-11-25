@@ -123,3 +123,31 @@ export async function resetProfileReviews(username: string) {
     await client.query("UPDATE community_users SET profile_state = 'public' WHERE user_id = $1", [userId]);
   });
 }
+
+type NewQuestion = {
+  title: string; body?: string; category?: string; resolution?: "open" | "resolved"; hidden?: boolean; deleted?: boolean;
+};
+
+/** Q&Aの質問を、本文の末尾に目印を付けて作り、IDを渡した順に返す。終わったら `removeQuestions` で消す。 */
+export async function createQuestions(marker: string, questions: NewQuestion[]): Promise<string[]> {
+  const authorId = await userIdOf("poc_s001");
+  return withDatabase(async (client) => {
+    const ids: string[] = [];
+    for (const question of questions) {
+      const { rows } = await client.query<{ id: string }>(
+        `INSERT INTO qa_questions (author_id, category_id, title, body_markdown, author_label, resolution, forced_hidden_at, deleted_at)
+        VALUES ($1, (SELECT id FROM qa_categories WHERE code = $2), $3, $4, 'e2eの投稿者名', $5,
+          CASE WHEN $6 THEN now() END, CASE WHEN $7 THEN now() END) RETURNING id`,
+        [authorId, question.category ?? "learning", question.title, `${question.body ?? "本文"}\n\n${marker}`,
+          question.resolution ?? "open", question.hidden ?? false, question.deleted ?? false],
+      );
+      ids.push(rows[0].id);
+    }
+    return ids;
+  });
+}
+
+export async function removeQuestions(marker: string) {
+  await withDatabase((client) => client.query(
+    "DELETE FROM qa_questions WHERE body_markdown LIKE '%' || $1 AND author_label = 'e2eの投稿者名'", [marker]));
+}

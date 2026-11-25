@@ -28,8 +28,8 @@ const routeParams: Readonly<Record<string, RegExp>> = {
  * `/login` と `/api/*` は追加しない。
  */
 export const implementedScreenRoutes: readonly string[] = [
-  "/", "/me/profile", "/users/[userId]", "/alumni", "/admin/users/[userId]", "/admin/profile-reviews",
-  "/admin/graduation",
+  "/", "/me/profile", "/users/[userId]", "/alumni", "/questions", "/questions/[questionId]",
+  "/admin/users/[userId]", "/admin/profile-reviews", "/admin/graduation",
 ];
 
 type CompiledRoute = readonly (string | RegExp)[];

@@ -12,7 +12,7 @@ describe("ログイン後の戻り先", () => {
     "/login",
     "/login?returnTo=/",
     "/api/auth/sign-out",
-    "/questions",
+    "/notices",
     "/\\example.com",
     "/%2F%2Fexample.com",
     "javascript:alert(1)",
@@ -59,16 +59,19 @@ describe("可変パスを含む画面のルート", () => {
 
   it("実装済みの画面に含まれないルートは、既定では戻り先にしない", () => {
     expect(implementedScreenRoutes).toEqual([
-      "/", "/me/profile", "/users/[userId]", "/alumni", "/admin/users/[userId]", "/admin/profile-reviews",
-      "/admin/graduation",
+      "/", "/me/profile", "/users/[userId]", "/alumni", "/questions", "/questions/[questionId]",
+      "/admin/users/[userId]", "/admin/profile-reviews", "/admin/graduation",
     ]);
-    expect(resolveReturnTo(`/questions/${questionId}`)).toBe("/");
+    expect(resolveReturnTo(`/events/${questionId}`)).toBe("/");
+    expect(resolveReturnTo("/questions/new")).toBe("/");
   });
 
   it("実装済みの可変パスの画面（公開プロフィール）は、既定の許可で戻り先にする（#48 AC-03）", () => {
     expect(resolveReturnTo("/users/abcDEF_123-x")).toBe("/users/abcDEF_123-x");
     expect(loginPathFor("/users/abcDEF_123-x")).toBe("/login?returnTo=%2Fusers%2FabcDEF_123-x");
     expect(resolveReturnTo("/users/abc/edit")).toBe("/");
+    expect(resolveReturnTo("/questions?resolution=open")).toBe("/questions?resolution=open");
+    expect(resolveReturnTo(`/questions/${questionId}`)).toBe(`/questions/${questionId}`);
     expect(resolveReturnTo("/alumni?q=%E5%8D%92%E6%A5%AD&graduationYear=2026"))
       .toBe("/alumni?q=%E5%8D%92%E6%A5%AD&graduationYear=2026");
   });
@@ -115,7 +118,7 @@ describe("戻り先付きのログイン画面URL", () => {
     expect(loginPathFor("/?tab=home")).toBe("/login?returnTo=%2F%3Ftab%3Dhome");
   });
 
-  it.each([undefined, "/", "//example.com", "/questions"])("既定・許可外の戻り先 %s は付けない", (value) => {
+  it.each([undefined, "/", "//example.com", "/notices"])("既定・許可外の戻り先 %s は付けない", (value) => {
     expect(loginPathFor(value)).toBe("/login");
   });
 });
