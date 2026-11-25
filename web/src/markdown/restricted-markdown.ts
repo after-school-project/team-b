@@ -17,6 +17,7 @@ export type MarkdownNode = {
   url?: string;
   depth?: number;
   identifier?: string;
+  data?: { hProperties?: { href: string } };
   children?: MarkdownNode[];
 };
 
@@ -29,9 +30,9 @@ export const markdownLimits = {
   lines: 1_000,
   /** 構文木の深さ。 */
   depth: 100,
-  /** 段落・リスト項目などの要素の数。 */
-  blocks: 5_000,
-  /** 1つの段落・見出しの中の `*`・`_`・`[`・`<` の数。 */
+  /** 構文木の要素の数。段落などのほか、文中の文字・強調・リンクなども数える。 */
+  nodes: 5_000,
+  /** 1つの段落・見出しの中の `*`・`_`・`[`・`<`・バッククォートの数。 */
   markersPerParagraph: 500,
   /** 参照リンクで展開されるURLの合計の長さ。 */
   referencedUrlLength: 10_000,
@@ -41,9 +42,14 @@ export type MarkdownProblem = "too_complex" | "html" | "url" | "image";
 
 const httpUrl = /^https?:\/\//i;
 
-/** リンクとして許可するURL。相対URL・`//`・HTTP／HTTPS以外を許可しない。 */
-export function isHttpUrl(url: string): boolean {
-  return httpUrl.test(url);
+/**
+ * リンク先として表示するURL。許可しないURL（相対URL・`//`・HTTP／HTTPS以外・解釈できないURL）では null を返す。
+ *
+ * 保存時の検証と表示で、必ずこの値を使う。react-markdown は `\`・`[`・`]` などを%表記に変えるため、
+ * 元のURLを渡すと、検証したものとは別のホストへのリンクや、開けないリンクになる。
+ */
+export function linkHref(url: string): string | null {
+  return httpUrl.test(url) && URL.canParse(url) ? new URL(url).href : null;
 }
 
 /** 同じ記号と空白だけの行（水平線）。リストの入れ子としては数えない。 */
@@ -84,18 +90,18 @@ function parse(value: string, extension?: object): MarkdownNode {
   return parsed!;
 }
 
-/** 構文木の全要素をたどる。深い木でもスタックを溢れさせないよう、再帰を使わない。 */
+/** 構文木の全要素を、本文の順にたどる。深い木でもスタックを溢れさせないよう、再帰を使わない。 */
 export function* walkMarkdown(root: MarkdownNode): Generator<{ node: MarkdownNode; depth: number }> {
   const pending = [{ node: root, depth: 0 }];
   for (let current = pending.pop(); current; current = pending.pop()) {
     yield current;
-    for (const node of current.node.children ?? []) pending.push({ node, depth: current.depth + 1 });
+    for (const node of (current.node.children ?? []).toReversed()) pending.push({ node, depth: current.depth + 1 });
   }
 }
 
 function paragraphMarkers(paragraph: MarkdownNode): number {
   let count = 0;
-  for (const { node } of walkMarkdown(paragraph)) count += node.value?.match(/[*_[<]/g)?.length ?? 0;
+  for (const { node } of walkMarkdown(paragraph)) count += node.value?.match(/[*_[<`]/g)?.length ?? 0;
   return count;
 }
 
@@ -106,22 +112,24 @@ export function exceedsParseLimits(value: string): boolean {
   const lines = value.split(/\r\n?|\n/).filter((line) => line.trim() !== "");
   if (lines.length > markdownLimits.lines) return true;
   if (lines.some((line) => leadingMarkers(line) > markdownLimits.markersPerLine)) return true;
-  let blocks = 0;
+  let nodes = 0;
   for (const { node } of walkMarkdown(parse(value, blockOnly))) {
-    blocks += 1;
-    if (blocks > markdownLimits.blocks) return true;
+    nodes += 1;
+    if (nodes > markdownLimits.nodes) return true;
     if ((node.type === "paragraph" || node.type === "heading") &&
       paragraphMarkers(node) > markdownLimits.markersPerParagraph) return true;
   }
   return false;
 }
 
-/** 解析した構文木が、描画してはいけない深さ・展開量かを判定する。 */
+/** 解析した構文木が、描画してはいけない要素数・深さ・展開量かを判定する。 */
 export function exceedsTreeLimits(root: MarkdownNode): boolean {
   const definitions = new Map<string, string>();
   const references: string[] = [];
+  let nodes = 0;
   for (const { node, depth } of walkMarkdown(root)) {
-    if (depth > markdownLimits.depth) return true;
+    nodes += 1;
+    if (nodes > markdownLimits.nodes || depth > markdownLimits.depth) return true;
     const { identifier = "" } = node;
     // 同じ名前の定義は最も長いURLで数え、どの定義が使われても上限を超えないようにする。
     if (node.type === "definition" && (definitions.get(identifier) ?? "").length < node.url!.length) {
@@ -156,7 +164,7 @@ export function markdownProblems(value: string): MarkdownProblem[] {
     if (node.type === "image" || node.type === "imageReference") problems.add("image");
     // 参照リンクは、使われていない定義も含めて確認する。
     if ((node.type === "link" || node.type === "definition" || node.type === "image") &&
-      !(isHttpUrl(node.url!) && URL.canParse(node.url!))) problems.add("url");
+      linkHref(node.url!) === null) problems.add("url");
   }
   return [...problems];
 }

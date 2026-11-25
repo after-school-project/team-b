@@ -4,7 +4,7 @@ import { markdownProblems, type MarkdownProblem } from "./restricted-markdown";
 
 /** 画面に表示する、保存できない理由。 */
 export const markdownProblemMessages: Record<MarkdownProblem, string> = {
-  too_complex: "引用・箇条書きの入れ子、行数、または記号（* _ [ <）が多すぎます。減らしてください。",
+  too_complex: "引用・箇条書きの入れ子、行数、または記号（* _ [ < `）が多すぎます。減らしてください。",
   html: "HTMLのタグは使えません。文字として載せる場合は、コード（`）で囲んでください。",
   url: "リンクのURLは、http:// または https:// で始めてください。",
   image: "画像は使えません。",

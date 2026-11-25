@@ -80,14 +80,43 @@ const accepted: [string, string][] = [
   ["<svg/onload=alert(1)>", "<p>&lt;svg/onload=alert(1)&gt;</p>"],
   ["javascript: とは？ data:image も本文", "<p>javascript: とは？ data:image も本文</p>"],
   ["[a](https://e.com/x?y=1&z=2#f)", '<p><a href="https://e.com/x?y=1&amp;z=2#f" rel="nofollow noopener noreferrer">a</a></p>'],
-  ["[a](http://localhost:3000)", '<p><a href="http://localhost:3000" rel="nofollow noopener noreferrer">a</a></p>'],
-  ["[a](HTTPS://e.com)", '<p><a href="https://e.com" rel="nofollow noopener noreferrer">a</a></p>'],
+  ["[a](http://localhost:3000)", '<p><a href="http://localhost:3000/" rel="nofollow noopener noreferrer">a</a></p>'],
+  ["[a](HTTPS://e.com)", '<p><a href="https://e.com/" rel="nofollow noopener noreferrer">a</a></p>'],
   ["<https://e.com/x>", '<p><a href="https://e.com/x" rel="nofollow noopener noreferrer">https://e.com/x</a></p>'],
-  ["[a][r]\n\n[r]: https://e.com", '<p><a href="https://e.com" rel="nofollow noopener noreferrer">a</a></p>'],
+  ["[a][r]\n\n[r]: https://e.com", '<p><a href="https://e.com/" rel="nofollow noopener noreferrer">a</a></p>'],
   // 水平線は保存でき、表示時に取り除く。
   ["a\n\n---\n\nb", "<p>a</p>\n\n<p>b</p>"],
   // 対象外の構文（表・取り消し線・URLの自動リンク）は文字のまま表示する。
   ["~~a~~ https://e.com", "<p>~~a~~ https://e.com</p>"],
+];
+
+/** 保存できるリンクと、表示するhref。元のURLをブラウザーが解釈した値と同じになる。 */
+const links: [string, string][] = [
+  // 描画の処理が \ を %5C に変えると、無効なURLや、別のホスト（evil.example）へのリンクになる。
+  ["[a](https://example.com\\course)", "https://example.com/course"],
+  ["<https://example.com\\course>", "https://example.com/course"],
+  ["[a][r]\n\n[r]: https://example.com\\course", "https://example.com/course"],
+  ["[a](https://good.example\\\\@evil.example/)", "https://good.example/@evil.example/"],
+  ["<https://good.example\\@evil.example/>", "https://good.example/@evil.example/"],
+  ["[r]\n\n[r]: https://good.example\\\\@evil.example/", "https://good.example/@evil.example/"],
+  ["[a](https://good.example:8080\\\\@evil.example)", "https://good.example:8080/@evil.example"],
+  ["[a](http://[::1]/)", "http://[::1]/"],
+  ["<https://[2001:db8::1]:8080/x>", "https://[2001:db8::1]:8080/x"],
+  ["[a][r]\n\n[r]: http://[::1]:3000/x", "http://[::1]:3000/x"],
+  ["[a](https://日本.example/あ?い=う)", "https://xn--wgv71a.example/%E3%81%82?%E3%81%84=%E3%81%86"],
+  ["[a](<https://e.com/a b[c]>)", "https://e.com/a%20b[c]"],
+  ["[a](https://e.com/%zz%41)", "https://e.com/%zz%41"],
+  ["[a](https:///e.com/x)", "https://e.com/x"],
+  ["[a](https://e.com/(x)'y)", "https://e.com/(x)'y"],
+  // 同じ名前の定義は、最初のものを使う。
+  ["[R]\n\n[r]: https://a.example/\n[R]: https://b.example/", "https://a.example/"],
+  ["[r]\n\n> [r]: https://a.example/\n\n[r]: https://b.example/", "https://a.example/"],
+];
+
+/** 描画の処理が書き換えると、有効なURLに見えるようになる無効なURL。 */
+const invalidLinks = [
+  "[a](https://good.example:xx\\\\@evil.example/)", "<https://good.example:xx\\@evil.example/>",
+  "[r]\n\n[r]: https://good.example:xx\\\\@evil.example/", "[a](http://[::1)", "[a](http://[x]/)", "[a](<https://a b.example/>)",
 ];
 
 /** 画面遷移・状態遷移設計書 §3、API設計書 §3、#9 の2026-11-20・11-25の決定。AC-04 の Markdown の検証。 */
@@ -122,6 +151,18 @@ describe("制限Markdownの表示", () => {
     expectOnlyAllowed(value);
   });
 
+  it.each(links)("保存できるリンクは、検証したURLと同じ有効なhrefで表示する: %j", (value, expected) => {
+    expect(markdownProblems(value)).toEqual([]);
+    const hrefs = [...body(value).matchAll(/ href="([^"]*)"/g)].map(([, href]) => href.replaceAll("&#x27;", "'").replaceAll("&amp;", "&"));
+    expect(hrefs).toEqual([expected]);
+    expect(new URL(expected).href).toBe(expected);
+  });
+
+  it.each(invalidLinks)("解釈できないURLは保存時に拒否し、表示ではリンクにしない: %j", (value) => {
+    expect(markdownProblems(value)).toEqual(["url"]);
+    expect(body(value)).not.toContain("href");
+  });
+
   it("本文の見出しは画面の見出し階層に合わせ、h6を超えない", () => {
     expect(body("# a\n\n### b", 2)).toBe("<h2>a</h2>\n<h4>b</h4>");
     expect(body("# a\n\n###### b", 4)).toBe("<h4>a</h4>\n<h6>b</h6>");
@@ -146,6 +187,8 @@ const excessive: [string, string][] = [
   ["強制改行で区切った強調の並び", fill("*a  \n_b  \n")],
   ["強制改行で区切った1段落の強調の並び", `${"*a*_b_*c  \n".repeat(300)}`],
   ["閉じないHTMLコメントの並び", fill("a><!--")],
+  ["エスケープしたバッククォートの並び", fill("`` \\")],
+  ["閉じないコードの並び", fill("\\``")],
   ["画像の入れ子", `${"![".repeat(1428)}${"](a)".repeat(1428)}`],
   ["短い見出しの並び", fill("a\n-\n")],
   ["1行の箇条書きの並び", fill("- a\n")],
@@ -168,12 +211,17 @@ describe("制限Markdownの上限", () => {
   });
 
   it("上限ちょうどの本文は受け付け、1つ超えると拒否する", () => {
-    const { markersPerLine, lines, markersPerParagraph, characters } = markdownLimits;
+    const { markersPerLine, lines, markersPerParagraph, characters, nodes } = markdownLimits;
+    // 文字とコードの組（2要素）を段落（1要素）に並べる。根の1、9段落の4,509、最後の段落の490で、ちょうど5,000要素。
+    const inline = [...Array<string>(9).fill("a`b`".repeat(250)), `${"a`b`".repeat(244)}a`].join("\n\n");
+    expect(nodes).toBe(5_000);
     const cases: [string, string][] = [
       [`${">".repeat(markersPerLine)} a`, `${">".repeat(markersPerLine + 1)} a`],
       ["a\n".repeat(lines), "a\n".repeat(lines + 1)],
       ["[".repeat(markersPerParagraph), "[".repeat(markersPerParagraph + 1)],
+      ["\\`".repeat(markersPerParagraph), "\\`".repeat(markersPerParagraph + 1)],
       ["𠮷".repeat(characters), "𠮷".repeat(characters + 1)],
+      [inline, `${inline}\`c\``],
     ];
     for (const [within, over] of cases) {
       expect(markdownProblems(within)).toEqual([]);
@@ -181,6 +229,12 @@ describe("制限Markdownの上限", () => {
       expect(markdownProblems(over)).toEqual(["too_complex"]);
       expect(isPlain(over)).toBe(true);
     }
+  });
+
+  it("文中の強調を分けて並べた本文も、構文木全体の要素数で拒否する", () => {
+    const value = Array.from({ length: 40 }, () => "*a*b".repeat(60)).join("\n\n");
+    expect(markdownProblems(value)).toEqual(["too_complex"]);
+    expect(isPlain(value)).toBe(true);
   });
 
   it("普通の長い本文・記号の多いコード・区切り線・表風の文字を受け付ける", () => {

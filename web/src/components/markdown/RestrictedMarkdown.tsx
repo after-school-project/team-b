@@ -1,7 +1,7 @@
 import Markdown, { type Components, type Options } from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
 import type { ReactElement } from "react";
-import { exceedsParseLimits, exceedsTreeLimits, isHttpUrl, walkMarkdown, type MarkdownNode } from "@/markdown/restricted-markdown";
+import { exceedsParseLimits, exceedsTreeLimits, linkHref, walkMarkdown, type MarkdownNode } from "@/markdown/restricted-markdown";
 import styles from "./RestrictedMarkdown.module.css";
 
 type HeadingLevel = 2 | 3 | 4;
@@ -38,10 +38,18 @@ const components: Components = {
 function checkAndAdjust(headingLevel: HeadingLevel) {
   return () => (root: MarkdownNode) => {
     if (exceedsTreeLimits(root)) throw new RangeError("制限Markdownの上限を超えています。");
+    const definitions = new Map<string, string>();
+    for (const { node } of walkMarkdown(root)) {
+      // 描画の処理（mdast-util-to-hast）と同じく、大文字にした名前が同じ定義は最初のものを使う。
+      const name = node.identifier?.toUpperCase();
+      if (node.type === "definition" && !definitions.has(name!)) definitions.set(name!, node.url!);
+    }
     for (const { node } of walkMarkdown(root)) {
       if (node.type === "heading") node.depth = Math.min(6, node.depth! + headingLevel - 1);
-      // rehype-sanitize はスキームの大文字と小文字を区別するため、小文字にそろえる。
-      if (node.url !== undefined) node.url = node.url.replace(/^https?:/i, (scheme) => scheme.toLowerCase());
+      const url = node.type === "link" ? node.url
+        : node.type === "linkReference" ? definitions.get(node.identifier!.toUpperCase()) : undefined;
+      // 描画の処理がURLを書き換えた後のhrefを、検証と同じURLで置き換える。許可しないURLは空にしてリンクにしない。
+      if (url !== undefined) node.data = { hProperties: { href: linkHref(url) ?? "" } };
     }
   };
 }
@@ -58,7 +66,7 @@ function renderMarkdown(value: string, headingLevel: HeadingLevel): ReactElement
       rehypePlugins: [[rehypeSanitize, schema]],
       remarkPlugins: [checkAndAdjust(headingLevel)] as unknown as Options["remarkPlugins"],
       skipHtml: true,
-      urlTransform: (url, key) => key === "href" && isHttpUrl(url) ? url : undefined,
+      urlTransform: (url, key) => key === "href" ? linkHref(url) : undefined,
     });
   } catch (error) {
     if (error instanceof RangeError) return null;
