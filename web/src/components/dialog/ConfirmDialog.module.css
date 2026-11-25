@@ -35,6 +35,7 @@
 }
 
 .cancelButton,
+.primaryButton,
 .dangerButton {
   min-height: var(--control-min-size);
   padding: var(--space-2) var(--space-6);
@@ -48,6 +49,12 @@
   border: 1px solid var(--color-control-border);
   color: var(--color-primary);
   background: var(--color-surface);
+}
+
+.primaryButton {
+  border: 1px solid var(--color-primary);
+  color: var(--color-on-primary);
+  background: var(--color-primary);
 }
 
 .dangerButton {

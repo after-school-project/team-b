@@ -18,6 +18,7 @@ export const { GET, HEAD, OPTIONS, POST, PUT, DELETE, PATCH } = defineApiRoute({
 - `parsePathParams` にNext.jsのデコード済みパス変数とIDのスキーマを渡します。クエリーは `parseQuery` で検証します。
 - 更新のOrigin、Content-Type、再送キーはRoute Handlerの共通処理が確認します。確認の順序は[ログイン後の業務API](#ログイン後の業務api)を参照してください。本文は `readJson` で読み、入れ子の各オブジェクトに `z.strictObject` を使います。DB保存と再送照合には、検証・正規化した値を渡します。`isoDateTime` はISO 8601の入力をUTCへ正規化します。
 - タイトルと本文には `title`・`longText`・`shortText` を使います。NUL（U+0000）や単独のUTF-16サロゲートを含む値には、該当フィールドを示す422を返します。
+- 一覧の検索条件のキーワード・学科・年度には、[`list-filters.ts`](../../web/src/api/list-filters.ts) の `searchText`・`fourDigitYear` を使い、部分一致のパターンは `containing` で作ります。
 - 理由（API設計書 §3 Reason）には、必須なら `requiredReason`、任意なら `optionalReason` を使います。`optionalReason` は省略・null・空白だけの入力を null にそろえます。画面の案内には同じ上限の `reasonMaxLength`（[`input-limits.ts`](../../web/src/api/input-limits.ts)）を使います。
 - 一覧は `parseListQuery` で絞り込みを検証し、認証済み利用者、一覧の識別子、正規化済み条件、並び順を `createCursorCodec` に渡します。署名には環境ごとの `BETTER_AUTH_SECRET` を使用します。毎ページで現在の認可を適用し、同じ絞り込みと認可条件で件数を数えます。`limit + 1` 件まで読み込み、`listPage` で次ページの情報を生成します。
 
@@ -208,6 +209,7 @@ return commitMutation(db, {
 ```
 
 - kind ごとの対象・契機ID・理由の要否は `NotificationSubject` の説明を参照してください。Q&Aの宛先（質問者・直接の親投稿者）の特定は各機能で行います。
+- 1回の操作で複数の対象を記録する場合（卒業区分の一括変更など）は、`recordAuditLogs` で1回の問い合わせにまとめます。
 - 監査ログの許可リスト（`auditOperations`）には #8 の操作だけを定めています。新しい操作を記録する機能は、その操作の対象の種類と、項目ごとに許可する値を追加します。
 
 ### 通報証拠の保全・担当案件の引継ぎ

@@ -11,6 +11,8 @@ export type ConfirmDialogProps = {
   children: ReactNode;
   /** 確定ボタンの名前。「はい」ではなく操作を表す。 */
   confirmLabel: string;
+  /** 確定ボタンの種類。非表示・削除などは `danger`（既定）。 */
+  tone?: "danger" | "primary";
   onConfirm: () => void;
   /** キャンセル・Esc で閉じたとき。操作は実行しない。 */
   onClose: () => void;
@@ -20,7 +22,7 @@ export type ConfirmDialogProps = {
  * 操作の確認ダイアログ（docs/DESIGN.md §8.4）。`dialog` 要素のモーダル表示を使い、フォーカスの移動・背面への移動の防止・
  * 閉じたときに元の操作へ戻す処理はブラウザーに任せる。最初のフォーカスはキャンセルに置き、誤って確定しないようにする。
  */
-export function ConfirmDialog({ open, title, children, confirmLabel, onConfirm, onClose }: ConfirmDialogProps) {
+export function ConfirmDialog({ open, title, children, confirmLabel, tone = "danger", onConfirm, onClose }: ConfirmDialogProps) {
   const dialog = useRef<HTMLDialogElement>(null);
   const id = useId();
 
@@ -43,7 +45,7 @@ export function ConfirmDialog({ open, title, children, confirmLabel, onConfirm, 
       <div id={`${id}-body`} className={styles.body}>{children}</div>
       <div className={styles.actions}>
         <button type="button" className={styles.cancelButton} onClick={onClose}>キャンセル</button>
-        <button type="button" className={styles.dangerButton} onClick={onConfirm}>{confirmLabel}</button>
+        <button type="button" className={tone === "danger" ? styles.dangerButton : styles.primaryButton} onClick={onConfirm}>{confirmLabel}</button>
       </div>
     </dialog>
   );

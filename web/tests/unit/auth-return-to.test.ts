@@ -60,6 +60,7 @@ describe("可変パスを含む画面のルート", () => {
   it("実装済みの画面に含まれないルートは、既定では戻り先にしない", () => {
     expect(implementedScreenRoutes).toEqual([
       "/", "/me/profile", "/users/[userId]", "/alumni", "/admin/users/[userId]", "/admin/profile-reviews",
+      "/admin/graduation",
     ]);
     expect(resolveReturnTo(`/questions/${questionId}`)).toBe("/");
   });
@@ -76,6 +77,7 @@ describe("可変パスを含む画面のルート", () => {
     expect(resolveReturnTo("/admin/users/abcDEF_123-x")).toBe("/admin/users/abcDEF_123-x");
     expect(resolveReturnTo("/admin/profile-reviews?status=all&review=" + questionId))
       .toBe("/admin/profile-reviews?status=all&review=" + questionId);
+    expect(resolveReturnTo("/admin/graduation?mode=history")).toBe("/admin/graduation?mode=history");
     for (const path of ["/admin", "/admin/users", "/admin/users/a/b", "/admin/profile-reviews/" + questionId]) {
       expect(resolveReturnTo(path), path).toBe("/");
     }

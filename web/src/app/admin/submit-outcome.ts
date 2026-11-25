@@ -4,8 +4,8 @@
  */
 
 export type SubmitOutcome<State extends string> =
-  /** 操作が確定し、結果の状態を確認できた。 */
-  | { kind: "done"; state: State }
+  /** 操作が確定し、結果の状態を確認できた。`resourceId` は結果の対象のID（読み取れなければ null）。 */
+  | { kind: "done"; state: State; resourceId: string | null }
   /**
    * 確定したか確認できない（サーバーエラー、通信の途中切断、200 でも本文を読めない）。
    * 同じ内容なら同じ再送キーで送り直し、確定済みの結果を受け取る。
@@ -24,9 +24,11 @@ export function submitOutcome<State extends string>(
   status: number, body: unknown, states: readonly State[],
 ): SubmitOutcome<State> {
   if (status >= 200 && status < 300) {
-    const value = (body as { data?: { state?: unknown } } | null)?.data?.state;
-    const state = states.find((candidate) => candidate === value);
-    return state === undefined ? { kind: "unconfirmed" } : { kind: "done", state };
+    const data = (body as { data?: { state?: unknown; resource?: { id?: unknown } } } | null)?.data;
+    const state = states.find((candidate) => candidate === data?.state);
+    if (state === undefined) return { kind: "unconfirmed" };
+    const resourceId = data?.resource?.id;
+    return { kind: "done", state, resourceId: typeof resourceId === "string" ? resourceId : null };
   }
   if (status >= 500) return { kind: "unconfirmed" };
   if (status === 409) return { kind: "conflict" };
