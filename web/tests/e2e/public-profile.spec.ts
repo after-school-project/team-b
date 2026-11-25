@@ -167,10 +167,14 @@ test("検索後に共通ナビから卒業生検索を開き直すと、入力�
   await expectFiltersEmpty(page);
 });
 
-test("存在しない利用者のプロフィールは見つからない表示にする", async ({ page, baseURL }) => {
+test("存在しない利用者のプロフィールは404と日本語の案内になり、ホームへ戻れる", async ({ page, baseURL }) => {
   await signIn(page, baseURL!, "poc_s001");
   const response = await page.goto("/users/no-such-user");
   expect(response?.status()).toBe(404);
+  await expect(page.getByRole("heading", { level: 1, name: "ページが見つかりません" })).toBeVisible();
+  await page.getByRole("link", { name: "ホームへ戻る" }).click();
+  await expect(page).toHaveURL("/");
+  await expect(page.getByRole("heading", { level: 1, name: "ホーム" })).toBeVisible();
 });
 
 test("モバイル幅でも横スクロールなしで、検索条件と結果を使える", async ({ page, baseURL }) => {
