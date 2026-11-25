@@ -481,7 +481,7 @@ GraduationCorrectionは `{userId,expectedVersion,baseRole,isGraduating,confirmed
 
 | DTO | フィールド・返却条件 |
 |---|---|
-| GraduationCandidate | userId、displayName、baseRole、isGraduating、department、entryYear、graduationYear、version |
+| GraduationCandidate | userId、displayName/null、baseRole、isGraduating、department、entryYear、graduationYear、version。プロフィール非表示中は公開版がないためdisplayNameをnullとし、審査前の表示名を返さず、検索・並び順にも使わない。nullの候補は最後にuserId昇順で並べる |
 | GraduationChange | id、batchId、userId、actor:PublicAuthor、changeKind=graduation/correction、before={baseRole,isGraduating}、after={baseRole,isGraduating}、createdAt |
 | AdminDashboard | counts={noticeRequests,eventRequests,unhandledReports}、navigation={canViewNotices,canViewEvents,canViewReports,canViewUsers,canViewGraduation,canViewAuditLogs,canViewProfileReviews,canViewHandoffs} |
 | AuditLog | id、actor:PublicAuthor/null、systemAction、actionType、target={type,id}、beforeState、afterState、publicReason/null、createdAt。beforeState／afterStateは操作ごとの状態・所属・権限フラグ等の許可した差分だけ |

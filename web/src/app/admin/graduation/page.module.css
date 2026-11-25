@@ -1,0 +1,116 @@
+/* 卒業区分の一括変更・修正（AD-13）。docs/DESIGN.md §5〜§8・§10 に従う。 */
+
+.search {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.searchRow {
+  display: grid;
+  gap: var(--space-4);
+}
+
+@media (min-width: 768px) {
+  .searchRow {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.input {
+  width: 100%;
+  min-height: var(--control-min-size);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-control-border);
+  border-radius: var(--radius-control);
+  color: var(--color-text);
+  background: var(--color-surface);
+  font: inherit;
+}
+
+.input[aria-invalid="true"] {
+  border-color: var(--color-danger);
+}
+
+.textButton {
+  min-height: var(--control-min-size);
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  color: var(--color-link);
+  background: transparent;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.candidates,
+.choices {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.candidates legend,
+.choices legend {
+  padding: 0;
+}
+
+.candidate {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 var(--space-3);
+  padding: var(--space-1) 0;
+  border-top: 1px solid var(--color-border);
+}
+
+.checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  min-height: var(--control-min-size);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.checkbox input {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  accent-color: var(--color-primary);
+}
+
+.targets {
+  max-height: 200px;
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-8);
+  overflow-y: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+}
+
+.result {
+  display: flex;
+  flex-direction: column;
+}
+
+.change {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3) 0;
+  border-top: 1px solid var(--color-border);
+}
+
+.change p {
+  margin: 0;
+}
+
+.changeState {
+  font-weight: 600;
+}

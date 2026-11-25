@@ -1,5 +1,6 @@
 import { and, asc, count, eq, ilike, or, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
+import { containing, fourDigitYear, searchText } from "@/api/list-filters";
 import { createCursorCodec, parseListQuery, queryListPage } from "@/api/pagination";
 import { ApiError } from "@/api/response";
 import type { AccessReader, Viewer } from "@/auth/access";
@@ -121,10 +122,6 @@ export function listedInAlumniSearch(): SQL {
   )!;
 }
 
-const searchText = z.string().transform((value) => value.trim())
-  .refine((value) => value.length > 0 && [...value].length <= 100 && value.isWellFormed() && !value.includes("\0"));
-const fourDigitYear = z.string().regex(/^\d{4}$/).transform(Number);
-
 /** 卒業生検索のクエリー（API設計書 §3）。q は前後空白を除いた1〜100文字、学科は100文字以内、年度は4桁の整数。 */
 export const alumniFilters = {
   q: searchText.optional(),
@@ -138,11 +135,6 @@ export type AlumniQuery = ReturnType<typeof parseAlumniQuery>;
 /** URLのクエリーを検証する。未定義の項目・形式の誤りは 400 BAD_REQUEST。 */
 export function parseAlumniQuery(url: URL) {
   return parseListQuery(url, alumniFilters);
-}
-
-/** LIKE の特殊文字をそのままの文字として扱う（PostgreSQL の既定のエスケープ文字は `\`）。 */
-function containing(value: string): string {
-  return `%${value.replace(/[\\%_]/g, (character) => `\\${character}`)}%`;
 }
 
 /**

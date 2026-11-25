@@ -10,7 +10,9 @@ describe("管理操作の応答", () => {
   const states = ["approved", "rejected"] as const;
 
   it("200でも、結果の状態を確認できるまで確定とみなさない", () => {
-    expect(submitOutcome(200, { data: { state: "approved" } }, states)).toEqual({ kind: "done", state: "approved" });
+    expect(submitOutcome(200, { data: { state: "approved", resource: { type: "profile_review", id: "r1" } } }, states))
+      .toEqual({ kind: "done", state: "approved", resourceId: "r1" });
+    expect(submitOutcome(201, { data: { state: "approved" } }, states)).toEqual({ kind: "done", state: "approved", resourceId: null });
     for (const body of [null, {}, { data: null }, { data: { state: "hidden" } }, { data: { state: 1 } }]) {
       expect(submitOutcome(200, body, states)).toEqual({ kind: "unconfirmed" });
     }

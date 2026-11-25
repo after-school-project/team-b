@@ -29,6 +29,7 @@ const routeParams: Readonly<Record<string, RegExp>> = {
  */
 export const implementedScreenRoutes: readonly string[] = [
   "/", "/me/profile", "/users/[userId]", "/alumni", "/admin/users/[userId]", "/admin/profile-reviews",
+  "/admin/graduation",
 ];
 
 type CompiledRoute = readonly (string | RegExp)[];

@@ -64,13 +64,12 @@ function allowedState(action: AuditAction, side: "before" | "after", state: unkn
   return result.data;
 }
 
-/** 監査ログを1件記録し、そのIDを返す。非表示の通知では、このIDを契機IDに使う。 */
-export async function recordAuditLog<A extends AuditAction>(tx: RecordWriter, input: AuditLogInput<A>): Promise<string> {
+function auditLogValues<A extends AuditAction>(input: AuditLogInput<A>): typeof auditLogs.$inferInsert {
   const reason = input.publicReason?.trim();
   if (typeof input.publicReason === "string" && !reason) {
     throw new Error("監査ログの理由が空です。理由がない場合は省略するか null を渡してください。");
   }
-  const [saved] = await tx.insert(auditLogs).values({
+  return {
     actorId: input.actorId,
     systemAction: input.actorId === null,
     actionType: input.action,
@@ -80,6 +79,20 @@ export async function recordAuditLog<A extends AuditAction>(tx: RecordWriter, in
     afterState: allowedState(input.action, "after", input.after),
     publicReason: reason ?? null,
     createdAt: input.at,
-  }).returning({ id: auditLogs.id });
+  };
+}
+
+/** 監査ログを1件記録し、そのIDを返す。非表示の通知では、このIDを契機IDに使う。 */
+export async function recordAuditLog<A extends AuditAction>(tx: RecordWriter, input: AuditLogInput<A>): Promise<string> {
+  const [saved] = await tx.insert(auditLogs).values(auditLogValues(input)).returning({ id: auditLogs.id });
   return saved.id;
+}
+
+/**
+ * 監査ログを1回の問い合わせでまとめて記録する。卒業区分の一括変更（最大100人）のように、対象ごとに1件を記録する操作で、
+ * 利用者行をロックしたまま対象ごとに往復しないために使う。1件でも許可しない値があれば、何も記録しない。
+ */
+export async function recordAuditLogs<A extends AuditAction>(tx: RecordWriter, inputs: readonly AuditLogInput<A>[]): Promise<void> {
+  if (inputs.length === 0) return;
+  await tx.insert(auditLogs).values(inputs.map(auditLogValues));
 }

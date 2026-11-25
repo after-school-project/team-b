@@ -67,14 +67,51 @@ export async function userIdOf(username: string): Promise<string> {
   return id;
 }
 
-/** 利用者の公開状態・アプリ管理者の権限を設定する。 */
-export async function setUserState(username: string, state: { profileState?: "public" | "hidden"; appManager?: boolean }) {
+type UserState = {
+  profileState?: "public" | "hidden"; appManager?: boolean; baseRole?: "student" | "alumni"; isGraduating?: boolean;
+};
+
+/** 利用者の公開状態・アプリ管理者の権限・所属区分を設定する。 */
+export async function setUserState(username: string, state: UserState) {
   const userId = await userIdOf(username);
   await withDatabase((client) => client.query(
-    `UPDATE community_users SET profile_state = coalesce($2, profile_state), app_manager = coalesce($3, app_manager)
-      WHERE user_id = $1`,
-    [userId, state.profileState ?? null, state.appManager ?? null],
+    `UPDATE community_users SET profile_state = coalesce($2, profile_state), app_manager = coalesce($3, app_manager),
+      base_role = coalesce($4, base_role), is_graduating = coalesce($5, is_graduating) WHERE user_id = $1`,
+    [userId, state.profileState ?? null, state.appManager ?? null, state.baseRole ?? null, state.isGraduating ?? null],
   ));
+}
+
+const temporaryPrefix = "e2e-graduating-";
+
+/** 卒業予定の在校生を、指定した学科で一時的に作る。終わったら `removeGraduatingStudents` で消す。 */
+export async function createGraduatingStudents(department: string, count: number) {
+  await withDatabase(async (client) => {
+    for (let index = 0; index < count; index++) {
+      const userId = temporaryPrefix + String(index).padStart(3, "0");
+      await client.query('INSERT INTO "user" (id, name, email) VALUES ($1, $1, $2)', [userId, `${userId}@example.invalid`]);
+      await client.query(`INSERT INTO community_users (user_id, base_role, is_graduating, eligibility_status, provisioning_status)
+        VALUES ($1, 'student', true, 'verified', 'ready')`, [userId]);
+      const { rows } = await client.query<{ id: string }>(
+        "INSERT INTO profile_revisions (user_id, revision_no, display_name, department) VALUES ($1, 1, $1, $2) RETURNING id",
+        [userId, department],
+      );
+      await client.query("INSERT INTO profiles (user_id, current_revision_id) VALUES ($1, $2)", [userId, rows[0].id]);
+    }
+  });
+}
+
+/** 別の更新があったときと同じように、利用者の版番号だけを進める。 */
+export async function bumpUserVersion(userId: string) {
+  await withDatabase((client) => client.query("UPDATE community_users SET version = version + 1 WHERE user_id = $1", [userId]));
+}
+
+export async function removeGraduatingStudents() {
+  await withDatabase(async (client) => {
+    for (const table of ["graduation_changes", "profiles", "profile_revisions", "community_users"]) {
+      await client.query(`DELETE FROM ${table} WHERE user_id LIKE $1`, [temporaryPrefix + "%"]);
+    }
+    await client.query('DELETE FROM "user" WHERE id LIKE $1', [temporaryPrefix + "%"]);
+  });
 }
 
 /** 再公開申請と、それに関する通知を消し、公開中の状態に戻す（同じDBで繰り返し実行できるようにする）。 */
