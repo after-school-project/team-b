@@ -92,7 +92,7 @@ After School Project は、学校・在校生・卒業生をつなぐコミュ�
 
 - 単体・DB 結合・E2E のテストはそれぞれ `web/tests/unit/`、`web/tests/integration/`、`web/tests/e2e/` に置く。
 - 認可や更新処理の変更では、受入条件に沿って拒否時の返却範囲、競合、再送時の副作用も該当するテストで確認する。
-- PR・`main` の品質 CI は、アプリの品質チェックと使い捨て PostgreSQL での結合テストを実行する。[CI 設定](.github/workflows/quality.yml)
+- PR・`main` の品質 CI は、アプリの品質チェック、使い捨て PostgreSQL での結合テスト、E2E を実行する。[CI 設定](.github/workflows/quality.yml)
 
 ## 変更の提出と公開環境
 

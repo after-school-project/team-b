@@ -81,3 +81,46 @@ jobs:
         run: npm ci
       - name: Database integration tests
         run: npm run test:integration
+
+  e2e:
+    name: Browser end-to-end tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # 実行ごとに破棄するローカルDB専用の値。接続先とロールは tests/e2e/database.ts と scripts/local-db-grants.sql に合わせる。
+      DATABASE_URL_DIRECT: postgresql://team_b:ci-e2e-only@127.0.0.1:5432/team_b_dev
+      DATABASE_URL: postgresql://team_b_app:team_b_app_local@127.0.0.1:5432/team_b_dev
+      BETTER_AUTH_URL: https://127.0.0.1:3100
+      BETTER_AUTH_SECRET: ci-e2e-only-not-used-outside-this-job
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: web/.nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Install Chromium
+        run: npm run test:e2e:install -- --with-deps
+      # E2E専用の使い捨てDBであることを、起動オプションの cluster_name で示す（services の options では渡せない）。
+      - name: Start disposable database
+        run: |
+          docker run -d --name team-b-e2e-db -e POSTGRES_DB=team_b_dev -e POSTGRES_USER=team_b \
+            -e POSTGRES_PASSWORD=ci-e2e-only -p 127.0.0.1:5432:5432 postgres:17.11-alpine \
+            -c cluster_name=team-b-e2e
+          for _ in $(seq 1 60); do
+            docker exec team-b-e2e-db pg_isready -q -h 127.0.0.1 -U team_b -d team_b_dev && exit 0
+            sleep 1
+          done
+          docker logs team-b-e2e-db
+          exit 1
+      - name: Initialize database
+        run: npm run db:setup
+      - name: Browser end-to-end tests
+        run: npm run test:e2e
