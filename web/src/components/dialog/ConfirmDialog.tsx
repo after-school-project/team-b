@@ -39,7 +39,11 @@ export function ConfirmDialog({ open, title, children, confirmLabel, tone = "dan
       className={styles.dialog}
       aria-labelledby={`${id}-title`}
       aria-describedby={`${id}-body`}
-      onClose={() => { if (open) onClose(); }}
+      // Esc では、ダイアログが閉じてから close が届くまでに、元の操作をもう一度実行できる。close だけで状態を戻すと、
+      // その操作では open が変わらず開き直せないため、閉じる前に届く cancel で戻す。
+      onCancel={() => { if (open) onClose(); }}
+      // cancel が届かずに閉じた場合だけ状態を戻す。開き直した後に遅れて届いた close では閉じない。
+      onClose={(event) => { if (open && !event.currentTarget.open) onClose(); }}
     >
       <h2 id={`${id}-title`} className={styles.title}>{title}</h2>
       <div id={`${id}-body`} className={styles.body}>{children}</div>

@@ -114,6 +114,32 @@ test.describe("区分の変更と候補", () => {
       await expect(entries.filter({ hasText: "りく" })).toContainText("実行者：学校管理者（サンプル）");
     });
 
+    test("確認ダイアログを閉じた直後にもう一度操作しても、ダイアログを開き直せる", async ({ page, baseURL }) => {
+      await openAsSchool(page, baseURL!, "/admin/graduation");
+      const dialog = page.getByRole("dialog");
+      await candidate(page, "りく").check();
+      await page.getByRole("button", { name: "選択した人を卒業生に変更する" }).click();
+      await expect(dialog).toBeVisible();
+
+      // Esc と同じ手順（cancel → close）で閉じ、close イベントが届く前に元の操作をもう一度実行する。
+      const closed = await page.evaluate(async () => {
+        const element = document.querySelector<HTMLDialogElement>("dialog[open]")!;
+        element.requestClose();
+        for (let tick = 0; tick < 10; tick++) await Promise.resolve();
+        const wasClosed = !element.open;
+        document.querySelector<HTMLButtonElement>('form[aria-label="卒業生への一括変更"] button[type="submit"]')!.click();
+        return wasClosed;
+      });
+      expect(closed).toBe(true);
+      await expect(dialog.getByRole("heading", { name: "1人を卒業生に変更しますか？" })).toBeVisible();
+
+      // 遅れて届いた close で閉じず、通常どおりキャンセルできる。
+      await page.evaluate(() => new Promise((resolve) => { setTimeout(resolve, 100); }));
+      await expect(dialog).toBeVisible();
+      await dialog.getByRole("button", { name: "キャンセル" }).click();
+      await expect(dialog).toHaveCount(0);
+    });
+
     test("一括変更した利用者を履歴から選び、元の区分へ修正できる。管理権限は維持される", async ({ page, baseURL, browser }) => {
       await openAsSchool(page, baseURL!, "/admin/graduation");
       await candidate(page, "在校生アプリ管理者").check();
