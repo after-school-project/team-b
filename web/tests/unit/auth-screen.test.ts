@@ -69,10 +69,11 @@ describe("ログイン後の画面の入口", () => {
     expect(await redirectedTo("/?tab=home")).toBe("/login");
   });
 
-  it("DB障害などの想定外の失敗はログイン画面へ送らずにそのまま失敗させる", async () => {
-    const failure = new Error("db down");
-    mocks.resolveRequestAccess.mockRejectedValue(failure);
-    await expect(requireScreenViewer("/")).rejects.toBe(failure);
+  it("DB障害などの想定外の失敗はログイン画面へ送らず、元の例外の内容を含まない失敗にする", async () => {
+    mocks.resolveRequestAccess.mockRejectedValue(new Error("db down"));
+    await expect(requireScreenViewer("/")).rejects.toMatchObject({
+      name: "ScreenReadError", message: expect.not.stringContaining("db down"),
+    });
     expect(mocks.redirect).not.toHaveBeenCalled();
   });
 });

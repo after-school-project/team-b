@@ -6,6 +6,7 @@ import { ApiError } from "@/api/response";
 import type { ScreenSearchParams } from "@/auth/screen";
 import { AppShell } from "@/components/app-shell/AppShell";
 import { requireAppScreen } from "@/components/app-shell/screen";
+import { readForScreen } from "@/db/screen-read";
 import { loadUserProfile, type HiddenProfile, type PublicProfile } from "@/profile/public-profile";
 import styles from "./page.module.css";
 
@@ -24,11 +25,9 @@ export default async function UserProfilePage({ params, searchParams }: {
   const { viewer, shell } = await requireAppScreen(`/users/${encodeURIComponent(userId)}`, await searchParams);
   if (!userIdSchema.safeParse(userId).success) notFound();
 
-  // DBクライアントは描画時に読み込む（ビルド時にDB接続情報を必要としない）。
-  const { db } = await import("@/db/client");
   let profile: PublicProfile | HiddenProfile;
   try {
-    profile = await loadUserProfile(db, viewer, userId);
+    profile = await readForScreen((db) => loadUserProfile(db, viewer, userId));
   } catch (error) {
     if (error instanceof ApiError && error.code === "NOT_FOUND") notFound();
     throw error;

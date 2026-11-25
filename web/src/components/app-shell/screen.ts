@@ -4,6 +4,7 @@ import { canEnterAdmin, type AccessReader, type Viewer } from "@/auth/access";
 import { hasAdminScope, type AdminScope } from "@/auth/admin";
 import { requireScreenViewer, type ScreenSearchParams } from "@/auth/screen";
 import { profileRevisions, profiles } from "@/db/schema";
+import { withSafeScreenErrors } from "@/db/screen-read";
 import type { AppShellViewer } from "./navigation";
 
 async function defaultReader(): Promise<AccessReader> {
@@ -41,7 +42,7 @@ export type AppScreen = {
  */
 export async function requireAppScreen(currentPath: string, searchParams?: ScreenSearchParams): Promise<AppScreen> {
   const viewer = await requireScreenViewer(currentPath, searchParams);
-  return { viewer, shell: await loadAppShellViewer(viewer) };
+  return { viewer, shell: await withSafeScreenErrors(() => loadAppShellViewer(viewer)) };
 }
 
 /**

@@ -11,6 +11,7 @@ import type { ScreenSearchParams } from "@/auth/screen";
 import { AdminAccessDenied } from "@/components/app-shell/AdminAccessDenied";
 import { AppShell } from "@/components/app-shell/AppShell";
 import { requireAdminScreen } from "@/components/app-shell/screen";
+import { readForScreen } from "@/db/screen-read";
 import admin from "../admin.module.css";
 import { formatDateTime } from "../labels";
 import { candidateFilterErrors, candidateFilterNames, type CandidateFilterValues } from "./candidate-filters";
@@ -44,10 +45,12 @@ function readParams(searchParams: ScreenSearchParams): Params {
 
 type Loaded<T> = { kind: "ok"; items: T[]; page: PageInfo } | { kind: "invalid"; message: string };
 
-async function load<T>(params: Params, run: () => Promise<{ data: { items: T[] }; page: PageInfo }>): Promise<Loaded<T>> {
+async function load<T>(
+  params: Params, read: Parameters<typeof readForScreen<{ data: { items: T[] }; page: PageInfo }>>[0],
+): Promise<Loaded<T>> {
   if (params.malformed) return { kind: "invalid", message: invalidConditions };
   try {
-    const { data, page } = await run();
+    const { data, page } = await readForScreen(read);
     return { kind: "ok", items: data.items, page };
   } catch (error) {
     if (!(error instanceof ApiError)) throw error;
@@ -93,9 +96,8 @@ async function GraduateView({ viewer, params }: ViewProps) {
   const values = filterValues(params);
   const errors = candidateFilterErrors(values);
   const query = apiUrl({ ...values, mode: "graduate", limit: candidatePageSize });
-  const { db } = await import("@/db/client");
   const result = Object.keys(errors).length ? null
-    : await load(params, async () => listGraduationCandidates(db, viewer, parseGraduationCandidateQuery(query)));
+    : await load(params, async (db) => listGraduationCandidates(db, viewer, parseGraduationCandidateQuery(query)));
   const firstPage = graduationPath("graduate", values);
   return (
     <>
@@ -121,12 +123,12 @@ async function CorrectionView({ viewer, params }: ViewProps) {
   const values = filterValues(params);
   const errors = candidateFilterErrors(values);
   const { cursor, user } = params.values;
-  const { db } = await import("@/db/client");
 
   let selected: GraduationCandidate | "not_found" | null = null;
   if (user) {
     try {
-      selected = userIdSchema.safeParse(user).success ? await loadCorrectionCandidate(db, user) : "not_found";
+      selected = userIdSchema.safeParse(user).success
+        ? await readForScreen((db) => loadCorrectionCandidate(db, user)) : "not_found";
     } catch (error) {
       if (!(error instanceof ApiError) || error.code !== "NOT_FOUND") throw error;
       selected = "not_found";
@@ -135,7 +137,7 @@ async function CorrectionView({ viewer, params }: ViewProps) {
   const candidate = selected === "not_found" ? null : selected;
   const query = apiUrl({ ...values, mode: "correction", cursor });
   const result = Object.keys(errors).length ? null
-    : await load(params, async () => listGraduationCandidates(db, viewer, parseGraduationCandidateQuery(query)));
+    : await load(params, async (db) => listGraduationCandidates(db, viewer, parseGraduationCandidateQuery(query)));
   const firstPage = graduationPath("correction", values);
   return (
     <>
@@ -189,8 +191,7 @@ async function CorrectionView({ viewer, params }: ViewProps) {
 /** 変更履歴：変更前後・実行者・日時を新しい順に表示する。 */
 async function HistoryView({ viewer, params }: ViewProps) {
   const { cursor, userId, batchId } = params.values;
-  const { db } = await import("@/db/client");
-  const result: Loaded<GraduationChangeListItem> = await load(params, async () =>
+  const result: Loaded<GraduationChangeListItem> = await load(params, async (db) =>
     listGraduationChanges(db, viewer, parseGraduationChangeQuery(apiUrl({ cursor, userId, batchId }))));
   const firstPage = graduationPath("history", { userId, batchId });
   return (

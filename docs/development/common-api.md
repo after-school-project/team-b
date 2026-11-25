@@ -119,8 +119,18 @@ export default async function AdminUsersPage({ searchParams }: { searchParams: P
     return <AppShell viewer={screen.shell}><AdminAccessDenied /></AppShell>;
   }
   // ここから管理データを取得する。
+  const users = await readForScreen((db) => listUsers(db, screen.viewer));
 }
 ```
+
+### 画面からのDBの読み取り
+
+Next.jsは、画面（Server Component）の描画中の例外をそのままサーバーログに出します。DBの例外はSQLと引数（セッショントークンや入力値）を含むため、`web/src/app/` の画面では `@/db/client` を直接読み込まず、[`readForScreen`](../../web/src/db/screen-read.ts) を使います（ESLintで確認します）。
+
+- 想定外の失敗は、SQLSTATEなどのコードと呼び出し元だけを持つ `ScreenReadError` に置き換えて投げます。SQL・引数・元の例外は残しません。`ApiError` はそのまま投げるので、404や入力の誤りは画面で扱います。
+- 入口の `requireAppScreen`・`requireAdminScreen` は、同じ置き換えを済ませています。画面以外の場所で画面用のDB処理を追加する場合は `withSafeScreenErrors` を使います。
+- `redirect`・`notFound` は例外で動くため、`readForScreen` の中では呼びません。
+- 想定外の失敗は [`error.tsx`](../../web/src/app/error.tsx)、`notFound` と存在しないURLは [`not-found.tsx`](../../web/src/app/not-found.tsx) に表示されます。`not-found.tsx` はNext.jsがすべてのページと一緒に描画するため、DBやセッションを読まず、共通ナビも表示しません。`notFound` を呼んだ画面のタイトルは、ハイドレーション後に元の画面の `metadata` の値になります（Next.jsの動作）。
 
 ## 所有者・公開範囲による取得制御
 

@@ -7,6 +7,7 @@ import type { ScreenSearchParams } from "@/auth/screen";
 import { AdminAccessDenied } from "@/components/app-shell/AdminAccessDenied";
 import { AppShell } from "@/components/app-shell/AppShell";
 import { requireAdminScreen } from "@/components/app-shell/screen";
+import { readForScreen } from "@/db/screen-read";
 import {
   listProfileReviews, loadProfileReview, parseProfileReviewQuery, type ProfileReview, type ProfileReviewListItem,
 } from "@/profile/profile-reviews";
@@ -41,14 +42,12 @@ export default async function ProfileReviewsPage({ searchParams }: { searchParam
   const reviewParam = single(resolved, "review");
   const status: ReviewStatus = reviewStatuses.find((value) => value === statusParam.value) ?? "pending";
 
-  // DBクライアントは描画時に読み込む（ビルド時にDB接続情報を必要としない）。
-  const { db } = await import("@/db/client");
-
   let selected: ProfileReview | "not_found" | null = null;
   if (reviewParam.value || reviewParam.malformed) {
     const reviewId = reviewParam.malformed ? null : uuid.safeParse(reviewParam.value);
     try {
-      selected = reviewId?.success ? await loadProfileReview(db, viewer, reviewId.data) : "not_found";
+      selected = reviewId?.success
+        ? await readForScreen((db) => loadProfileReview(db, viewer, reviewId.data)) : "not_found";
     } catch (error) {
       if (!(error instanceof ApiError) || error.code !== "NOT_FOUND") throw error;
       selected = "not_found";
@@ -61,7 +60,8 @@ export default async function ProfileReviewsPage({ searchParams }: { searchParam
     const query = new URLSearchParams();
     if (statusParam.value) query.set("status", statusParam.value);
     if (cursorParam.value) query.set("cursor", cursorParam.value);
-    const { data, page } = await listProfileReviews(db, viewer, parseProfileReviewQuery(new URL(`http://app/?${query}`)));
+    const { data, page } = await readForScreen(async (db) =>
+      listProfileReviews(db, viewer, parseProfileReviewQuery(new URL(`http://app/?${query}`))));
     result = { kind: "ok", items: data.items, page };
   } catch (error) {
     if (!(error instanceof ApiError)) throw error;

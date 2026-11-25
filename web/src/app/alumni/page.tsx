@@ -5,6 +5,7 @@ import { ApiError } from "@/api/response";
 import type { ScreenSearchParams } from "@/auth/screen";
 import { AppShell } from "@/components/app-shell/AppShell";
 import { requireAppScreen } from "@/components/app-shell/screen";
+import { readForScreen } from "@/db/screen-read";
 import { parseAlumniQuery, searchAlumni, type PublicProfile } from "@/profile/public-profile";
 import { AlumniResults } from "./alumni-results";
 import { AlumniSearchForm } from "./alumni-search-form";
@@ -49,9 +50,8 @@ export default async function AlumniPage({ searchParams }: { searchParams: Promi
     result = { kind: "fields", errors };
   } else {
     try {
-      // DBクライアントは描画時に読み込む（ビルド時にDB接続情報を必要としない）。
-      const { db } = await import("@/db/client");
-      const { data, page } = await searchAlumni(db, viewer, parseAlumniQuery(new URL(`http://app/alumni?${query}`)));
+      const { data, page } = await readForScreen(async (db) =>
+        searchAlumni(db, viewer, parseAlumniQuery(new URL(`http://app/alumni?${query}`))));
       result = { kind: "ok", items: data.items, page };
     } catch (error) {
       if (!(error instanceof ApiError)) throw error;
