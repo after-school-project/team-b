@@ -344,7 +344,7 @@ describe("API-QA-04 質問の詳細", () => {
     content: null, author: null, resolution: null, version: null, createdAt: null, updatedAt: null, capabilities: noCapabilities,
   };
 
-  it("AC-05 公開中の質問の内容と、閲覧者ごとの操作の可否を返す", async () => {
+  it("AC-05 公開中の質問の内容を返す。まだAPIのない操作は、本人・管理者にも可能として示さない", async () => {
     const questionId = await addQuestion({ title: "題名B", body: "# 見出し", category: "chat" });
     const view = async (viewer: string) => (await getQuestion(viewer, questionId)).body.data!;
     expect(await view("poc_s002")).toEqual({
@@ -352,21 +352,14 @@ describe("API-QA-04 質問の詳細", () => {
       content: { title: "題名B", bodyMarkdown: `# 見出し ${marker}`, category: { code: "chat", name: "雑談" } },
       author: { userId: id("poc_s001"), displayName: "投稿時の表示名" }, resolution: "open", version: 7,
       createdAt: expect.stringMatching(/Z$/), updatedAt: expect.stringMatching(/Z$/),
-      capabilities: { ...noCapabilities, canRespond: true },
+      capabilities: noCapabilities,
     });
-    expect((await view("poc_s001")).capabilities)
-      .toEqual({ ...noCapabilities, canEdit: true, canDelete: true, canRespond: true, canResolve: true });
-    // 管理権限は、他人の質問の編集・解決状態の切替を許可しない。
-    for (const viewer of ["poc_school", "poc_s_mgr"]) {
-      expect((await view(viewer)).capabilities).toEqual({ ...noCapabilities, canRespond: true, canHide: true });
+    for (const viewer of ["poc_s001", "poc_school", "poc_s_mgr", "poc_hidden"]) {
+      expect((await view(viewer)).capabilities, viewer).toEqual(noCapabilities);
     }
-    // プロフィール非表示中は閲覧だけできる。
-    expect((await view("poc_hidden")).capabilities).toEqual(noCapabilities);
   });
 
-  it("プロフィール非表示中の本人は、自分の質問の削除だけができる。アプリ管理者は管理操作もできない", async () => {
-    const own = await addQuestion({ author: "poc_hidden" });
-    expect((await getQuestion("poc_hidden", own)).body.data?.capabilities).toEqual({ ...noCapabilities, canDelete: true });
+  it("プロフィール非表示中のアプリ管理者には、強制非表示の質問の内容を返さない", async () => {
     const questionId = await addQuestion({ hidden: true });
     await target.client.query("UPDATE community_users SET profile_state = 'hidden' WHERE user_id = $1", [id("poc_s_mgr")]);
     try {
@@ -398,29 +391,23 @@ describe("API-QA-04 質問の詳細", () => {
     }
     const content = { title: "非表示の題名" };
     expect((await getQuestion("poc_s001", questionId)).body.data).toMatchObject({
-      publicationState: "hidden", content, version: 7,
-      capabilities: { ...noCapabilities, canEdit: true, canDelete: true, canResolve: true },
+      publicationState: "hidden", content, version: 7, capabilities: noCapabilities,
     });
     for (const viewer of ["poc_school", "poc_s_mgr", "poc_staff_mgr"]) {
       expect((await getQuestion(viewer, questionId)).body.data).toMatchObject({
-        publicationState: "hidden", content, capabilities: { ...noCapabilities, canRestore: true },
+        publicationState: "hidden", content, capabilities: noCapabilities,
       });
     }
   });
 
-  it("AC-06 アプリ管理者の強制非表示の質問は、本人と学校管理者だけに内容を返し、操作の可否も学校管理者だけに示す", async () => {
+  it("AC-06 アプリ管理者の強制非表示の質問は、本人と学校管理者だけに内容を返す", async () => {
     const questionId = await addQuestion({ title: "非表示の題名", author: "poc_s_mgr", hidden: true });
     const { body, text } = await getQuestion("poc_a_mgr", questionId);
     expect(body.data).toEqual({ id: questionId, publicationState: "hidden", ...withheld });
     expect(text).not.toContain("非表示の題名");
     expect((await getQuestion("poc_school", questionId)).body.data)
-      .toMatchObject({ content: { title: "非表示の題名" }, capabilities: { canRestore: true } });
-    expect((await getQuestion("poc_s_mgr", questionId)).body.data)
-      .toMatchObject({ content: { title: "非表示の題名" }, capabilities: { canEdit: true, canRestore: false } });
-    const published = await addQuestion({ author: "poc_s_mgr" });
-    for (const [viewer, canHide] of [["poc_s_mgr", false], ["poc_a_mgr", false], ["poc_school", true]] as const) {
-      expect((await getQuestion(viewer, published)).body.data?.capabilities).toMatchObject({ canHide });
-    }
+      .toMatchObject({ content: { title: "非表示の題名" } });
+    expect((await getQuestion("poc_s_mgr", questionId)).body.data).toMatchObject({ content: { title: "非表示の題名" } });
   });
 
   it("存在しない質問は404、形式の誤ったIDとクエリーは400、大文字のUUIDも受け付ける", async () => {

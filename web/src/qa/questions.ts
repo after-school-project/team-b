@@ -3,7 +3,7 @@ import { z } from "zod";
 import { containing, searchText } from "@/api/list-filters";
 import { createCursorCodec, cursorTimestamp, parseListQuery, queryListPage } from "@/api/pagination";
 import { ApiError } from "@/api/response";
-import { canWriteContent, type AccessReader, type Viewer } from "@/auth/access";
+import type { AccessReader, Viewer } from "@/auth/access";
 import { hasAdminScope, scopeForTarget } from "@/auth/admin";
 import { noCapabilities, type CapabilitySet } from "@/auth/capabilities";
 import { isOwner } from "@/auth/ownership";
@@ -151,7 +151,7 @@ export async function searchQuestions(reader: AccessReader, viewer: Viewer, quer
 
 /**
  * 質問の詳細（API-QA-04）。存在しない質問は 404。削除済み・閲覧できない強制非表示の質問は状態だけを返す。
- * `capabilities` は操作の入口を出せるかを表す。操作そのものの受付は、各操作のAPIで再認可する。
+ * `capabilities` は操作の入口を出せるかを表し、APIのある操作だけを true にする。操作の受付は、各操作のAPIで再認可する。
  */
 export async function loadQuestion(reader: AccessReader, viewer: Viewer, questionId: string): Promise<QuestionView> {
   const [row] = await reader.select({
@@ -188,7 +188,6 @@ export async function loadQuestion(reader: AccessReader, viewer: Viewer, questio
     };
   }
 
-  const writable = canWriteContent(viewer);
   return {
     id: row.id,
     publicationState,
@@ -202,14 +201,7 @@ export async function loadQuestion(reader: AccessReader, viewer: Viewer, questio
     version: row.version,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
-    capabilities: {
-      ...noCapabilities,
-      canEdit: own && writable,
-      canDelete: own,
-      canRespond: writable && publicationState === "public",
-      canResolve: own && writable,
-      canHide: manageable && publicationState === "public",
-      canRestore: manageable && publicationState === "hidden",
-    },
+    // 編集・削除・回答・解決・管理者の非表示などの操作は、まだAPIがない。各操作のAPIを追加するPRで、その操作の条件を加える。
+    capabilities: { ...noCapabilities },
   };
 }
