@@ -8,10 +8,11 @@
 |---|---|
 | Lint, types, unit tests and build | `npm ci` → lint → typecheck → 単体テスト → 本番ビルド |
 | PostgreSQL integration tests | `npm ci` → 使い捨てPostgreSQL 17でDB結合テスト |
+| Browser end-to-end tests | `npm ci` → Chromiumの導入 → 使い捨てPostgreSQL 17の起動・初期化 → 本番ビルドに対するE2E |
 
 Node.jsは `web/.nvmrc` の24.x固定版、依存関係は `web/package-lock.json` を使用します。いずれかのコマンドが失敗するとジョブも失敗します。実行中の同じPRへの更新は古い検査を中止します。
 
-CIはGitHub/Vercel/NeonのSecretsを参照しません。DBジョブの認証情報は実行ごとに破棄するローカルサービス専用です。forkのPRも公開環境の資格情報を使わず検査できます。
+CIはGitHub/Vercel/NeonのSecretsを参照しません。DB結合テストとE2Eの認証情報は、実行ごとに破棄するローカルDB専用です。E2Eのレポート・トレース・スクリーンショットはアップロードしないため、失敗の内容はジョブのログで確認し、必要ならローカルで再現します。forkのPRも公開環境の資格情報を使わず検査できます。
 
 ローカルではアプリコンテナで `npm run check`、DB結合テストは専用Composeを使います。
 
@@ -25,7 +26,7 @@ docker compose -p team-b-quality -f compose.test.yaml down
 
 ### ホストでのE2E
 
-E2E（[Playwright設定](../../web/playwright.config.ts)）は品質CIでは実行しません。`web/` で、ポート3100にビルド済みアプリを起動して確認します。アプリはホストから接続できる初期化済みDBとアプリ用ロールを必要とします。開発Composeの `db` はホストにポートを公開しないため、E2E専用の使い捨てDBをホストの `127.0.0.1:5432` に起動して初期化します。開発Composeの `team_b_dev` とは別のDBで、通常開発のデータには触れません。
+E2E（[Playwright設定](../../web/playwright.config.ts)）は品質CIでも実行します。CIでは並列にせず、失敗したテストを2回まで再試行します（再試行で通ったテストは `flaky` としてログに出ます）。ローカルでは `web/` で、ポート3100にビルド済みアプリを起動して確認します。アプリはホストから接続できる初期化済みDBとアプリ用ロールを必要とします。開発Composeの `db` はホストにポートを公開しないため、E2E専用の使い捨てDBをホストの `127.0.0.1:5432` に起動して初期化します。開発Composeの `team_b_dev` とは別のDBで、通常開発のデータには触れません。
 
 [home.spec.ts](../../web/tests/e2e/home.spec.ts) は seed の利用者で実セッションを作るため、そのDBを初期化したときに生成された seed の認証情報を使います。ホストで `npm run db:setup` を実行すると、Git対象外の `web/.seed/accounts.json` に生成されます。この既定の場所なら `E2E_ACCOUNTS_FILE` は不要です。別のDBの認証情報は、そのDBのパスワードと一致しないため使えません。
 
