@@ -1,0 +1,57 @@
+/* 確認ダイアログ。docs/DESIGN.md §6・§8.4 に従う。 */
+
+.dialog {
+  width: min(480px, calc(100vw - var(--space-8)));
+  max-height: calc(100dvh - var(--space-8));
+  padding: var(--space-6);
+  overflow-y: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-dialog);
+  color: var(--color-text);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-floating);
+}
+
+.dialog::backdrop {
+  background: rgb(28 42 84 / 45%);
+}
+
+.title {
+  margin: 0 0 var(--space-3);
+  font-size: 20px;
+  line-height: 1.5;
+}
+
+.body > * {
+  margin: 0 0 var(--space-3);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.cancelButton,
+.dangerButton {
+  min-height: var(--control-min-size);
+  padding: var(--space-2) var(--space-6);
+  border-radius: var(--radius-control);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.cancelButton {
+  border: 1px solid var(--color-control-border);
+  color: var(--color-primary);
+  background: var(--color-surface);
+}
+
+.dangerButton {
+  border: 1px solid var(--color-danger);
+  color: var(--color-on-primary);
+  background: var(--color-danger);
+}

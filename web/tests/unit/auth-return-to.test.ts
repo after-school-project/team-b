@@ -58,7 +58,9 @@ describe("可変パスを含む画面のルート", () => {
   });
 
   it("実装済みの画面に含まれないルートは、既定では戻り先にしない", () => {
-    expect(implementedScreenRoutes).toEqual(["/", "/me/profile", "/users/[userId]", "/alumni"]);
+    expect(implementedScreenRoutes).toEqual([
+      "/", "/me/profile", "/users/[userId]", "/alumni", "/admin/users/[userId]", "/admin/profile-reviews",
+    ]);
     expect(resolveReturnTo(`/questions/${questionId}`)).toBe("/");
   });
 
@@ -68,6 +70,15 @@ describe("可変パスを含む画面のルート", () => {
     expect(resolveReturnTo("/users/abc/edit")).toBe("/");
     expect(resolveReturnTo("/alumni?q=%E5%8D%92%E6%A5%AD&graduationYear=2026"))
       .toBe("/alumni?q=%E5%8D%92%E6%A5%AD&graduationYear=2026");
+  });
+
+  it("実装済みの管理画面（AD-11・AD-15）は戻り先にし、未実装の管理画面は戻り先にしない", () => {
+    expect(resolveReturnTo("/admin/users/abcDEF_123-x")).toBe("/admin/users/abcDEF_123-x");
+    expect(resolveReturnTo("/admin/profile-reviews?status=all&review=" + questionId))
+      .toBe("/admin/profile-reviews?status=all&review=" + questionId);
+    for (const path of ["/admin", "/admin/users", "/admin/users/a/b", "/admin/profile-reviews/" + questionId]) {
+      expect(resolveReturnTo(path), path).toBe("/");
+    }
   });
 
   it("未定義のパラメーター名を含むルートは設定の誤りとして扱う", () => {

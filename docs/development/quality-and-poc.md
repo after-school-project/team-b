@@ -34,7 +34,8 @@ E2E（[Playwright設定](../../web/playwright.config.ts)）は品質CIでは実�
 ```sh
 # 1. E2E専用の使い捨てDBを起動する。起動に失敗したときに docker logs で原因を確認できるよう、--rm は付けない
 docker run -d --name team-b-e2e-db -e POSTGRES_DB=team_b_dev -e POSTGRES_USER=team_b \
-  -e POSTGRES_PASSWORD='<管理ロールの開発用パスワード>' -p 127.0.0.1:5432:5432 postgres:17.11-alpine
+  -e POSTGRES_PASSWORD='<管理ロールの開発用パスワード>' -p 127.0.0.1:5432:5432 postgres:17.11-alpine \
+  -c cluster_name=team-b-e2e
 
 # 2. 接続情報を設定する
 cd web
@@ -78,6 +79,8 @@ docker rm -f team-b-e2e-db
 `web/.seed/accounts.json` が残っている場合、`db:setup` はそのパスワードを再利用してアカウントを作成します。そのため、DBを作り直しても同じファイルを使えます。
 
 実セッションのテストは、パスワードを画面に入力せず要求コンテキストからサインインし、トレース・スクリーンショット・動画を無効にします。失敗時のレポートにパスワードを残さないためです。`web/.seed/` と `web/test-results/` はコミットしないでください。
+
+[admin-profiles.spec.ts](../../web/tests/e2e/admin-profiles.spec.ts) は、画面からまだ変更できない利用者の状態（アプリ管理者の権限解除など）を、テストの実行環境の `DATABASE_URL` でE2E用DBに直接設定します（[database.ts](../../web/tests/e2e/database.ts)）。繰り返し実行できるよう、テスト用の利用者の再公開申請と通知も削除します。そのため、手順1の `-c cluster_name=team-b-e2e` を付けて起動した使い捨てDB以外では、状態を変更せずに失敗します（ホスト名・DB名だけでは、ポートを公開した開発DBと区別できないため）。また、`DATABASE_URL` が手順2と同じ形（`127.0.0.1:5432` の `team_b_dev`、ロール `team_b_app`、クエリーなし）でなければ、接続せずに失敗します。
 
 ## 接続済みの公開環境
 
