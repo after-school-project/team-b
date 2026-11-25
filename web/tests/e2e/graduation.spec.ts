@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { createGraduatingStudents, removeGraduatingStudents, setUserState, userIdOf } from "./database";
+import { bumpUserVersion, createGraduatingStudents, removeGraduatingStudents, setUserState, userIdOf } from "./database";
 import { canonicalOrigin, signIn } from "./session";
 
 /**
@@ -87,7 +87,10 @@ test.describe("区分の変更と候補", () => {
       await page.keyboard.press("Enter");
       await expect(dialog.getByRole("heading", { name: "2人を卒業生に変更しますか？" })).toBeVisible();
       await expect(dialog.getByRole("list", { name: "変更する人" }).getByRole("listitem")).toHaveCount(2);
-      for (const name of ["りく", "在校生アプリ管理者"]) await expect(dialog.getByText(name, { exact: true })).toBeVisible();
+      // 同じ表示名の人と取り違えないよう、選んだ人のユーザーIDを示す。
+      for (const [name, username] of [["りく", "poc_suspended"], ["在校生アプリ管理者", "poc_s_mgr"]] as const) {
+        await expect(dialog.getByText(`${name}（ID：${await userIdOf(username)}）`, { exact: true })).toBeVisible();
+      }
       // 閉じても送信せず、選択を保つ。
       await page.keyboard.press("Escape");
       await expect(dialog).toHaveCount(0);
@@ -243,11 +246,51 @@ test.describe("区分の変更と候補", () => {
 
   test.describe("多くの候補", () => {
     const department = "E2E確認用の学科";
-    test.beforeAll(async () => {
+    test.beforeEach(async () => {
       await removeGraduatingStudents();
       await createGraduatingStudents(department, 105);
     });
-    test.afterAll(removeGraduatingStudents);
+    test.afterEach(removeGraduatingStudents);
+
+    test("続きの読み込み中に一括変更が確定したら、遅れて届いた応答を使わず、最新の版で続けて変更できる", async ({ page, baseURL }) => {
+      await openAsSchool(page, baseURL!, `/admin/graduation?department=${encodeURIComponent(department)}`);
+      let release = () => {};
+      const released = new Promise<void>((resolve) => { release = resolve; });
+      let fetched = () => {};
+      const oldResponse = new Promise<void>((resolve) => { fetched = resolve; });
+      // 続きの応答は、変更前の内容をサーバーから受け取った後、届くのを遅らせる。
+      await page.route("**/graduation/candidates?*", async (route) => {
+        const response = await route.fetch();
+        const body = await response.body();
+        fetched();
+        await released;
+        // 取得を中止した場合は、応答を返す相手がいない。
+        await route.fulfill({ response, body }).catch(() => {});
+      }, { times: 1 });
+      await page.getByRole("button", { name: "さらに表示" }).click();
+      await oldResponse;
+      // 変更後の一覧に加わる人（051）の版番号を、応答の取得後に進める。
+      await bumpUserVersion("e2e-graduating-051");
+
+      const change = async (...names: string[]) => {
+        for (const name of names) await candidate(page, name).check();
+        await page.getByRole("button", { name: "選択した人を卒業生に変更する" }).click();
+        await page.getByRole("dialog").getByRole("button", { name: "卒業生に変更する" }).click();
+        await expect(page.getByRole("status").filter({ hasText: `${names.length}人を卒業生に変更しました。` })).toBeVisible();
+      };
+      await change("e2e-graduating-000", "e2e-graduating-001");
+      await expect(candidate(page, "e2e-graduating-051")).toBeVisible();
+      release();
+      await page.waitForTimeout(500);
+      await expect(page.getByRole("checkbox", { name: "表示中の50人をすべて選択" })).toBeVisible();
+      await expect(candidate(page, "e2e-graduating-000")).toHaveCount(0);
+
+      await change("e2e-graduating-051");
+      // 再取得した一覧（052 が加わる）を待ってから、続きを読み込む。続きの読み込みは、確定後もそのまま使える。
+      await expect(candidate(page, "e2e-graduating-052")).toBeVisible();
+      await page.getByRole("button", { name: "さらに表示" }).click();
+      await expect(page.getByRole("checkbox", { name: "表示中の100人をすべて選択" })).toBeVisible();
+    });
 
     test("続きを読み込んでも選択を保ち、100人を超える選択は送信せずに案内し、100人までは変更できる", async ({ page, baseURL }) => {
       await openAsSchool(page, baseURL!, `/admin/graduation?department=${encodeURIComponent(department)}`);

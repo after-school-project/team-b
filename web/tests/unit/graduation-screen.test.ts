@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { candidateFilterErrors, type CandidateFilterValues } from "@/app/admin/graduation/candidate-filters";
 import { CandidateSearchForm } from "@/app/admin/graduation/candidate-search-form";
-import { candidatePage, dialogLabel } from "@/app/admin/graduation/graduate-panel";
+import { candidateLabel, candidatePage, mergeCandidates } from "@/app/admin/graduation/graduate-panel";
 import { graduationPath } from "@/app/admin/graduation/graduation-path";
 import { nameLabel, stateLabel } from "@/app/admin/graduation/labels";
 import { graduationBatchSchema, graduationCorrectionSchema } from "@/admin/graduation";
@@ -71,14 +71,20 @@ describe("画面の表示", () => {
     expect(nameLabel(null)).toBe("非表示のプロフィール");
   });
 
-  it("確認ダイアログでは、非表示中の人と同じ表示名の人をIDで区別する", () => {
-    const person = (userId: string, displayName: string | null) => ({
-      userId, displayName, baseRole: "student" as const, isGraduating: true, department: null, entryYear: null, graduationYear: null, version: 1,
-    });
-    const selected = [person("a", "はる"), person("b", "はる"), person("c", "みなと"), person("d", null)];
-    expect(selected.map((item) => dialogLabel(item, selected))).toEqual([
-      "はる（ID：a）", "はる（ID：b）", "みなと", "非表示のプロフィール（ID：d）",
-    ]);
+  const person = (userId: string, displayName: string | null, version = 1) => ({
+    userId, displayName, baseRole: "student" as const, isGraduating: true, department: null, entryYear: null, graduationYear: null, version,
+  });
+
+  it("確認ダイアログでは、同じ表示名の人を選び分けられるよう、必ずIDを併記する", () => {
+    expect([person("a", "はる"), person("b", null)].map(candidateLabel)).toEqual(["はる（ID：a）", "非表示のプロフィール（ID：b）"]);
+  });
+
+  it("続きに同じ人が含まれていれば、位置を保って新しい版だけを使う", () => {
+    const merged = mergeCandidates(
+      [person("a", "あ", 3), person("b", "い", 1)], [person("b", "い（更新後）", 2), person("a", "あ（古い）", 1), person("c", "う")],
+    );
+    expect(merged.map(({ userId, displayName, version }) => [userId, displayName, version]))
+      .toEqual([["a", "あ", 3], ["b", "い（更新後）", 2], ["c", "う", 1]]);
   });
 
   it("続きの候補の応答は、一覧と次のカーソルを読み取れる場合だけ使う", () => {

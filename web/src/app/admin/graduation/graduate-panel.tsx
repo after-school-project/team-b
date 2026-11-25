@@ -18,12 +18,24 @@ type Page = { items: GraduationCandidate[]; nextCursor: string | null };
 /** 表示した時点の対象。版番号が変われば別の対象として扱い、古い選択を引き継がない。 */
 const keyOf = ({ userId, version }: GraduationCandidate) => `${version}:${userId}`;
 
-/** 確認ダイアログの表示名。非表示中の人と、同じ表示名の人が複数いる場合は、IDを併記して区別する。 */
-export function dialogLabel(item: GraduationCandidate, selected: readonly GraduationCandidate[]): string {
-  const name = nameLabel(item.displayName);
-  const ambiguous = item.displayName === null || selected.some(({ userId, displayName }) =>
-    userId !== item.userId && displayName === item.displayName);
-  return ambiguous ? `${name}（ID：${item.userId}）` : name;
+/** 確認ダイアログの表示名。一覧に同じ表示名の人がいても取り違えないよう、必ず利用者IDを併記する。 */
+export function candidateLabel({ userId, displayName }: GraduationCandidate): string {
+  return `${nameLabel(displayName)}（ID：${userId}）`;
+}
+
+/**
+ * 一覧と続きを合わせる。並行更新で一覧の位置が変わると続きに同じ人が含まれることがあるため、IDで重複を除き（API設計書 §3）、
+ * 新しい版の内容を使う。
+ */
+export function mergeCandidates(
+  initial: readonly GraduationCandidate[], more: readonly GraduationCandidate[],
+): GraduationCandidate[] {
+  const byId = new Map<string, GraduationCandidate>();
+  for (const item of [...initial, ...more]) {
+    const existing = byId.get(item.userId);
+    if (!existing || existing.version < item.version) byId.set(item.userId, item);
+  }
+  return [...byId.values()];
 }
 
 /** 候補の取得（API-GR-01）の応答から、一覧と次のカーソルを取り出す。読み取れなければ null。 */
@@ -52,14 +64,16 @@ export function GraduatePanel({ items: initialItems, nextCursor: initialCursor, 
   const [error, setError] = useState<string | null>(null);
   const [alert, setAlert] = useState<{ message: string; reload: boolean } | null>(null);
   const [confirming, setConfirming] = useState(false);
+  /** 確認ダイアログに示した対象。表示中に一覧が変わっても、示した対象だけを送る。 */
+  const [confirmed, setConfirmed] = useState<readonly GraduationCandidate[]>([]);
   const [done, setDone] = useState<{ count: number; batchId: string | null } | null>(null);
   const alertBox = useRef<HTMLDivElement>(null);
   const result = useRef<HTMLParagraphElement>(null);
+  /** 進行中の続きの取得。変更が確定したら中止し、変更前に取得した内容を使わない。 */
+  const loadingRequest = useRef<AbortController | null>(null);
   const { sending, submit } = useSubmission("/api/v1/admin/graduation/changes", ["applied"]);
 
-  // 並行更新で一覧の位置が変わり、続きに同じ人が含まれることがあるため、IDで重複を除く（API設計書 §3）。
-  const byId = new Map([...initialItems, ...more?.items ?? []].map((item) => [item.userId, item]));
-  const items = [...byId.values()].filter((item) => !changedKeys.has(keyOf(item)));
+  const items = mergeCandidates(initialItems, more?.items ?? []).filter((item) => !changedKeys.has(keyOf(item)));
   const selected = items.filter((item) => selectedKeys.has(keyOf(item)));
   const nextCursor = more ? more.nextCursor : initialCursor;
   const allSelected = items.length > 0 && selected.length === items.length;
@@ -70,6 +84,7 @@ export function GraduatePanel({ items: initialItems, nextCursor: initialCursor, 
   useEffect(() => {
     if (done) result.current?.focus();
   }, [done]);
+  useEffect(() => () => loadingRequest.current?.abort(), []);
 
   function toggle(targets: readonly GraduationCandidate[], checked: boolean) {
     setError(null);
@@ -84,21 +99,35 @@ export function GraduatePanel({ items: initialItems, nextCursor: initialCursor, 
   }
 
   async function loadMore() {
-    if (loading || !nextCursor) return;
+    if (loadingRequest.current || !nextCursor) return;
+    const controller = new AbortController();
+    loadingRequest.current = controller;
     setLoading(true);
     setLoadError(null);
     let page: Page | null = null;
     try {
       const query = new URLSearchParams(apiQuery);
       query.set("cursor", nextCursor);
-      const response = await fetch(`/api/v1/admin/graduation/candidates?${query}`);
+      const response = await fetch(`/api/v1/admin/graduation/candidates?${query}`, { signal: controller.signal });
       page = response.ok ? candidatePage(await response.json()) : null;
     } catch {
       // 下で、読み込めなかったことを案内する。
     }
+    // 中止した取得の結果は、受け取り終えていても使わない。
+    if (controller.signal.aborted) return;
+    loadingRequest.current = null;
     if (page) setMore({ items: [...more?.items ?? [], ...page.items], nextCursor: page.nextCursor });
     else setLoadError("続きを読み込めませんでした。もう一度お試しください。");
     setLoading(false);
+  }
+
+  /** 進行中の続きの取得を中止し、読み込み済みの続きも捨てる。 */
+  function discardMore() {
+    loadingRequest.current?.abort();
+    loadingRequest.current = null;
+    setLoading(false);
+    setLoadError(null);
+    setMore(null);
   }
 
   function onSubmit(event: FormEvent<HTMLFormElement>) {
@@ -109,12 +138,14 @@ export function GraduatePanel({ items: initialItems, nextCursor: initialCursor, 
       : selected.length > graduationBatchLimit
         ? `一度に変更できるのは${graduationBatchLimit}人までです。選択を減らしてください。（現在${selected.length}人）` : null;
     setError(found);
-    if (!found) setConfirming(true);
+    if (found) return;
+    setConfirmed(selected);
+    setConfirming(true);
   }
 
   async function onConfirm() {
     setConfirming(false);
-    const targets = selected;
+    const targets = confirmed;
     const outcome = await submit({
       targets: targets.map(({ userId, version }) => ({ userId, expectedVersion: version })), confirmed: true,
     });
@@ -122,7 +153,7 @@ export function GraduatePanel({ items: initialItems, nextCursor: initialCursor, 
     if (outcome.kind === "done") {
       setChangedKeys((current) => new Set([...current, ...targets.map(keyOf)]));
       setSelectedKeys(new Set());
-      setMore(null);
+      discardMore();
       setDone({ count: targets.length, batchId: outcome.resourceId });
       router.refresh();
       return;
@@ -209,7 +240,7 @@ export function GraduatePanel({ items: initialItems, nextCursor: initialCursor, 
 
       <ConfirmDialog
         open={confirming}
-        title={`${selected.length}人を卒業生に変更しますか？`}
+        title={`${confirmed.length}人を卒業生に変更しますか？`}
         confirmLabel="卒業生に変更する"
         tone="primary"
         onConfirm={onConfirm}
@@ -217,9 +248,7 @@ export function GraduatePanel({ items: initialItems, nextCursor: initialCursor, 
       >
         <p>所属を「在校生（卒業予定）」から「卒業生」に変更します。投稿・プロフィール・管理権限はそのままです。</p>
         <ul className={styles.targets} tabIndex={0} aria-label="変更する人">
-          {selected.map((item) => (
-            <li key={item.userId}>{dialogLabel(item, selected)}</li>
-          ))}
+          {confirmed.map((item) => <li key={item.userId}>{candidateLabel(item)}</li>)}
         </ul>
       </ConfirmDialog>
     </section>

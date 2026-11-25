@@ -100,6 +100,11 @@ export async function createGraduatingStudents(department: string, count: number
   });
 }
 
+/** 別の更新があったときと同じように、利用者の版番号だけを進める。 */
+export async function bumpUserVersion(userId: string) {
+  await withDatabase((client) => client.query("UPDATE community_users SET version = version + 1 WHERE user_id = $1", [userId]));
+}
+
 export async function removeGraduatingStudents() {
   await withDatabase(async (client) => {
     for (const table of ["graduation_changes", "profiles", "profile_revisions", "community_users"]) {
