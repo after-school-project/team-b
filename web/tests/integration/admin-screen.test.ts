@@ -184,8 +184,13 @@ it.each([
   try {
     const error: unknown = await requireAdminScreen("school", "/admin/graduation").catch((reason: unknown) => reason);
     const output = inspect(error, { depth: null, showHidden: true });
-    expect(output).toContain("ScreenReadError: 画面の表示に必要な処理に失敗しました。（42P01）");
-    for (const value of [session.token, userId("poc_school"), "select"]) expect(output).not.toContain(value);
+    // 失敗時の表示に実際のトークンなどが出ないよう、値そのものではなく判定結果だけを比べる。
+    expect({
+      replaced: output.includes("ScreenReadError: 画面の表示に必要な処理に失敗しました。（42P01）"),
+      token: output.includes(session.token),
+      userId: output.includes(userId("poc_school")),
+      sql: output.includes("select"),
+    }).toEqual({ replaced: true, token: false, userId: false, sql: false });
   } finally {
     await target.client.query(`ALTER TABLE "${table}_unavailable" RENAME TO "${table}"`);
   }

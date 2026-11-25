@@ -11,7 +11,10 @@ const eslintConfig = defineConfig([
     ignores: ["src/app/api/**"],
     rules: {
       "no-restricted-syntax": ["error", {
-        selector: ":matches(ImportExpression, ImportDeclaration[importKind!='type'])[source.value='@/db/client']",
+        // エイリアス・相対パスのどちらの読み込みも対象にする（/ は /。セレクターの正規表現には / を書けない）。
+        selector: ":matches(ImportExpression, ImportDeclaration[importKind!='type'], "
+          + "ExportNamedDeclaration[exportKind!='type'], ExportAllDeclaration[exportKind!='type'])"
+          + "[source.value=/(^|\\u002F)db\\u002Fclient(\\.[jt]s)?$/]",
         message: "画面からDBを読むときは @/db/screen-read の readForScreen を使ってください。",
       }],
     },
