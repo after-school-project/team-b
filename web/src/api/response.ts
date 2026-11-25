@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { describeFailure } from "./safe-failure";
 
 const errors = {
   BAD_REQUEST: [400, "リクエストの形式が正しくありません。"],
@@ -86,7 +87,7 @@ export function createApiResponse() {
       const [status, message] = errors[error.code];
       if (status >= 500) {
         // Error causes may contain SQL, parameters, or connection strings.
-        console.error("業務APIの処理に失敗しました。", { requestId, code: error.code });
+        console.error("業務APIの処理に失敗しました。", { requestId, code: error.code, ...describeFailure(reason) });
       }
       const fields = status < 500 ? (error.options.fields ?? []) : [];
       const headers = new Headers();

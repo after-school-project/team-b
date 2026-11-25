@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { inspect } from "node:util";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
@@ -270,8 +271,14 @@ it("セッションのDB削除が失敗したらCookieを保持し、復旧後�
     FOR EACH ROW EXECUTE FUNCTION fail_session_delete();
   `);
   try {
-    const failed = await send(logoutPath, { cookie, body: {} });
+    const { response: failed, lines, output } = await withCapturedLog(() => send(logoutPath, { cookie, body: {} }));
     expect(failed.status).toBe(503);
+    expect(lines.length).toBe(1);
+    expect({
+      summary: output.includes("status: 503") && output.includes("cause: 'P0001'"),
+      cookie: output.includes(cookie),
+      detail: /simulated|delete from|params/i.test(output),
+    }).toEqual({ summary: true, cookie: false, detail: false });
     expect(failed.headers.getSetCookie()).toHaveLength(0);
     expect((await getAuthSession(new Headers({ Cookie: cookie })))?.user.id).toBe(userId);
   } finally {
@@ -311,5 +318,72 @@ it("入力長違反とSDK独自のログインオプションを拒否する", a
     const response = await send(loginPath, { body, ip: "192.0.2.12" });
     expect(response.status).toBe(400);
     expect(response.headers.getSetCookie()).toHaveLength(0);
+  }
+});
+
+/** 認証APIの処理中に、サーバーログ（標準の出力先すべて）へ出た内容。 */
+async function withCapturedLog(run: () => Promise<Response>) {
+  const lines: unknown[][] = [];
+  const spies = (["error", "warn", "log", "info", "debug"] as const).map((method) =>
+    vi.spyOn(console, method).mockImplementation((...values: unknown[]) => { lines.push(values); }));
+  try {
+    const response = await run();
+    return { response, lines, output: inspect(lines, { depth: null, showHidden: true }) };
+  } finally {
+    for (const spy of spies) spy.mockRestore();
+  }
+}
+
+it.each([
+  ["ログインの利用者の取得", loginPath, "user", 500, "42P01"],
+  ["ログインの認証情報の取得", loginPath, "account", 500, "42P01"],
+  ["ログインのセッション作成", loginPath, "session", 500, "42P01"],
+  ["セッション確認", sessionPath, "session", 500, "42P01"],
+  ["回数制限", loginPath, "rate_limit", 500, "42P01"],
+])("%sでDBエラーが起きると、原因の種類だけをログに残し、SQL・引数・秘密値を出さない", async (_label, path, table, status, cause) => {
+  const { userId, cookie } = await logIn("poc_a001", "192.0.2.21");
+  const { rows: [session] } = await target.client.query<{ token: string }>(
+    "SELECT token FROM session WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1", [userId],
+  );
+  await target.client.query(`ALTER TABLE "${table}" RENAME TO "${table}_unavailable"`);
+  let captured: Awaited<ReturnType<typeof withCapturedLog>>;
+  try {
+    captured = await withCapturedLog(() => path === sessionPath ? send(path, { cookie, ip: "192.0.2.21" })
+      : send(path, { ip: "192.0.2.21", body: { username: "poc_a001", password: credentials.poc_a001 } }));
+  } finally {
+    await target.client.query(`ALTER TABLE "${table}_unavailable" RENAME TO "${table}"`);
+  }
+  const { response, lines, output } = captured;
+  expect(response.status).toBe(status);
+  expect(await response.json()).toEqual({ code: "AUTH_REQUEST_FAILED" });
+  // 失敗時の表示に実際の秘密値が出ないよう、値そのものではなく判定結果だけを比べる。
+  expect({
+    entries: lines.length,
+    summary: output.includes("認証APIの処理に失敗しました。") && output.includes(`path: '/api/auth${path}'`)
+      && output.includes(`status: ${status}`) && output.includes(`cause: '${cause}'`),
+    callers: /'at [^']+'/.test(output),
+    token: output.includes(session.token),
+    cookie: output.includes(cookie),
+    userId: output.includes(userId),
+    username: output.includes("poc_a001"),
+    password: output.includes(credentials.poc_a001),
+    ip: output.includes("192.0.2.21"),
+    sql: /select "|insert into|delete from|params/i.test(output),
+  }).toEqual({
+    entries: 1, summary: true, callers: true, token: false, cookie: false, userId: false, username: false,
+    password: false, ip: false, sql: false,
+  });
+});
+
+it("ログインの失敗・未認証など、利用者側の拒否はログに残さない", async () => {
+  for (const run of [
+    () => send(loginPath, { ip: "192.0.2.22", body: { username: "poc_a001", password: "wrong-password-value" } }),
+    () => send(loginPath, { ip: "192.0.2.22", body: { username: "no_such_user", password: "wrong-password-value" } }),
+    () => send(loginPath, { ip: "192.0.2.22", body: { username: "poc_a001", password: "short" } }),
+    () => send(sessionPath, { ip: "192.0.2.22" }),
+    () => send("/sign-up/email", { ip: "192.0.2.22", body: {} }),
+  ]) {
+    const { lines } = await withCapturedLog(run);
+    expect(lines.length).toBe(0);
   }
 });
