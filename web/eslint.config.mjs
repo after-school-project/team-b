@@ -11,7 +11,7 @@ const eslintConfig = defineConfig([
     ignores: ["src/app/api/**"],
     rules: {
       "no-restricted-syntax": ["error", {
-        // エイリアス・相対パスのどちらの読み込みも対象にする（/ は /。セレクターの正規表現には / を書けない）。
+        // エイリアス・相対パスのどちらの読み込みも対象にする。セレクターの正規表現にはスラッシュを書けないため、文字コードで表す。
         selector: ":matches(ImportExpression, ImportDeclaration[importKind!='type'], "
           + "ExportNamedDeclaration[exportKind!='type'], ExportAllDeclaration[exportKind!='type'])"
           + "[source.value=/(^|\\u002F)db\\u002Fclient(\\.[jt]s)?$/]",
