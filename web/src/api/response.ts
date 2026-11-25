@@ -38,9 +38,10 @@ export type PageInfo = {
 export class ApiError extends Error {
   constructor(
     readonly code: ErrorCode,
-    readonly options: { fields?: readonly FieldError[]; allow?: string; retryAfterSeconds?: number } = {},
+    /** `cause` は、5xx のログで原因を区別するための例外。応答には含めない。 */
+    readonly options: { fields?: readonly FieldError[]; allow?: string; retryAfterSeconds?: number; cause?: Error } = {},
   ) {
-    super(errors[code][1]);
+    super(errors[code][1], options.cause && { cause: options.cause });
   }
 }
 
