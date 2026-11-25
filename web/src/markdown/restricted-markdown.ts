@@ -34,7 +34,7 @@ export const markdownLimits = {
   nodes: 5_000,
   /** 1つの段落・見出しの中の `*`・`_`・`[`・`<`・バッククォートの数。 */
   markersPerParagraph: 500,
-  /** 参照リンクで展開されるURLの合計の長さ。 */
+  /** 参照リンクで展開されるURLの合計の長さ。正規化後のURLも数える。 */
   referencedUrlLength: 10_000,
 } as const;
 
@@ -49,7 +49,7 @@ const httpUrl = /^https?:\/\//i;
  * 元のURLを渡すと、検証したものとは別のホストへのリンクや、開けないリンクになる。
  */
 export function linkHref(url: string): string | null {
-  return httpUrl.test(url) && URL.canParse(url) ? new URL(url).href : null;
+  return httpUrl.test(url) ? URL.parse(url)?.href ?? null : null;
 }
 
 /** 同じ記号と空白だけの行（水平線）。リストの入れ子としては数えない。 */
@@ -124,21 +124,23 @@ export function exceedsParseLimits(value: string): boolean {
 
 /** 解析した構文木が、描画してはいけない要素数・深さ・展開量かを判定する。 */
 export function exceedsTreeLimits(root: MarkdownNode): boolean {
-  const definitions = new Map<string, string>();
+  const definitions = new Map<string, number>();
   const references: string[] = [];
   let nodes = 0;
   for (const { node, depth } of walkMarkdown(root)) {
     nodes += 1;
     if (nodes > markdownLimits.nodes || depth > markdownLimits.depth) return true;
     const { identifier = "" } = node;
-    // 同じ名前の定義は最も長いURLで数え、どの定義が使われても上限を超えないようにする。
-    if (node.type === "definition" && (definitions.get(identifier) ?? "").length < node.url!.length) {
-      definitions.set(identifier, node.url!);
+    if (node.type === "definition") {
+      // 表示するURL（日本語などは%表記で長くなる）と、描画の途中で使う元のURLの、長い方で数える。
+      const length = Math.max(node.url!.length, linkHref(node.url!)?.length ?? 0);
+      // 同じ名前の定義は最も長いもので数え、どの定義が使われても上限を超えないようにする。
+      definitions.set(identifier, Math.max(definitions.get(identifier) ?? 0, length));
     }
     if (node.type === "linkReference" || node.type === "imageReference") references.push(identifier);
   }
   let length = 0;
-  for (const identifier of references) length += definitions.get(identifier)?.length ?? 0;
+  for (const identifier of references) length += definitions.get(identifier) ?? 0;
   return length > markdownLimits.referencedUrlLength;
 }
 

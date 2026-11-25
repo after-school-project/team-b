@@ -231,6 +231,32 @@ describe("制限Markdownの上限", () => {
     }
   });
 
+  it("参照リンクで展開されるURLは、表示するhrefの長さで数える", () => {
+    const { referencedUrlLength } = markdownLimits;
+    // 日本語1文字はUTF-8の3バイトで、hrefでは9文字になる。「https://e.com/」は14文字。
+    const source = (japanese: number, ascii: number) =>
+      `[a]: https://e.com/${"あ".repeat(japanese)}${"a".repeat(ascii)}\n\n${"[a]\n\n".repeat(10)}`;
+    const length = (value: string) =>
+      [...body(value).matchAll(/ href="([^"]*)"/g)].reduce((total, [, href]) => total + href.length, 0);
+    const within = source(100, 86);
+    expect(length(within)).toBe(referencedUrlLength);
+    expect(markdownProblems(within)).toEqual([]);
+    for (const over of [source(100, 87), source(110, 0)]) {
+      expect(markdownProblems(over)).toEqual(["too_complex"]);
+      expect(isPlain(over)).toBe(true);
+    }
+  });
+
+  it.each([
+    ["後の定義の方が長い", `[a]: https://e.com/\n[a]: https://e.com/${"あ".repeat(200)}\n\n${"[a]\n\n".repeat(10)}`],
+    ["前の定義の方が長い", `[a]: https://e.com/${"あ".repeat(200)}\n[a]: https://e.com/\n\n${"[a]\n\n".repeat(10)}`],
+    ["正規化で短くなる", `[a]: https://e.com/${"a/../".repeat(800)}\n\n${"[a]\n\n".repeat(600)}`],
+    ["日本語のホスト", `[a]: https://${"日本.".repeat(200)}example/\n\n${"[a]\n\n".repeat(10)}`],
+  ])("参照リンクで展開されるURLが上限を超える本文を拒否する: %s", (_name, value) => {
+    expect(markdownProblems(value)).toEqual(["too_complex"]);
+    expect(isPlain(value)).toBe(true);
+  });
+
   it("文中の強調を分けて並べた本文も、構文木全体の要素数で拒否する", () => {
     const value = Array.from({ length: 40 }, () => "*a*b".repeat(60)).join("\n\n");
     expect(markdownProblems(value)).toEqual(["too_complex"]);
