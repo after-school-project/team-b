@@ -2,10 +2,11 @@ import { inspect } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /** E2Eの状態の設定（tests/e2e/database.ts）を、使い捨てDBとして起動したサーバーだけで実行すること。 */
-const server = vi.hoisted(() => ({ clusterName: "", queries: [] as string[], connected: 0, ended: 0 }));
+const server = vi.hoisted(() => ({ clusterName: "", queries: [] as string[], configs: [] as unknown[], connected: 0, ended: 0 }));
 
 vi.mock("pg", () => ({
   Client: class {
+    constructor(config: unknown) { server.configs.push(config); }
     async connect() { server.connected += 1; }
     async end() { server.ended += 1; }
     async query(text: string) {
@@ -17,7 +18,7 @@ vi.mock("pg", () => ({
 }));
 
 beforeEach(() => {
-  Object.assign(server, { clusterName: "", queries: [], connected: 0, ended: 0 });
+  Object.assign(server, { clusterName: "", queries: [], configs: [], connected: 0, ended: 0 });
   // 通常の開発DBをホストに公開した場合と同じ、使い捨てDBと区別できない接続先。
   vi.stubEnv("DATABASE_URL", "postgresql://team_b_app:dummy-secret@127.0.0.1:5432/team_b_dev");
 });
@@ -63,6 +64,8 @@ describe("E2E用DBの操作", () => {
     // 管理ロール・パスワードなし。
     "postgresql://team_b:dummy-secret@127.0.0.1:5432/team_b_dev",
     "postgresql://team_b_app@127.0.0.1:5432/team_b_dev",
+    // パスワードとして復号できない値。
+    "postgresql://team_b_app:dummy-secret%zz@127.0.0.1:5432/team_b_dev",
     // URLとして解釈できない値。
     "postgresql://" + account + "[invalid/team_b_dev",
     "dummy-secret",
@@ -76,6 +79,23 @@ describe("E2E用DBの操作", () => {
     // 例外の付加情報（URL の解析エラーの input など）にも接続情報を含めない。
     expect(inspect(error, { showHidden: true, depth: 5 })).not.toContain("dummy-secret");
     expect(server.connected).toBe(0);
+  });
+
+  it.each([
+    ["そのまま", (url: string) => url],
+    // URL は前後の空白を除いて解釈するが、pg は先頭に空白のある値を別のホスト（base）への接続と解釈する。
+    ["先頭の空白", (url: string) => " " + url],
+    ["末尾の空白", (url: string) => url + " "],
+    ["途中の改行", (url: string) => url.replace("gres", "g" + String.fromCharCode(10) + "res")],
+    ["パスの省略記法", (url: string) => url.replace("/team_b_dev", "/x/../team_b_dev")],
+  ] as const)("検証した値だけを pg に渡し、接続URLの文字列を渡さない：%s", async (_label, change) => {
+    const { disposableClusterName, userIdOf } = await import("../e2e/database");
+    server.clusterName = disposableClusterName;
+    vi.stubEnv("DATABASE_URL", change("postgresql://team_b_app:dummy%40secret@127.0.0.1:5432/team_b_dev"));
+    await userIdOf("poc_staff");
+    expect(server.configs).toEqual([
+      { host: "127.0.0.1", port: 5432, database: "team_b_dev", user: "team_b_app", password: "dummy@secret" },
+    ]);
   });
 
   it("DATABASE_URL がなければ接続しない", async () => {

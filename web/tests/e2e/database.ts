@@ -15,19 +15,25 @@ class NotDisposableDatabase extends Error {}
 const refusal = "DATABASE_URL の接続先がE2E専用の使い捨てDBではないため、状態を変更しません。"
   + "docs/development/quality-and-poc.md の手順でDBを起動してください。";
 
+/** 手順どおりに起動したE2E用DBの、アプリ用ロールの接続先。 */
+const e2eDatabase = { host: "127.0.0.1", port: 5432, database: "team_b_dev", user: "team_b_app" } as const;
+
 /**
- * 接続URLが、手順どおりに起動したE2E用DBのアプリ用ロールの接続だけを表すか。
- * `pg` はクエリーの `host`・`port`・`user` などで接続先を上書きし、ポートの省略時は `PGPORT` を使うため、クエリーと
- * ポートの省略を認めない。解析エラーは接続情報を含み得るため、例外にせず拒否する。
+ * 接続URLがE2E用DBの接続先だけを表すことを確認し、`pg` に渡す接続設定を返す。それ以外は null。
+ * URL の文字列を `pg` に渡すと、クエリーによる上書きや、先頭の空白の解釈の違いで、確認した接続先と別のサーバーへ接続し得る。
+ * そのため、接続先は固定値、パスワードは確認した URL から取り出した値だけを渡す。
+ * 解析エラーは接続情報を含み得るため、例外にせず拒否する。
  */
-function isE2eDatabaseUrl(value: string): boolean {
+function e2eDatabaseConfig(value: string) {
   try {
     const url = new URL(value);
-    return url.protocol === "postgresql:" && url.hostname === "127.0.0.1" && url.port === "5432" &&
-      url.pathname === "/team_b_dev" && url.username === "team_b_app" && url.password !== "" &&
-      url.search === "" && url.hash === "";
+    const password = decodeURIComponent(url.password);
+    const matches = url.protocol === "postgresql:" && url.hostname === e2eDatabase.host &&
+      url.port === String(e2eDatabase.port) && url.pathname === "/" + e2eDatabase.database &&
+      url.username === e2eDatabase.user && password !== "" && url.search === "" && url.hash === "";
+    return matches ? { ...e2eDatabase, password } : null;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -35,8 +41,9 @@ async function withDatabase<T>(run: (client: Client) => Promise<T>): Promise<T> 
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) throw new Error("E2E用DBの DATABASE_URL を設定してください。");
   // 別のサーバーへ資格情報を送らないよう、接続先は接続する前に確認する。
-  if (!isE2eDatabaseUrl(connectionString)) throw new NotDisposableDatabase(refusal);
-  const client = new Client({ connectionString });
+  const config = e2eDatabaseConfig(connectionString);
+  if (!config) throw new NotDisposableDatabase(refusal);
+  const client = new Client(config);
   try {
     await client.connect();
     const { rows } = await client.query<{ name: string }>("SELECT current_setting('cluster_name') AS name");
