@@ -184,6 +184,34 @@ describe("SEC-01：未承認・未認証・停止中の利用者はQ&Aの一覧�
 });
 
 describe("API-QA-01 カテゴリー", () => {
+  it("AC-01 マイグレーションだけで4件が揃い、開発seedの値と一致する。既存の行のID・名称は変えない", async () => {
+    const empty = await isolatedDatabase();
+    try {
+      await migrateDatabase(empty.client);
+      const { rows } = await empty.client.query<{ code: string; name: string }>(
+        "SELECT code, name FROM qa_categories ORDER BY array_position(ARRAY['career', 'learning', 'projects', 'chat'], code)");
+      expect(rows).toEqual(qaCategoryFixtures);
+    } finally {
+      await empty.dispose();
+    }
+
+    // マイグレーションより前に、同じコードの行を別の名称で作っていた環境。
+    const existing = await isolatedDatabase();
+    try {
+      await existing.client.query("CREATE TABLE qa_categories (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), code text NOT NULL UNIQUE, name text NOT NULL)");
+      const { rows: [{ id }] } = await existing.client.query<{ id: string }>(
+        "INSERT INTO qa_categories (code, name) VALUES ('chat', '仮の名称') RETURNING id");
+      const sql = await readFile(join("drizzle", "0003_qa-categories.sql"), "utf8");
+      await existing.client.query(sql);
+      await existing.client.query(sql); // 同じ処理を繰り返しても増えない。
+      const { rows } = await existing.client.query("SELECT id, code, name FROM qa_categories ORDER BY code");
+      expect(rows).toHaveLength(4);
+      expect(rows.find((row) => row.code === "chat")).toEqual({ id, code: "chat", name: "仮の名称" });
+    } finally {
+      await existing.dispose();
+    }
+  });
+
   it("AC-01 4件を設計書の順に返し、初期データと一致する。ほかのカテゴリーは含めない", async () => {
     await target.client.query("INSERT INTO qa_categories (code, name) VALUES ('other', '対象外')");
     try {

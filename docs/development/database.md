@@ -84,7 +84,7 @@ docker compose exec app npm run db:reset
 docker compose run --rm app npm run db:reset
 ```
 
-リセットは `public` と `drizzle` のスキーマを削除し、全マイグレーション、権限設定、seedの順に実行します。架空アカウント10件、カテゴリ4件、プロフィール、Q&A、お知らせ・イベントの公開版と申請、通報・証拠、通知、監査などを再作成します。手動で追加したデータやアカウントの変更は消去されます。`.seed/accounts.json` は保持し、開発用パスワードを再利用します。ファイルがない場合だけ生成します。
+リセットは `public` と `drizzle` のスキーマを削除し、全マイグレーション、権限設定、seedの順に実行します。Q&Aのカテゴリー4件はマイグレーションで投入します。seedは架空アカウント10件、プロフィール、Q&A、お知らせ・イベントの公開版と申請、通報・証拠、通知、監査などを再作成します。手動で追加したデータやアカウントの変更は消去されます。`.seed/accounts.json` は保持し、開発用パスワードを再利用します。ファイルがない場合だけ生成します。
 
 URLはローカルの `team_b:5432/team_b_dev` に限定し、実接続先のDB名とロールも照合します。リセットには `NODE_ENV=development` とCompose内の `LOCAL_DATABASE_RESET=team-b-compose-local` が必要です。Production、Vercel、Neon、異なるDB・ロール・ポート、URLへの追加パラメーターでは実行できません。これらの設定をPoC環境へコピーしないでください。
 

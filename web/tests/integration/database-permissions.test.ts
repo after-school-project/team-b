@@ -61,7 +61,9 @@ it("アプリ用ロールは全31テーブルを読み書きでき、監査は�
   } finally { await app.query("ROLLBACK"); }
   await verifyApplicationRoundTrip(app);
   await verifyApplicationRoundTrip(app);
-  expect((await app.query("SELECT count(*)::int AS count FROM qa_categories")).rows[0].count).toBe(0);
+  // 確認用の行は残さず、マイグレーションで投入したカテゴリー4件だけが残る。
+  expect((await app.query("SELECT code FROM qa_categories ORDER BY code")).rows.map((row) => row.code))
+    .toEqual(["career", "chat", "learning", "projects"]);
 });
 
 it.each([
