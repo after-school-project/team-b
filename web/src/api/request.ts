@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { authOrigin } from "../auth/web-config";
 import { reasonMaxLength } from "./input-limits";
-import { ApiError } from "./response";
+import { ApiError, type FieldError } from "./response";
 
 export const maxJsonBytes = 128 * 1024;
 const idempotencyKey = /^[A-Za-z0-9_-]{8,128}$/;
@@ -104,6 +104,11 @@ export async function readJson<T extends z.ZodRawShape>(request: Request, schema
       if (issue.code === "unrecognized_keys") {
         // Do not echo arbitrary sender-supplied keys.
         return { path, code: "unknown_field", message: "未定義の項目が含まれています。" };
+      }
+      // 入力項目ごとに決めた固定の案内（送信された値を含まない）。
+      if (issue.code === "custom" && issue.params?.fieldError) {
+        const { code, message } = issue.params.fieldError as Omit<FieldError, "path">;
+        return { path, code, message };
       }
       return { path, code: issue.code, message: "入力値を確認してください。" };
     });

@@ -1,0 +1,78 @@
+.body,
+.plain {
+  overflow-wrap: anywhere;
+}
+
+.plain {
+  white-space: pre-wrap;
+}
+
+.body > :first-child {
+  margin-top: 0;
+}
+
+.body > :last-child {
+  margin-bottom: 0;
+}
+
+.body :is(p, ul, ol, blockquote, pre) {
+  margin: 0 0 var(--space-4);
+}
+
+.body :is(h2, h3, h4, h5, h6) {
+  margin: var(--space-6) 0 var(--space-2);
+  color: var(--color-heading);
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.body :is(h5, h6) {
+  font-size: 16px;
+}
+
+.body :is(ul, ol) {
+  padding-left: var(--space-6);
+}
+
+.body li :is(p, ul, ol) {
+  margin-bottom: var(--space-1);
+}
+
+.body blockquote {
+  padding-left: var(--space-3);
+  border-left: 3px solid var(--color-border);
+  color: var(--color-text-muted);
+}
+
+/* 深い入れ子では字下げを狭め、6段目からは字下げをやめて、狭い画面でも横にはみ出さないようにする。 */
+.body :is(blockquote, ul, ol) :is(blockquote, ul, ol) :is(blockquote, ul, ol) {
+  padding-left: var(--space-3);
+}
+
+.body :is(blockquote, ul, ol) :is(blockquote, ul, ol) :is(blockquote, ul, ol) :is(blockquote, ul, ol) :is(blockquote, ul, ol) :is(blockquote, ul, ol) {
+  padding-left: 0;
+  border-left: 0;
+  list-style-position: inside;
+}
+
+.body :is(pre, code) {
+  font-family: ui-monospace, Consolas, Menlo, monospace;
+  font-size: 14px;
+  background: var(--color-surface-subtle);
+  border-radius: var(--radius-card);
+}
+
+.body code {
+  padding: 0 var(--space-1);
+}
+
+/* 横スクロールではなく折り返し、キーボードだけでも全体を読めるようにする。 */
+.body pre {
+  padding: var(--space-3);
+  white-space: pre-wrap;
+}
+
+.body pre code {
+  padding: 0;
+}
