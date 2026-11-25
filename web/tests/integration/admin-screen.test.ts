@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { inspect } from "node:util";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
@@ -167,5 +168,30 @@ it.each([
     expect(await redirectOf(() => requireAdminScreen("school", "/admin/audit-logs"))).toBe("/login");
   } finally {
     await setUser("poc_school", restore);
+  }
+});
+
+it.each([
+  ["セッションの確認", "session"],
+  ["利用状態の確認", "community_users"],
+  ["表示名の取得", "profiles"],
+])("%sでDBエラーが起きても、セッショントークン・利用者ID・SQLを含まない例外にする", async (_label, table) => {
+  await openAs("poc_school");
+  const { rows: [session] } = await target.client.query<{ token: string }>(
+    "SELECT token FROM session WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1", [userId("poc_school")],
+  );
+  await target.client.query(`ALTER TABLE "${table}" RENAME TO "${table}_unavailable"`);
+  try {
+    const error: unknown = await requireAdminScreen("school", "/admin/graduation").catch((reason: unknown) => reason);
+    const output = inspect(error, { depth: null, showHidden: true });
+    // 失敗時の表示に実際のトークンなどが出ないよう、値そのものではなく判定結果だけを比べる。
+    expect({
+      replaced: output.includes("ScreenReadError: 画面の表示に必要な処理に失敗しました。（42P01）"),
+      token: output.includes(session.token),
+      userId: output.includes(userId("poc_school")),
+      sql: output.includes("select"),
+    }).toEqual({ replaced: true, token: false, userId: false, sql: false });
+  } finally {
+    await target.client.query(`ALTER TABLE "${table}_unavailable" RENAME TO "${table}"`);
   }
 });

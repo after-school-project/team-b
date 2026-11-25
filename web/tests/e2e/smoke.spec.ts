@@ -20,7 +20,15 @@ test("未認証でホームを開くと、許可した戻り先だけを付け�
   await expect(page).toHaveURL("/login?returnTo=%2F%3Ftab%3Dhome");
 });
 
-test("存在しないページは404を返す", async ({ request }) => {
-  const response = await request.get("/not-a-real-route");
-  expect(response.status()).toBe(404);
+test("存在しないページは404と日本語の案内を返し、キーボードでホームへの導線を使える", async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  const response = await page.goto("/not-a-real-route");
+  expect(response?.status()).toBe(404);
+  await expect(page).toHaveTitle("ページが見つかりません | After School Project");
+  await expect(page.getByRole("heading", { level: 1, name: "ページが見つかりません" })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("link", { name: "ホームへ戻る" })).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL("/login");
 });

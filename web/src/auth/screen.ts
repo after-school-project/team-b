@@ -2,6 +2,7 @@ import "server-only";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { ApiError } from "@/api/response";
+import { withSafeScreenErrors } from "@/db/screen-read";
 import { resolveRequestAccess, type Viewer } from "./access";
 import { loginPathFor } from "./return-to";
 
@@ -25,12 +26,15 @@ function withQuery(path: string, searchParams: ScreenSearchParams = {}): string 
  * - 発行・学校確認未完了、停止中：ログイン画面（同じ入口）へ。入口が `/me` で利用準備中・停止の案内とログアウトを表示する。
  * - 利用中：DBから読んだ最新の Viewer を返す。プロフィール状態・管理権限による制限は各画面で判定する。
  *
+ * DB障害などの想定外の失敗は、SQL・引数（セッショントークンを含む）をログに出さない `ScreenReadError` として失敗させる。
+ *
  * レイアウトはクライアント側の画面遷移で再実行されないため、判定はレイアウトではなくページごとに行う。
  */
 export async function requireScreenViewer(currentPath: string, searchParams?: ScreenSearchParams): Promise<Viewer> {
+  const requestHeaders = await headers();
   let access;
   try {
-    access = await resolveRequestAccess(await headers());
+    access = await withSafeScreenErrors(() => resolveRequestAccess(requestHeaders));
   } catch (error) {
     if (error instanceof ApiError && error.code === "AUTH_REQUIRED") {
       redirect(loginPathFor(withQuery(currentPath, searchParams)));

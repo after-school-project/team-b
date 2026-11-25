@@ -8,6 +8,7 @@ import type { ScreenSearchParams } from "@/auth/screen";
 import { AdminAccessDenied } from "@/components/app-shell/AdminAccessDenied";
 import { AppShell } from "@/components/app-shell/AppShell";
 import { requireAdminScreen } from "@/components/app-shell/screen";
+import { readForScreen } from "@/db/screen-read";
 import styles from "../../admin.module.css";
 import { baseRoleLabels } from "../../labels";
 import { HideProfilePanel } from "./hide-profile-panel";
@@ -33,11 +34,9 @@ export default async function AdminUserPage({ params, searchParams }: {
   if (access === "denied") return <AppShell viewer={shell}><AdminAccessDenied /></AppShell>;
   if (!userIdSchema.safeParse(userId).success) notFound();
 
-  // DBクライアントは描画時に読み込む（ビルド時にDB接続情報を必要としない）。
-  const { db } = await import("@/db/client");
   let user: AdminUserOverview;
   try {
-    user = await loadAdminUser(db, viewer, userId);
+    user = await readForScreen((db) => loadAdminUser(db, viewer, userId));
   } catch (error) {
     if (error instanceof ApiError && error.code === "NOT_FOUND") notFound();
     throw error;
