@@ -1,3 +1,4 @@
+import { inspect } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /** E2Eの状態の設定（tests/e2e/database.ts）を、使い捨てDBとして起動したサーバーだけで実行すること。 */
@@ -44,11 +45,36 @@ describe("E2E用DBの操作", () => {
     expect(server.queries.filter((text) => text.startsWith("DELETE"))).toHaveLength(2);
   });
 
-  it.each(["db.example.com:5432/team_b_dev", "127.0.0.1:5432/other"])("ローカルのE2E用DBでない接続先 %s には接続しない", async (location) => {
+  const account = "team_b_app:dummy-secret@";
+  it.each([
+    "postgresql://" + account + "db.example.com:5432/team_b_dev",
+    "postgresql://" + account + "localhost:5432/team_b_dev",
+    "postgresql://" + account + "127.0.0.1:5432/other",
+    // ポートの省略は、PGPORT の値が使われるため認めない。
+    "postgresql://" + account + "127.0.0.1/team_b_dev",
+    "postgresql://" + account + "127.0.0.1:6000/team_b_dev",
+    // pg はクエリーの host・port・user・db で接続先を上書きする。
+    "postgresql://" + account + "127.0.0.1:5432/team_b_dev?host=db.example.com",
+    "postgresql://" + account + "127.0.0.1:5432/team_b_dev?port=6000",
+    "postgresql://" + account + "127.0.0.1:5432/team_b_dev?user=team_b",
+    "postgresql://" + account + "127.0.0.1:5432/team_b_dev?sslmode=disable",
+    "postgresql://" + account + "127.0.0.1:5432/team_b_dev#fragment",
+    "socket://" + account + "127.0.0.1:5432/team_b_dev?db=other",
+    // 管理ロール・パスワードなし。
+    "postgresql://team_b:dummy-secret@127.0.0.1:5432/team_b_dev",
+    "postgresql://team_b_app@127.0.0.1:5432/team_b_dev",
+    // URLとして解釈できない値。
+    "postgresql://" + account + "[invalid/team_b_dev",
+    "dummy-secret",
+  ])("E2E用DBの接続先でなければ、接続せずに失敗し、接続情報を出さない：%s", async (url) => {
     const { resetProfileReviews, disposableClusterName } = await import("../e2e/database");
     server.clusterName = disposableClusterName;
-    vi.stubEnv("DATABASE_URL", "postgresql://team_b_app:dummy-secret@" + location);
-    await expect(resetProfileReviews("poc_staff")).rejects.toThrow("使い捨てDBではない");
+    vi.stubEnv("DATABASE_URL", url);
+    const error = await resetProfileReviews("poc_staff").then(() => null, (reason: unknown) => reason);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("使い捨てDBではない");
+    // 例外の付加情報（URL の解析エラーの input など）にも接続情報を含めない。
+    expect(inspect(error, { showHidden: true, depth: 5 })).not.toContain("dummy-secret");
     expect(server.connected).toBe(0);
   });
 

@@ -253,6 +253,8 @@ test.describe("プロフィールの非表示と再公開審査", () => {
     await expect(alert).toBeFocused();
     await alert.getByRole("button", { name: "最新の内容を読み込む" }).click();
     await expect(detail.getByText("修正2", { exact: true })).toBeVisible();
+    // 再読み込み後は、画面が操作を受け付ける（見出しへフォーカスを移す処理が動く）まで待つ。
+    await expect(heading).toBeFocused();
 
     // 却下には理由が必要。
     await manager.getByRole("button", { name: "却下する" }).click();

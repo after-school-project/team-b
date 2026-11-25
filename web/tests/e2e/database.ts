@@ -5,7 +5,7 @@ import { Client } from "pg";
  * 接続には、アプリと同じ `DATABASE_URL`（アプリ用ロール）を使う。準備手順は docs/development/quality-and-poc.md を参照する。
  *
  * 利用者の状態を書き換え、再公開申請と通知を削除するため、使い捨てDBとして起動したサーバーだけで実行する。
- * 接続URLのホスト名・DB名だけでは、ポートを公開した通常の開発DBと区別できないため、サーバー自身の `cluster_name` でも判定する。
+ * 接続先は接続する前に確認する。さらに、接続URLだけでは、ポートを公開した通常の開発DBと区別できないため、サーバー自身の `cluster_name` でも判定する。
  * 既定値は空で、E2E専用のDBを起動するときのオプション（`-c cluster_name=team-b-e2e`）でだけ設定する。
  */
 export const disposableClusterName = "team-b-e2e";
@@ -15,11 +15,27 @@ class NotDisposableDatabase extends Error {}
 const refusal = "DATABASE_URL の接続先がE2E専用の使い捨てDBではないため、状態を変更しません。"
   + "docs/development/quality-and-poc.md の手順でDBを起動してください。";
 
+/**
+ * 接続URLが、手順どおりに起動したE2E用DBのアプリ用ロールの接続だけを表すか。
+ * `pg` はクエリーの `host`・`port`・`user` などで接続先を上書きし、ポートの省略時は `PGPORT` を使うため、クエリーと
+ * ポートの省略を認めない。解析エラーは接続情報を含み得るため、例外にせず拒否する。
+ */
+function isE2eDatabaseUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "postgresql:" && url.hostname === "127.0.0.1" && url.port === "5432" &&
+      url.pathname === "/team_b_dev" && url.username === "team_b_app" && url.password !== "" &&
+      url.search === "" && url.hash === "";
+  } catch {
+    return false;
+  }
+}
+
 async function withDatabase<T>(run: (client: Client) => Promise<T>): Promise<T> {
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) throw new Error("E2E用DBの DATABASE_URL を設定してください。");
-  const { hostname, pathname } = new URL(connectionString);
-  if (hostname !== "127.0.0.1" || pathname !== "/team_b_dev") throw new NotDisposableDatabase(refusal);
+  // 別のサーバーへ資格情報を送らないよう、接続先は接続する前に確認する。
+  if (!isE2eDatabaseUrl(connectionString)) throw new NotDisposableDatabase(refusal);
   const client = new Client({ connectionString });
   try {
     await client.connect();
