@@ -67,7 +67,7 @@ describe("DB・ER設計書の保存契約", () => {
     ]);
     expect(tables.rows.every((row) => row.primary_key)).toBe(true);
     const history = await target.client.query("SELECT * FROM drizzle.__drizzle_migrations");
-    expect(history.rowCount).toBe(3);
+    expect(history.rowCount).toBe(4);
   });
 
   it.each([

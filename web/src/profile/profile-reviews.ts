@@ -9,6 +9,7 @@ import type { CaseWriter } from "@/api/report-evidence";
 import { ApiError } from "@/api/response";
 import type { AccessReader, Viewer } from "@/auth/access";
 import { requireAdminForLockedTarget } from "@/auth/admin";
+import { noCapabilities, type CapabilitySet } from "@/auth/capabilities";
 import { projectOptionalProfileFields, type OptionalProfileField } from "@/auth/visibility";
 import { communityUsers, profileReviews, profileRevisions, profiles } from "@/db/schema";
 import type { ProfileReviewSummary } from "./my-profile";
@@ -117,12 +118,6 @@ export async function listProfileReviews(reader: AccessReader, viewer: Viewer, q
   });
 }
 
-/** API設計書 §5 CapabilitySet。対象外の操作は false。 */
-export type CapabilitySet = Record<
-  "canEdit" | "canDelete" | "canRespond" | "canResolve" | "canWithdraw" | "canResubmit" | "canCancel" | "canReview"
-  | "canHide" | "canRestore", boolean
->;
-
 /** API設計書 §5 ProfileReview。 */
 export type ProfileReview = ProfileReviewSummary & {
   userId: string;
@@ -163,10 +158,6 @@ export async function loadProfileReview(reader: AccessReader, viewer: Viewer, re
     }
   }
 
-  const unavailable: CapabilitySet = {
-    canEdit: false, canDelete: false, canRespond: false, canResolve: false, canWithdraw: false, canResubmit: false,
-    canCancel: false, canReview: false, canHide: false, canRestore: false,
-  };
   return {
     ...toSummary(row),
     userId: row.userId,
@@ -178,7 +169,7 @@ export async function loadProfileReview(reader: AccessReader, viewer: Viewer, re
       graduationYear: row.graduationYear,
       optionalFields,
     },
-    capabilities: { ...unavailable, canReview: row.status === "pending" },
+    capabilities: { ...noCapabilities, canReview: row.status === "pending" },
   };
 }
 

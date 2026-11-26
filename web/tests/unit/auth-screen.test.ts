@@ -46,7 +46,8 @@ describe("ログイン後の画面の入口", () => {
   it.each([
     ["/", "/login"],
     ["/?tab=home", "/login?returnTo=%2F%3Ftab%3Dhome"],
-    ["/questions", "/login"],
+    ["/questions", "/login?returnTo=%2Fquestions"],
+    ["/notices", "/login"],
     ["//example.com/", "/login"],
   ])("未認証で %s を開くと、許可した戻り先だけを付けてログイン画面へ送る", async (path, expected) => {
     mocks.resolveRequestAccess.mockRejectedValue(new ApiError("AUTH_REQUIRED"));
