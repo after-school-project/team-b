@@ -2,12 +2,12 @@
 
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
+import { requestSignOut, signOutError as logoutError } from "@/auth/sign-out";
 import styles from "./page.module.css";
 
 const authenticationError =
   "ログインできませんでした。ログインIDとパスワードを確認し、時間をおいてもう一度お試しください。";
 const processingError = "ログイン処理を完了できませんでした。時間をおいてもう一度お試しください。";
-const logoutError = "ログアウトできませんでした。時間をおいてもう一度お試しください。";
 
 type LoginFormProps = {
   returnTo: string;
@@ -93,20 +93,6 @@ async function fetchAccess(signal?: AbortSignal): Promise<Access> {
   }
   // 5xx・想定外の形式など、利用状態を確認できない。
   return { kind: "unknown" };
-}
-
-/** セッションを失効させる。失効を確認できた（2xx）ときだけ true を返す。 */
-async function requestSignOut(): Promise<boolean> {
-  try {
-    const response = await fetch("/api/auth/sign-out", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: "{}",
-    });
-    return response.ok;
-  } catch {
-    return false;
-  }
 }
 
 export default function LoginForm({ returnTo }: LoginFormProps) {

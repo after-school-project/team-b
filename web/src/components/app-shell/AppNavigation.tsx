@@ -2,7 +2,17 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from "react";
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type KeyboardEvent,
+  type ReactNode,
+  type RefObject,
+} from "react";
+import { requestSignOut, signOutError } from "@/auth/sign-out";
 import {
   ACCOUNT_NAV_ITEMS,
   ADMIN_NAV_ITEM,
@@ -21,6 +31,52 @@ type AppNavigationProps = {
   unreadNotificationCount?: number;
 };
 
+/**
+ * ログアウトの状態。AppShell は画面ごとに描画され、画面移動で AppNavigation が作り直されるため、モジュール単位で一つだけ持つ。
+ * - pending: 要求の応答待ち。二重送信を防ぐ。
+ * - signed-out: 失効を確認済み。ログイン画面へ移動する。
+ * - failed: 失敗した。移動先の画面でもエラーを表示し、メニューを閉じるか再試行するまで保持する。
+ */
+type SignOutStatus = "idle" | "pending" | "signed-out" | "failed";
+
+let signOutStatus: SignOutStatus = "idle";
+const signOutListeners = new Set<() => void>();
+
+function setSignOutStatus(status: SignOutStatus) {
+  signOutStatus = status;
+  signOutListeners.forEach((listener) => listener());
+}
+
+function subscribeSignOutStatus(listener: () => void) {
+  signOutListeners.add(listener);
+  return () => {
+    signOutListeners.delete(listener);
+  };
+}
+
+const getSignOutStatus = () => signOutStatus;
+const getServerSignOutStatus = (): SignOutStatus => "idle";
+
+function isSignOutInProgress(status: SignOutStatus) {
+  return status === "pending" || status === "signed-out";
+}
+
+async function startSignOut() {
+  if (isSignOutInProgress(signOutStatus)) return;
+  setSignOutStatus("pending");
+  if (await requestSignOut()) {
+    setSignOutStatus("signed-out");
+    window.location.replace("/login");
+    return;
+  }
+  setSignOutStatus("failed");
+}
+
+/** 閉じたメニューに前回のログアウト失敗を残さない。 */
+function clearSignOutFailure() {
+  if (signOutStatus === "failed") setSignOutStatus("idle");
+}
+
 export function AppNavigation({ viewer, unreadNotificationCount }: AppNavigationProps) {
   const pathname = usePathname() ?? "/";
   const idPrefix = useId();
@@ -29,11 +85,47 @@ export function AppNavigation({ viewer, unreadNotificationCount }: AppNavigation
 
   const [menuOpen, setMenuOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
+  // 前の画面で始めたログアウトの状態も、描画から購読開始までの変化を含めて反映する。
+  const status = useSyncExternalStore(subscribeSignOutStatus, getSignOutStatus, getServerSignOutStatus);
+  const loggingOut = isSignOutInProgress(status);
+  const logoutMessage = status === "failed" ? signOutError : null;
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const accountButtonRef = useRef<HTMLButtonElement>(null);
   const accountRef = useRef<HTMLDivElement>(null);
 
-  useDismissOnOutsideClick(accountRef, accountOpen, () => setAccountOpen(false));
+  const closeAccountMenu = () => {
+    if (!accountOpen) return;
+    setAccountOpen(false);
+    clearSignOutFailure();
+  };
+  const closeMainMenu = () => {
+    if (!menuOpen) return;
+    setMenuOpen(false);
+    clearSignOutFailure();
+  };
+
+  useDismissOnOutsideClick(accountRef, accountOpen, closeAccountMenu);
+
+  // ログアウト後に「戻る」でキャッシュから復元された場合は、サーバーで認可し直す（未ログインならログイン画面へ移動する）。
+  useEffect(() => {
+    const handlePageShow = (event: PageTransitionEvent) => {
+      if (!event.persisted) return;
+      if (isSignOutInProgress(signOutStatus)) {
+        window.location.reload();
+        return;
+      }
+      fetch("/api/v1/me", { cache: "no-store" })
+        .then((response) => {
+          if (response.status === 401) window.location.reload();
+        })
+        .catch(() => {});
+    };
+    window.addEventListener("pageshow", handlePageShow);
+    return () => window.removeEventListener("pageshow", handlePageShow);
+  }, []);
+
+  // 送信中もボタンのフォーカスを維持し、再送は startSignOut で防ぐ。
+  const signOut = () => void startSignOut();
 
   const unreadLabel = formatUnreadCount(unreadNotificationCount);
   // 未読件数は渡された場合だけ表示する。通知画面の実装状況（導線を押せるか）とは独立させる。
@@ -44,14 +136,14 @@ export function AppNavigation({ viewer, unreadNotificationCount }: AppNavigation
     </span>
   ) : null;
   const closeAll = () => {
-    setMenuOpen(false);
-    setAccountOpen(false);
+    closeMainMenu();
+    closeAccountMenu();
   };
 
   const handleMenuKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (event.key === "Escape" && menuOpen) {
       event.stopPropagation();
-      setMenuOpen(false);
+      closeMainMenu();
       menuButtonRef.current?.focus();
     }
   };
@@ -59,7 +151,7 @@ export function AppNavigation({ viewer, unreadNotificationCount }: AppNavigation
   const handleAccountKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (event.key === "Escape" && accountOpen) {
       event.stopPropagation();
-      setAccountOpen(false);
+      closeAccountMenu();
       accountButtonRef.current?.focus();
     }
   };
@@ -89,7 +181,7 @@ export function AppNavigation({ viewer, unreadNotificationCount }: AppNavigation
           onKeyDown={handleAccountKeyDown}
           onBlur={(event) => {
             if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-              setAccountOpen(false);
+              closeAccountMenu();
             }
           }}
         >
@@ -100,8 +192,9 @@ export function AppNavigation({ viewer, unreadNotificationCount }: AppNavigation
             aria-expanded={accountOpen}
             aria-controls={accountMenuId}
             onClick={() => {
-              setAccountOpen((open) => !open);
-              setMenuOpen(false);
+              if (accountOpen) closeAccountMenu();
+              else setAccountOpen(true);
+              closeMainMenu();
             }}
           >
             マイメニュー
@@ -113,6 +206,11 @@ export function AppNavigation({ viewer, unreadNotificationCount }: AppNavigation
               {viewer.displayName}
             </p>
             <NavList items={ACCOUNT_NAV_ITEMS} pathname={pathname} onNavigate={closeAll} />
+            <SignOutControl
+              busy={loggingOut}
+              error={logoutMessage}
+              onSignOut={signOut}
+            />
           </div>
         </div>
 
@@ -123,8 +221,9 @@ export function AppNavigation({ viewer, unreadNotificationCount }: AppNavigation
           aria-expanded={menuOpen}
           aria-controls={menuId}
           onClick={() => {
-            setMenuOpen((open) => !open);
-            setAccountOpen(false);
+            if (menuOpen) closeMainMenu();
+            else setMenuOpen(true);
+            closeAccountMenu();
           }}
         >
           {menuOpen ? "閉じる" : "メニュー"}
@@ -147,6 +246,11 @@ export function AppNavigation({ viewer, unreadNotificationCount }: AppNavigation
             {viewer.displayName}
           </p>
           <NavList items={ACCOUNT_NAV_ITEMS} pathname={pathname} onNavigate={closeAll} />
+          <SignOutControl
+            busy={loggingOut}
+            error={logoutMessage}
+            onSignOut={signOut}
+          />
         </nav>
 
         {!viewer.canAccessAdmin ? null : isNavItemAvailable(ADMIN_NAV_ITEM) ? (
@@ -163,6 +267,28 @@ export function AppNavigation({ viewer, unreadNotificationCount }: AppNavigation
         )}
       </div>
     </>
+  );
+}
+
+function SignOutControl({
+  busy, error, onSignOut,
+}: {
+  busy: boolean;
+  error: string | null;
+  onSignOut: () => void;
+}) {
+  return (
+    <div className={styles.signOutControl}>
+      {error ? <p className={styles.signOutError} role="alert">{error}</p> : null}
+      <button
+        className={styles.signOutButton}
+        type="button"
+        onClick={() => void onSignOut()}
+        aria-disabled={busy}
+      >
+        {busy ? "ログアウト中..." : "ログアウト"}
+      </button>
+    </div>
   );
 }
 
