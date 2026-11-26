@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { expect, test, type Page } from "@playwright/test";
 import { createQuestions, removeQuestions } from "./database";
-import { signIn } from "./session";
+import { canonicalOrigin, signIn } from "./session";
 
 /**
  * Q&A一覧・検索（QA-01）と質問の詳細（QA-02）を実セッションで確認する（#9 ①③）。
@@ -20,6 +20,80 @@ test.beforeEach(() => {
   marker = `e2e-question-${randomUUID()}`;
 });
 test.afterEach(() => removeQuestions(marker));
+
+test("AC-03・AC-04 モバイルで質問を投稿・編集し、競合時に入力を保持する", async ({ page, baseURL }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await signIn(page, baseURL!, "poc_s001");
+  const origin = canonicalOrigin ?? new URL(baseURL!).origin;
+  await page.context().route(/\/api\/v1\/questions(?:\/[^/?]+)?$/, async (route) => {
+    if (route.request().method() === "GET") return route.continue();
+    await route.fulfill({ response: await route.fetch({ headers: { ...await route.request().allHeaders(), origin } }) });
+  });
+  try {
+    await page.goto("/questions?category=learning");
+    const entry = page.getByRole("link", { name: "質問を投稿" });
+    await entry.focus();
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("heading", { name: "質問の新規作成" })).toBeVisible();
+    await page.getByRole("link", { name: "キャンセル" }).click();
+    await expect(page).toHaveURL("/questions?category=learning");
+    await entry.click();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth))
+      .toBeLessThanOrEqual(0);
+
+    await page.getByRole("textbox", { name: "タイトル" }).fill("新規質問");
+    await page.keyboard.press("Tab");
+    const category = page.getByRole("combobox", { name: "カテゴリー" });
+    await expect(category).toBeFocused();
+    await category.selectOption("learning");
+    await page.keyboard.press("Tab");
+    const body = page.getByRole("textbox", { name: "本文" });
+    await expect(body).toBeFocused();
+    await body.fill("<div>HTML</div>");
+    await page.getByRole("button", { name: "投稿する" }).click();
+    await expect(body).toHaveAccessibleDescription(/HTMLのタグは使えません/);
+    await body.fill(`**質問本文**\n\n${marker}`);
+    await page.getByRole("button", { name: "投稿する" }).click();
+    await expect(page.getByRole("heading", { name: "新規質問" })).toBeVisible();
+    await expect(page.getByText("質問本文", { exact: true })).toBeVisible();
+    await page.getByRole("link", { name: "質問を編集" }).click();
+    await expect(page.getByRole("heading", { name: "質問の編集" })).toBeVisible();
+    const title = page.getByRole("textbox", { name: "タイトル" });
+    await expect(title).toHaveValue("新規質問");
+    await expect(category).toHaveValue("learning");
+
+    const otherTab = await page.context().newPage();
+    try {
+      await otherTab.goto(page.url());
+      await otherTab.getByRole("textbox", { name: "タイトル" }).fill("先に保存した質問");
+      await otherTab.getByRole("button", { name: "保存する" }).click();
+      await expect(otherTab.getByRole("heading", { name: "先に保存した質問" })).toBeVisible();
+    } finally {
+      await otherTab.close();
+    }
+    await title.fill("保存前の入力");
+    await page.getByRole("button", { name: "保存する" }).click();
+    await expect(page.getByRole("main").getByRole("alert")).toContainText("質問が更新されています");
+    await expect(title).toHaveValue("保存前の入力");
+    await page.getByRole("button", { name: "最新の内容を読み込む" }).click();
+    await expect(title).toHaveValue("先に保存した質問");
+  } finally {
+    await removeQuestions(marker, "poc_s001");
+  }
+});
+
+test("AC-03 他人の編集画面とプロフィール非表示中の新規投稿を制限する", async ({ page, baseURL }) => {
+  const [id] = await createQuestions(marker, [{ title: "他の利用者の質問" }]);
+  await signIn(page, baseURL!, "poc_hidden");
+  await page.goto("/questions");
+  await expect(page.getByRole("link", { name: "質問を投稿" })).toHaveCount(0);
+  await page.goto("/questions/new");
+  await expect(page.getByText("プロフィールが非表示の間は、質問を投稿できません。")).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "タイトル" })).toHaveCount(0);
+  await page.goto(`/questions/${id}`);
+  await expect(page.getByRole("link", { name: "質問を編集" })).toHaveCount(0);
+  expect((await page.goto(`/questions/${id}/edit`))?.status()).toBe(404);
+});
 
 test("AC-01 共通ナビから一覧を開き、キーボードだけで検索して質問を開ける", async ({ page, baseURL }) => {
   await signIn(page, baseURL!, "poc_s002");

@@ -92,7 +92,7 @@ type Item = { id: string; title: string; responseCount: number } & Record<string
 type Body = {
   data?: { items?: Item[] } & Record<string, unknown>;
   error?: { code: string };
-  meta: { page?: { totalCount: number; hasMore: boolean; nextCursor: string | null; limit: number } };
+  meta: { replayed?: boolean; page?: { totalCount: number; hasMore: boolean; nextCursor: string | null; limit: number } };
 };
 
 async function result(response: Response) {
@@ -119,6 +119,95 @@ async function getQuestion(viewer: string | null, questionId: string) {
     { params: Promise.resolve({ questionId }) },
   ));
 }
+
+const newQuestionBody = { title: " 質問の題名 ", bodyMarkdown: `**質問** ${marker}`, categoryCode: "learning" };
+
+async function writeQuestion(viewer: string, body: object, questionId?: string, requestKey = randomUUID()) {
+  const path = "/api/v1/questions" + (questionId ? `/${questionId}` : "");
+  const request = new Request(origin + path, {
+    method: questionId ? "PATCH" : "POST",
+    headers: {
+      Cookie: await cookieFor(viewer), Origin: origin,
+      "Content-Type": "application/json", "Idempotency-Key": requestKey,
+    },
+    body: JSON.stringify(body),
+  });
+  return result(questionId
+    ? await questionRoute.PATCH(request, { params: Promise.resolve({ questionId }) })
+    : await questionsRoute.POST(request, {}));
+}
+
+describe("質問の作成・編集（AC-03・AC-04）", () => {
+  it.each(["poc_s001", "poc_a001", "poc_staff"])("公開プロフィールの %s が投稿でき、再送で増えない", async (actor) => {
+    const key = randomUUID();
+    const created = await writeQuestion(actor, newQuestionBody, undefined, key);
+    expect(created.status).toBe(201);
+    const { id: questionId } = created.body.data?.resource as { id: string };
+    expect(created.body.data).toMatchObject({ resource: { type: "question", id: questionId }, state: "public", version: 1 });
+    expect((await getQuestion(actor, questionId)).body.data).toMatchObject({
+      content: { title: "質問の題名", bodyMarkdown: newQuestionBody.bodyMarkdown, category: { code: "learning" } },
+      author: { userId: id(actor) }, capabilities: { canEdit: true },
+    });
+    const replay = await writeQuestion(actor, newQuestionBody, undefined, key);
+    expect(replay.status).toBe(201);
+    expect(replay.body.data).toEqual(created.body.data);
+    expect(replay.body.meta.replayed).toBe(true);
+    const { rowCount } = await target.client.query("SELECT id FROM qa_questions WHERE author_id = $1 AND body_markdown = $2",
+      [id(actor), newQuestionBody.bodyMarkdown]);
+    expect(rowCount).toBe(1);
+  });
+
+  it("本人の編集を1回だけ確定し、古い版を409にする", async () => {
+    const questionId = await addQuestion({ hidden: true });
+    const body = { title: "更新後", categoryCode: "chat", expectedVersion: 7 };
+    const key = randomUUID();
+    const edited = await writeQuestion("poc_s001", body, questionId, key);
+    expect(edited.status).toBe(200);
+    expect(edited.body.data).toMatchObject({ state: "hidden", version: 8 });
+    const replay = await writeQuestion("poc_s001", body, questionId, key);
+    expect(replay.body.meta.replayed).toBe(true);
+    expect(replay.body.data).toEqual(edited.body.data);
+    const stale = await writeQuestion("poc_s001", { ...body, title: "上書き内容" }, questionId);
+    expect(stale.status).toBe(409);
+    expect(stale.body.error?.code).toBe("VERSION_CONFLICT");
+    expect((await getQuestion("poc_s001", questionId)).body.data).toMatchObject({
+      content: { title: "更新後", category: { code: "chat" } }, publicationState: "hidden", version: 8,
+    });
+    await target.client.query("UPDATE qa_questions SET deleted_at = now() WHERE id = $1", [questionId]);
+    expect((await writeQuestion("poc_s001", body, questionId, key)).status).toBe(404);
+  });
+
+  it("他人・削除済み・プロフィール非表示の操作を拒否する", async () => {
+    const questionId = await addQuestion();
+    const deleted = await addQuestion({ deleted: true });
+    const ownedByHidden = await addQuestion({ author: "poc_hidden" });
+    const patch = { title: "更新後", expectedVersion: 7 };
+    for (const [actor, targetId] of [["poc_school", questionId], ["poc_s001", deleted]]) {
+      const denied = await writeQuestion(actor, patch, targetId);
+      expect(denied.status).toBe(404);
+      expect(denied.text).not.toContain(marker);
+    }
+    for (const denied of [await writeQuestion("poc_hidden", newQuestionBody), await writeQuestion("poc_hidden", patch, ownedByHidden)]) {
+      expect(denied.status).toBe(403);
+      expect(denied.body.error?.code).toBe("PROFILE_WRITE_RESTRICTED");
+    }
+    expect((await getQuestion("poc_hidden", ownedByHidden)).body.data?.capabilities).toEqual(noCapabilities);
+  });
+
+  it("必須項目・上限・カテゴリー・制限Markdownを検証する", async () => {
+    const questionId = await addQuestion();
+    expect((await writeQuestion("poc_s001", {}, undefined)).status).toBe(422);
+    expect((await writeQuestion("poc_s001", { expectedVersion: 7 }, questionId)).status).toBe(422);
+    for (const invalid of [
+      { title: "あ".repeat(101) }, { bodyMarkdown: "あ".repeat(10001) }, { categoryCode: "unknown" },
+      { bodyMarkdown: "<div>HTML</div>" }, { bodyMarkdown: "[リンク](javascript:noop)" },
+    ]) {
+      expect((await writeQuestion("poc_s001", { ...newQuestionBody, ...invalid })).status).toBe(422);
+      expect((await writeQuestion("poc_s001", { ...invalid, expectedVersion: 7 }, questionId)).status).toBe(422);
+    }
+    expect((await getQuestion("poc_s001", questionId)).body.data?.version).toBe(7);
+  });
+});
 
 type NewQuestion = {
   title?: string; body?: string; author?: string; category?: string; resolution?: string;
@@ -382,7 +471,8 @@ describe("API-QA-04 質問の詳細", () => {
       createdAt: expect.stringMatching(/Z$/), updatedAt: expect.stringMatching(/Z$/),
       capabilities: noCapabilities,
     });
-    for (const viewer of ["poc_s001", "poc_school", "poc_s_mgr", "poc_hidden"]) {
+    expect((await view("poc_s001")).capabilities).toEqual({ ...noCapabilities, canEdit: true });
+    for (const viewer of ["poc_school", "poc_s_mgr", "poc_hidden"]) {
       expect((await view(viewer)).capabilities, viewer).toEqual(noCapabilities);
     }
   });
@@ -419,7 +509,7 @@ describe("API-QA-04 質問の詳細", () => {
     }
     const content = { title: "非表示の題名" };
     expect((await getQuestion("poc_s001", questionId)).body.data).toMatchObject({
-      publicationState: "hidden", content, version: 7, capabilities: noCapabilities,
+      publicationState: "hidden", content, version: 7, capabilities: { ...noCapabilities, canEdit: true },
     });
     for (const viewer of ["poc_school", "poc_s_mgr", "poc_staff_mgr"]) {
       expect((await getQuestion(viewer, questionId)).body.data).toMatchObject({

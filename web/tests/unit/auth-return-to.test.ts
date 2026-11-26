@@ -60,12 +60,14 @@ describe("可変パスを含む画面のルート", () => {
   it("実装済みの画面に含まれないルートは、既定では戻り先にしない", () => {
     expect(implementedScreenRoutes).toEqual([
       "/", "/me/profile", "/users/[userId]", "/alumni", "/questions", "/questions/[questionId]",
+      "/questions/new", "/questions/[questionId]/edit",
       "/events",
       "/admin/users/[userId]", "/admin/profile-reviews", "/admin/graduation",
+      "/notifications",
     ]);
     expect(resolveReturnTo(`/events/${questionId}`)).toBe("/");
     expect(resolveReturnTo("/events?state=ended")).toBe("/events?state=ended");
-    expect(resolveReturnTo("/questions/new")).toBe("/");
+    expect([resolveReturnTo("/questions/new"), resolveReturnTo(`/questions/${questionId}/edit`)]).toEqual(["/questions/new", `/questions/${questionId}/edit`]);
   });
 
   it("実装済みの可変パスの画面（公開プロフィール）は、既定の許可で戻り先にする（#48 AC-03）", () => {

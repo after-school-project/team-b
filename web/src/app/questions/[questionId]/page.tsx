@@ -36,6 +36,9 @@ export default async function QuestionPage({ params, searchParams }: {
       <div className={styles.page}>
         <p className={styles.back}><Link href="/questions">Q&A一覧へ</Link></p>
         <QuestionDetail question={question} />
+        {question.capabilities.canEdit ? <p className={styles.back}>
+          <Link href={`/questions/${question.id}/edit`}>質問を編集</Link>
+        </p> : null}
         <section className={styles.responses} aria-labelledby="question-responses">
           <h2 id="question-responses" className={styles.sectionTitle}>回答・コメント</h2>
           <p className={styles.pending}>回答・コメントの表示は準備中です。</p>

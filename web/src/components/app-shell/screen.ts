@@ -5,6 +5,7 @@ import { hasAdminScope, type AdminScope } from "@/auth/admin";
 import { requireScreenViewer, type ScreenSearchParams } from "@/auth/screen";
 import { profileRevisions, profiles } from "@/db/schema";
 import { withSafeScreenErrors } from "@/db/screen-read";
+import { countUnreadNotifications } from "@/notifications/notifications";
 import type { AppShellViewer } from "./navigation";
 
 async function defaultReader(): Promise<AccessReader> {
@@ -14,6 +15,7 @@ async function defaultReader(): Promise<AccessReader> {
 /**
  * 共通レイアウトに渡す閲覧者情報を、サーバーで読んだ最新の状態から作る。
  * 表示名は本人プロフィールの現在版。管理導線は管理エリアの入口条件（`canEnterAdmin`）と同じ条件で出す。
+ * 通知の未読件数は、未読件数のAPI（API-NT-02）と同じ条件で数える。停止中の利用者はこの関数まで到達しない。
  */
 export async function loadAppShellViewer(viewer: Viewer, reader?: AccessReader): Promise<AppShellViewer> {
   const database = reader ?? await defaultReader();
@@ -26,7 +28,11 @@ export async function loadAppShellViewer(viewer: Viewer, reader?: AccessReader):
     .where(eq(profiles.userId, viewer.userId));
   // 発行コマンドはプロフィールの現在版まで作ってから利用可能にするため、利用中の利用者には必ずある。
   if (!profile) throw new Error("利用中の利用者のプロフィールが見つかりません。");
-  return { displayName: profile.displayName, canAccessAdmin: canEnterAdmin(viewer) };
+  return {
+    displayName: profile.displayName,
+    canAccessAdmin: canEnterAdmin(viewer),
+    unreadNotificationCount: await countUnreadNotifications(database, viewer),
+  };
 }
 
 export type AppScreen = {

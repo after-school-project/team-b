@@ -4,6 +4,7 @@ import { containing, searchText } from "@/api/list-filters";
 import { createCursorCodec, cursorTimestamp, parseListQuery, queryListPage } from "@/api/pagination";
 import { ApiError } from "@/api/response";
 import type { AccessReader, Viewer } from "@/auth/access";
+import { canWriteContent } from "@/auth/access";
 import { hasAdminScope, scopeForTarget } from "@/auth/admin";
 import { noCapabilities, type CapabilitySet } from "@/auth/capabilities";
 import { isOwner } from "@/auth/ownership";
@@ -201,7 +202,6 @@ export async function loadQuestion(reader: AccessReader, viewer: Viewer, questio
     version: row.version,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
-    // 編集・削除・回答・解決・管理者の非表示などの操作は、まだAPIがない。各操作のAPIを追加するPRで、その操作の条件を加える。
-    capabilities: { ...noCapabilities },
+    capabilities: { ...noCapabilities, canEdit: own && canWriteContent(viewer) },
   };
 }

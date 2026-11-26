@@ -122,6 +122,25 @@
   background: var(--color-primary-hover);
 }
 
+.formPage {
+  display: grid;
+  gap: var(--space-6);
+  max-width: 640px;
+}
+
+.questionBody {
+  composes: input;
+  resize: vertical;
+}
+
+.formLink {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--control-min-size);
+  align-self: flex-start;
+  width: fit-content;
+}
+
 /* 補助操作（文字による操作。docs/DESIGN.md §8.1）。 */
 .textButton {
   min-height: var(--control-min-size);

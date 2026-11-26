@@ -31,12 +31,15 @@ import {
 import { EmptyState, ErrorState, LoadingState } from "@/components/feedback/StateMessage";
 
 /** 共通ナビの導線のうち、実装済みの画面（`implementedScreenRoutes`）。ほかは「準備中」として押せない状態にする。 */
-const implementedNavHrefs = new Set(["/", "/questions", "/events", "/alumni", "/me/profile"]);
+const implementedNavHrefs = new Set(["/", "/questions", "/events", "/alumni", "/me/profile", "/notifications"]);
 
-function renderShell(options: { canAccessAdmin: boolean; pathname?: string; unread?: number }) {
+/** `viewerUnread` は `requireAppScreen` がサーバーで数えた件数、`unread` は開発用プレビューが渡す仮の件数。 */
+function renderShell(options: { canAccessAdmin: boolean; pathname?: string; unread?: number; viewerUnread?: number }) {
   navigation.pathname = options.pathname ?? "/";
   const props: Omit<AppShellProps, "children"> = {
-    viewer: { displayName: "架空 太郎", canAccessAdmin: options.canAccessAdmin },
+    viewer: {
+      displayName: "架空 太郎", canAccessAdmin: options.canAccessAdmin, unreadNotificationCount: options.viewerUnread,
+    },
     unreadNotificationCount: options.unread,
   };
   return renderToStaticMarkup(
@@ -93,7 +96,7 @@ describe("共通ナビゲーションの導線定義", () => {
 });
 
 describe("導線の実装状況", () => {
-  it("実装済みの画面（現在はホーム・Q&A・卒業生検索・マイプロフィール）の導線を押せる状態にする", async () => {
+  it("実装済みの画面（現在はホーム・Q&A・イベント・卒業生検索・マイプロフィール・通知）の導線を押せる状態にする", async () => {
     const actual = await vi.importActual<typeof import("@/components/app-shell/navigation")>(
       "@/components/app-shell/navigation",
     );
@@ -129,12 +132,17 @@ describe("AppShell（未実装の画面がある状態）", () => {
     expect(renderShell({ canAccessAdmin: false })).not.toContain(ADMIN_NAV_ITEM.label);
   });
 
-  it("通知が未実装でも、渡された未読件数は表示する（開発用プレビューで確認できるようにする）", () => {
-    const html = renderShell({ canAccessAdmin: false, unread: 3 });
+  it("通知の導線に、サーバーで数えた未読件数（viewer の値）を表示する", () => {
+    const html = renderShell({ canAccessAdmin: false, viewerUnread: 3 });
+    expect(html).toMatch(/href="\/notifications"[^>]*><span>通知<\/span><span[^>]*><span aria-hidden="true">3<\/span>/);
     expect(html).toContain("（未読3件）");
-    expect(html).not.toContain('href="/notifications"');
-    expect(renderShell({ canAccessAdmin: false, unread: 0 })).not.toContain("未読");
+    expect(renderShell({ canAccessAdmin: false, viewerUnread: 0 })).not.toContain("未読");
     expect(renderShell({ canAccessAdmin: false })).not.toContain("未読");
+  });
+
+  it("開発用プレビューが渡した未読件数は、viewer の値より優先する", () => {
+    expect(renderShell({ canAccessAdmin: false, viewerUnread: 3, unread: 5 })).toContain("（未読5件）");
+    expect(renderShell({ canAccessAdmin: false, viewerUnread: 3, unread: 0 })).not.toContain("未読");
   });
 });
 

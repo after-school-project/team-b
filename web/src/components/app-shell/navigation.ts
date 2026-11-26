@@ -49,6 +49,8 @@ export type AppShellViewer = {
   displayName: string;
   /** 現在有効な管理権限（学校管理者・アプリ管理者）があり、管理機能を利用できるか。 */
   canAccessAdmin: boolean;
+  /** 本人宛ての通知の未読件数（API-NT-02 と同じ条件）。未指定・0件はバッジを表示しない。 */
+  unreadNotificationCount?: number;
 };
 
 /**
