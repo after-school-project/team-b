@@ -151,11 +151,14 @@ function requestSummary(row: typeof noticeRequests.$inferSelect): RequestSummary
 /**
  * 公開版を承認した時刻。審査を経た版だけが値を持ち、職員が直接公開した版は null。
  * 承認済み申請の一意性はDBで保証されないため、結合せずに公開版ごとに1つの値へ集約し、一覧の行と件数をずらさない。
+ * 版は外部キーで同じお知らせに属するため、notice_id でも絞り、notice_id を先頭とする索引で対象のお知らせの申請だけを読む。
  */
 function publicRevisionApprovedAt() {
   return sql<Date | null>`(
     SELECT max(${noticeRequests.decidedAt}) FROM ${noticeRequests}
-    WHERE ${noticeRequests.revisionId} = ${notices.publicRevisionId} AND ${noticeRequests.status} = 'approved'
+    WHERE ${noticeRequests.noticeId} = ${notices.id}
+      AND ${noticeRequests.revisionId} = ${notices.publicRevisionId}
+      AND ${noticeRequests.status} = 'approved'
   )`.mapWith(noticeRequests.decidedAt);
 }
 
