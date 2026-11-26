@@ -85,21 +85,21 @@ describe("お知らせ画面", () => {
     expect(managedHtml).toContain("本人用本文");
   });
 
-  it("本人一覧の状態・並び替えと申請履歴の選択状態を示す", () => {
+  it("本人一覧の状態・並び替えと独立した申請詳細へのリンクを示す", () => {
     const filter = renderToStaticMarkup(createElement(MyNoticeFilter, { state: "pending", sort: "updated_desc" }));
     expect(filter).toContain('<option value="pending" selected="">審査中</option>');
     expect(filter).toContain('<option value="updated_desc" selected="">更新日時の新しい順</option>');
     const history = renderToStaticMarkup(createElement(NoticeRequests, {
       noticeId,
-      selectedId: "request-1",
+      requestCursor: "previous",
       nextPageHref: `/me/notices?notice=${noticeId}&requestCursor=cursor`,
       items: [{
         id: "request-1", resourceId: noticeId, kind: "edit", status: "withdrawn", submittedAt: item.updatedAt,
         decidedAt: null, version: 2, needsDateCorrection: false,
       }],
     }));
-    expect(history).toContain('aria-current="page"');
-    expect(history).toContain("取り下げ");
+    expect(history).toContain(`href="/me/notices?notice=${noticeId}&amp;request=request-1&amp;requestCursor=previous"`);
+    expect(history).toContain("取り下げ済み");
     expect(history).toContain("申請履歴の続きを表示");
   });
 });

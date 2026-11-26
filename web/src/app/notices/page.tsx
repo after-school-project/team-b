@@ -6,7 +6,7 @@ import { AppShell } from "@/components/app-shell/AppShell";
 import { requireAppScreen } from "@/components/app-shell/screen";
 import { readForScreen } from "@/db/screen-read";
 import { parsePublicNoticeQuery, publicNoticeFilters, searchNotices, type NoticeListItem } from "@/notices/notices";
-import { NoticeResults, NoticeSearchForm } from "./components";
+import { NoticeResults, NoticeSearchForm, NoticeSectionNav } from "./components";
 import styles from "./notices.module.css";
 
 export const metadata: Metadata = { title: "お知らせ" };
@@ -54,22 +54,22 @@ export default async function NoticesPage({ searchParams }: { searchParams: Prom
   return (
     <AppShell viewer={shell}>
       <div className={styles.page}>
-        <header className={styles.header}>
+        <NoticeSectionNav current="public" />
+        <header className={styles.pageHeading}>
           <h1 className={styles.title}>お知らせ</h1>
-          <p className={styles.lead}>公開中のお知らせを検索できます。</p>
+          {canCreate ? <Link className={styles.primaryButton} href="/notices/new">お知らせを作成</Link> : null}
         </header>
         <NoticeSearchForm key={firstPageHref} q={q}
           error={result.kind === "keyword" ? result.message : undefined} />
-        {canCreate ? <p><Link className={styles.secondaryLink} href="/notices/new">お知らせを投稿する</Link></p> : null}
         {result.kind === "invalid" ? (
-          <div className={styles.notice} role="alert">
+          <div className={styles.formError} role="alert">
             <p>{result.message}</p>
             {result.cursorExpired ? <Link href={firstPageHref}>最初のページを表示する</Link> : null}
           </div>
         ) : null}
         {result.kind === "ok" ? (
           <NoticeResults items={result.items} page={result.page} filtered={Boolean(q.trim())}
-            continued={Boolean(cursor)} firstPageHref={firstPageHref}
+            continued={Boolean(cursor)} firstPageHref={firstPageHref} search={query.toString()}
             nextPageHref={result.page.nextCursor ? `/notices?${nextQuery}` : null} />
         ) : null}
       </div>

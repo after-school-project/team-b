@@ -12,8 +12,7 @@ import { deletedNoticeRetentionDays, publishedNotice, retainedDeletedNotice } fr
 import { longText, title, uuid } from "@/api/request";
 import { noticeRequests, noticeRevisions, notices } from "@/db/content-schema";
 import { communityUsers, profileRevisions, profiles } from "@/db/schema";
-
-export const NOTICE_CATEGORY = { code: "general", name: "お知らせ（仮）" } as const;
+import { NOTICE_CATEGORY } from "./category";
 
 export type NoticeContent = { title: string; body: string; categoryCode: "general" };
 export type Category = { code: string; name: string };
