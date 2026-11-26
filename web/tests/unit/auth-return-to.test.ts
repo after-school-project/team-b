@@ -61,10 +61,12 @@ describe("可変パスを含む画面のルート", () => {
     expect(implementedScreenRoutes).toEqual([
       "/", "/me/profile", "/users/[userId]", "/alumni", "/questions", "/questions/[questionId]",
       "/questions/new", "/questions/[questionId]/edit",
+      "/events",
       "/admin/users/[userId]", "/admin/profile-reviews", "/admin/graduation",
       "/notifications",
     ]);
     expect(resolveReturnTo(`/events/${questionId}`)).toBe("/");
+    expect(resolveReturnTo("/events?state=ended")).toBe("/events?state=ended");
     expect([resolveReturnTo("/questions/new"), resolveReturnTo(`/questions/${questionId}/edit`)]).toEqual(["/questions/new", `/questions/${questionId}/edit`]);
   });
 
