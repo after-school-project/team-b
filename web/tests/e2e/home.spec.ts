@@ -338,6 +338,53 @@ test("移動先の画面が表示される前にログアウトが失敗して�
   expect(requests).toBe(2);
 });
 
+test("移動先の画面を描画した直後、状態の購読を始める前にログアウトが失敗しても、エラーを表示し再試行できる", async ({ page, baseURL }) => {
+  await signIn(page, baseURL!, "poc_s001");
+  // 1回目のログアウト要求は、移動先の画面が DOM に反映された直後（React の effect より前のマイクロタスク）に 503 で応答する。
+  await page.addInitScript(() => {
+    const originalFetch = window.fetch.bind(window);
+    let intercepted = false;
+    window.fetch = (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (intercepted || new URL(url, location.href).pathname !== "/api/auth/sign-out") return originalFetch(input, init);
+      intercepted = true;
+      return new Promise<Response>((resolve) => {
+        const observer = new MutationObserver(() => {
+          if (![...document.querySelectorAll("h1")].some((heading) => heading.textContent === "マイプロフィール")) return;
+          observer.disconnect();
+          resolve(new Response("{}", { status: 503, headers: { "Content-Type": "application/json" } }));
+        });
+        observer.observe(document, { childList: true, subtree: true });
+      });
+    };
+  });
+  let requests = 0;
+  await page.route("**/api/auth/sign-out", async (route) => {
+    requests += 1;
+    await route.fulfill({ response: await fetchSignOutAtAuthOrigin(route) });
+  });
+  await page.goto("/");
+
+  const accountMenu = page.getByRole("button", { name: "マイメニュー" });
+  await accountMenu.click();
+  await page.getByRole("button", { name: "ログアウト", exact: true }).click();
+  await expect(page.getByRole("button", { name: "ログアウト中..." })).toBeVisible();
+  await page.getByRole("link", { name: "マイプロフィール", exact: true }).click();
+  await expect(page).toHaveURL(/\/me\/profile$/);
+  await expect(page.getByRole("heading", { level: 1, name: "マイプロフィール" })).toBeVisible();
+
+  await accountMenu.click();
+  await expect(page.getByRole("alert").filter({
+    hasText: "ログアウトできませんでした。時間をおいてもう一度お試しください。",
+  })).toBeVisible();
+  const signOut = page.getByRole("button", { name: "ログアウト", exact: true });
+  await expect(signOut).toBeEnabled();
+  expect(requests).toBe(0);
+  await signOut.click();
+  await expect(page).toHaveURL(/\/login$/);
+  expect(requests).toBe(1);
+});
+
 test("ログアウトしたページがキャッシュから復元されたら、再読み込みしてログイン画面へ移す", async ({ page, baseURL }) => {
   await signIn(page, baseURL!, "poc_s001");
   await page.goto("/");
