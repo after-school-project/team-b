@@ -64,7 +64,7 @@ test("キーワードの文字数超過だけを入力欄に案内する", async
   const lengthError = page.getByText("キーワードは100文字以内で入力してください。", { exact: true });
   for (const query of ["limit=0", "state=invalid", "q=" + "a".repeat(100) + "&limit=0"]) {
     await page.goto("/events?" + query);
-    await expect(page.getByRole("alert")).toHaveText("検索条件を確認してください。");
+    await expect(page.getByRole("main").getByRole("alert")).toHaveText("検索条件を確認してください。");
     await expect(lengthError).toHaveCount(0);
   }
   const query = new URLSearchParams({ q: "あ".repeat(101) });
