@@ -31,7 +31,9 @@ import {
 import { EmptyState, ErrorState, LoadingState } from "@/components/feedback/StateMessage";
 
 /** 共通ナビの導線のうち、実装済みの画面（`implementedScreenRoutes`）。ほかは「準備中」として押せない状態にする。 */
-const implementedNavHrefs = new Set(["/", "/questions", "/events", "/alumni", "/me/profile", "/notifications"]);
+const implementedNavHrefs = new Set([
+  "/", "/questions", "/notices", "/events", "/alumni", "/me/profile", "/me/notices", "/notifications",
+]);
 
 /** `viewerUnread` は `requireAppScreen` がサーバーで数えた件数、`unread` は開発用プレビューが渡す仮の件数。 */
 function renderShell(options: { canAccessAdmin: boolean; pathname?: string; unread?: number; viewerUnread?: number }) {
@@ -96,7 +98,7 @@ describe("共通ナビゲーションの導線定義", () => {
 });
 
 describe("導線の実装状況", () => {
-  it("実装済みの画面（現在はホーム・Q&A・イベント・卒業生検索・マイプロフィール・通知）の導線を押せる状態にする", async () => {
+  it("実装済みの画面の導線を押せる状態にする", async () => {
     const actual = await vi.importActual<typeof import("@/components/app-shell/navigation")>(
       "@/components/app-shell/navigation",
     );

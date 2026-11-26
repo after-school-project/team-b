@@ -12,7 +12,7 @@ describe("ログイン後の戻り先", () => {
     "/login",
     "/login?returnTo=/",
     "/api/auth/sign-out",
-    "/notices",
+    "/admin/notices",
     "/\\example.com",
     "/%2F%2Fexample.com",
     "javascript:alert(1)",
@@ -62,6 +62,7 @@ describe("可変パスを含む画面のルート", () => {
       "/", "/me/profile", "/users/[userId]", "/alumni", "/questions", "/questions/[questionId]",
       "/questions/new", "/questions/[questionId]/edit",
       "/events",
+      "/notices", "/notices/[noticeId]", "/notices/new", "/me/notices", "/me/notices/[noticeId]/edit",
       "/admin/users/[userId]", "/admin/profile-reviews", "/admin/graduation",
       "/notifications",
     ]);
@@ -122,7 +123,7 @@ describe("戻り先付きのログイン画面URL", () => {
     expect(loginPathFor("/?tab=home")).toBe("/login?returnTo=%2F%3Ftab%3Dhome");
   });
 
-  it.each([undefined, "/", "//example.com", "/notices"])("既定・許可外の戻り先 %s は付けない", (value) => {
+  it.each([undefined, "/", "//example.com", "/admin/notices"])("既定・許可外の戻り先 %s は付けない", (value) => {
     expect(loginPathFor(value)).toBe("/login");
   });
 });

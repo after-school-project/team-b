@@ -40,8 +40,8 @@ test("ホームに共通レイアウトを表示し、本人メニューに自�
   await expect(page.getByRole("heading", { level: 1, name: "ホーム" })).toBeVisible();
   await expect(page.getByRole("navigation", { name: "主要メニュー" }).getByRole("link", { name: "ホーム" }))
     .toHaveAttribute("aria-current", "page");
-  // 未実装の画面への導線はリンクにしない。
-  await expect(page.getByRole("link", { name: /お知らせ/ })).toHaveCount(0);
+  await expect(page.getByRole("navigation", { name: "主要メニュー" })
+    .getByRole("link", { name: "お知らせ", exact: true })).toHaveAttribute("href", "/notices");
 
   const accountButton = page.getByRole("button", { name: "マイメニュー" });
   await accountButton.click();
