@@ -22,6 +22,21 @@ type AppNavigationProps = {
   unreadNotificationCount?: number;
 };
 
+/**
+ * 進行中のログアウト要求。AppShell は画面ごとに描画され、画面移動で AppNavigation が作り直されるため、
+ * 二重送信の防止をモジュール単位で持つ。成功時は残したままにし、ログイン画面へ移動する。
+ */
+let pendingSignOut: Promise<boolean> | null = null;
+
+function startSignOut(): Promise<boolean> {
+  pendingSignOut ??= requestSignOut().then((signedOut) => {
+    if (signedOut) window.location.replace("/login");
+    else pendingSignOut = null;
+    return signedOut;
+  });
+  return pendingSignOut;
+}
+
 export function AppNavigation({ viewer, unreadNotificationCount }: AppNavigationProps) {
   const pathname = usePathname() ?? "/";
   const idPrefix = useId();
@@ -30,27 +45,66 @@ export function AppNavigation({ viewer, unreadNotificationCount }: AppNavigation
 
   const [menuOpen, setMenuOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
-  const [loggingOut, setLoggingOut] = useState(false);
+  // 画面移動で作り直された場合も、進行中のログアウトを処理中として表示する。
+  const [loggingOut, setLoggingOut] = useState(() => pendingSignOut !== null);
   const [logoutMessage, setLogoutMessage] = useState<string | null>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const accountButtonRef = useRef<HTMLButtonElement>(null);
   const accountRef = useRef<HTMLDivElement>(null);
-  const signOutInFlight = useRef(false);
 
-  useDismissOnOutsideClick(accountRef, accountOpen, () => setAccountOpen(false));
+  // 閉じたメニューに前回のログアウト失敗を残さない。
+  const closeAccountMenu = () => {
+    if (!accountOpen) return;
+    setAccountOpen(false);
+    setLogoutMessage(null);
+  };
+  const closeMainMenu = () => {
+    if (!menuOpen) return;
+    setMenuOpen(false);
+    setLogoutMessage(null);
+  };
+
+  useDismissOnOutsideClick(accountRef, accountOpen, closeAccountMenu);
+
+  // 前の画面で始めたログアウトが失敗した場合も、エラーを表示して再試行できるようにする。
+  useEffect(() => {
+    const request = pendingSignOut;
+    if (!request) return;
+    let active = true;
+    void request.then((signedOut) => {
+      if (!active || signedOut) return;
+      setLoggingOut(false);
+      setLogoutMessage(signOutError);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // ログアウト後に「戻る」でキャッシュから復元された場合は、サーバーで認可し直す（未ログインならログイン画面へ移動する）。
+  useEffect(() => {
+    const handlePageShow = (event: PageTransitionEvent) => {
+      if (!event.persisted) return;
+      if (pendingSignOut) {
+        window.location.reload();
+        return;
+      }
+      fetch("/api/v1/me", { cache: "no-store" })
+        .then((response) => {
+          if (response.status === 401) window.location.reload();
+        })
+        .catch(() => {});
+    };
+    window.addEventListener("pageshow", handlePageShow);
+    return () => window.removeEventListener("pageshow", handlePageShow);
+  }, []);
 
   async function signOut() {
     // 送信中もボタンのフォーカスを維持し、再送はここで防ぐ。
-    if (signOutInFlight.current) return;
-    signOutInFlight.current = true;
+    if (pendingSignOut) return;
     setLoggingOut(true);
     setLogoutMessage(null);
-    const signedOut = await requestSignOut();
-    if (signedOut) {
-      window.location.replace("/login");
-      return;
-    }
-    signOutInFlight.current = false;
+    if (await startSignOut()) return;
     setLoggingOut(false);
     setLogoutMessage(signOutError);
   }
@@ -64,14 +118,14 @@ export function AppNavigation({ viewer, unreadNotificationCount }: AppNavigation
     </span>
   ) : null;
   const closeAll = () => {
-    setMenuOpen(false);
-    setAccountOpen(false);
+    closeMainMenu();
+    closeAccountMenu();
   };
 
   const handleMenuKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (event.key === "Escape" && menuOpen) {
       event.stopPropagation();
-      setMenuOpen(false);
+      closeMainMenu();
       menuButtonRef.current?.focus();
     }
   };
@@ -79,7 +133,7 @@ export function AppNavigation({ viewer, unreadNotificationCount }: AppNavigation
   const handleAccountKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (event.key === "Escape" && accountOpen) {
       event.stopPropagation();
-      setAccountOpen(false);
+      closeAccountMenu();
       accountButtonRef.current?.focus();
     }
   };
@@ -109,7 +163,7 @@ export function AppNavigation({ viewer, unreadNotificationCount }: AppNavigation
           onKeyDown={handleAccountKeyDown}
           onBlur={(event) => {
             if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-              setAccountOpen(false);
+              closeAccountMenu();
             }
           }}
         >
@@ -120,8 +174,9 @@ export function AppNavigation({ viewer, unreadNotificationCount }: AppNavigation
             aria-expanded={accountOpen}
             aria-controls={accountMenuId}
             onClick={() => {
-              setAccountOpen((open) => !open);
-              setMenuOpen(false);
+              if (accountOpen) closeAccountMenu();
+              else setAccountOpen(true);
+              closeMainMenu();
             }}
           >
             マイメニュー
@@ -148,8 +203,9 @@ export function AppNavigation({ viewer, unreadNotificationCount }: AppNavigation
           aria-expanded={menuOpen}
           aria-controls={menuId}
           onClick={() => {
-            setMenuOpen((open) => !open);
-            setAccountOpen(false);
+            if (menuOpen) closeMainMenu();
+            else setMenuOpen(true);
+            closeAccountMenu();
           }}
         >
           {menuOpen ? "閉じる" : "メニュー"}
