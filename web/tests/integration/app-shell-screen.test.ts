@@ -85,6 +85,22 @@ it("プロフィール非表示中のアプリ管理者には管理導線を出�
   expect((await shellFor("poc_a_mgr")).canAccessAdmin).toBe(true);
 });
 
+it("ヘッダーの未読件数は、本人宛ての未読の通知だけを数え、既読にすると次の表示から減る", async () => {
+  const [recipient, other] = [await userId("poc_staff"), await userId("poc_s001")];
+  const before = (await shellFor("poc_staff")).unreadNotificationCount;
+  const insert = (to: string) => target.client.query<{ id: string }>(`
+    INSERT INTO notifications (recipient_id, kind, profile_user_id, event_key, public_message)
+    VALUES ($1, 'profile_hidden', $1, 'shell-test:' || gen_random_uuid(), '定型文') RETURNING id
+  `, [to]);
+  const { rows: [first] } = await insert(recipient);
+  await insert(recipient);
+  await insert(other);
+  expect((await shellFor("poc_staff")).unreadNotificationCount).toBe(before! + 2);
+  await target.client.query("UPDATE notifications SET read_at = now() WHERE id = $1", [first.id]);
+  expect((await shellFor("poc_staff")).unreadNotificationCount).toBe(before! + 1);
+  await target.client.query("DELETE FROM notifications WHERE event_key LIKE 'shell-test:%'");
+});
+
 it("アプリ管理者の権限を解除すると、次の表示から管理導線を出さない", async () => {
   const id = await userId("poc_staff_mgr");
   await target.client.query("UPDATE community_users SET app_manager = false WHERE user_id = $1", [id]);
