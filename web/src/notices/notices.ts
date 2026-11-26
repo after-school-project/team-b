@@ -12,7 +12,7 @@ import { deletedNoticeRetentionDays, publishedNotice, retainedDeletedNotice } fr
 import { longText, title, uuid } from "@/api/request";
 import { noticeRequests, noticeRevisions, notices } from "@/db/content-schema";
 import { communityUsers, profileRevisions, profiles } from "@/db/schema";
-import { NOTICE_CATEGORY } from "./category";
+import { HIDDEN_AUTHOR_NAME, NOTICE_CATEGORY } from "./category";
 
 export type NoticeContent = { title: string; body: string; categoryCode: "general" };
 export type Category = { code: string; name: string };
@@ -125,7 +125,7 @@ const managedCursorPosition = z.tuple([z.string(), uuid]);
 const requestCursorPosition = z.tuple([z.string(), uuid]);
 
 function authorView(userId: string, displayName: string, profileState: "public" | "hidden"): PublicAuthor {
-  return { userId, displayName: profileState === "public" ? displayName : "非公開ユーザー" };
+  return { userId, displayName: profileState === "public" ? displayName : HIDDEN_AUTHOR_NAME };
 }
 
 function noticeContentView(revision: { title: string; body: string; categoryCode: string }): NoticeContent {

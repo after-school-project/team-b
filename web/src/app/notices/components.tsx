@@ -4,6 +4,7 @@ import type { PageInfo } from "@/api/response";
 import type {
   ManagedContent, ManagedNoticeListItem, NoticeListItem, PublicNotice, RequestSummary, ReviewRequest,
 } from "@/notices/notices";
+import { HIDDEN_AUTHOR_NAME } from "@/notices/category";
 import { ConfirmNoticeAction } from "./notice-forms";
 import { myNoticeHref } from "./notice-links";
 import styles from "./notices.module.css";
@@ -136,7 +137,7 @@ export function PublicNoticeDetail({ notice }: { notice: PublicNotice }) {
         <div className={styles.badges}><Origin kind={notice.originKind} /><Badge text={notice.category.name} tone="neutral" /></div>
         <h1 className={styles.title}>{notice.content.title}</h1>
         <p className={styles.meta}>
-          {notice.author.displayName === "非公開ユーザー" ? notice.author.displayName
+          {notice.author.displayName === HIDDEN_AUTHOR_NAME ? notice.author.displayName
             : <Link href={`/users/${encodeURIComponent(notice.author.userId)}`}>{notice.author.displayName}</Link>}
           {" · "}
           <NoticeDate value={notice.firstPublishedAt} />

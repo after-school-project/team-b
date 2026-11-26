@@ -162,8 +162,10 @@ export function NoticeForm(props: FormProps) {
   );
 }
 
-export function ConfirmNoticeAction({ operation, subject, target, version, hasPendingEdit = false }: {
+export function ConfirmNoticeAction({ operation, subject, target, version, hasPendingEdit = false, retentionDays }: {
   operation: "delete" | "withdraw";
+  /** 削除済み本文を閲覧できる日数。サーバー側の `deletedNoticeRetentionDays` を渡す。 */
+  retentionDays?: number;
   subject: string;
   target: string;
   version: number;
@@ -207,7 +209,7 @@ export function ConfirmNoticeAction({ operation, subject, target, version, hasPe
           <p className={styles.dialogSubject}>{subject}</p>
           <p className={styles.lead} id={`notice-${operation}-description`}>
             {deleting
-              ? `削除すると一般公開から外れ、本文は削除から180日未満のみ閲覧できます。${hasPendingEdit ? "審査中の編集申請も同時に取り下げます。" : ""}`
+              ? `削除すると一般公開から外れ、本文は${retentionDays ? `削除から${retentionDays}日未満のみ` : "一定期間のみ"}閲覧できます。${hasPendingEdit ? "審査中の編集申請も同時に取り下げます。" : ""}`
               : "この申請の審査を取り消します。取り下げた内容は申請履歴に残ります。"}
           </p>
           {error ? <p className={styles.formError} role="alert">{error}</p> : null}

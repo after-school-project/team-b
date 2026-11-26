@@ -500,7 +500,7 @@
 }
 
 .confirmDialog::backdrop {
-  background: rgb(28 42 84 / 55%);
+  background: var(--color-backdrop);
 }
 
 .dialogContent {

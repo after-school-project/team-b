@@ -5,6 +5,7 @@ import { uuid } from "@/api/request";
 import { ApiError, type PageInfo } from "@/api/response";
 import type { Viewer } from "@/auth/access";
 import type { ScreenSearchParams } from "@/auth/screen";
+import { deletedNoticeRetentionDays } from "@/auth/visibility";
 import { AppShell } from "@/components/app-shell/AppShell";
 import { requireAppScreen } from "@/components/app-shell/screen";
 import { readForScreen } from "@/db/screen-read";
@@ -140,7 +141,7 @@ async function NoticeDetails({ viewer, params, position }: {
           {notice.capabilities.canDelete ? (
             <div className={styles.removeArea}>
               <ConfirmNoticeAction key={id} operation="delete" subject={title} target={id} version={notice.version}
-                hasPendingEdit={notice.pendingRequest?.kind === "edit"} />
+                hasPendingEdit={notice.pendingRequest?.kind === "edit"} retentionDays={deletedNoticeRetentionDays} />
             </div>
           ) : null}
         </div>
