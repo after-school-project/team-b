@@ -57,7 +57,7 @@ describe("お知らせ画面", () => {
   const managed: ManagedContent = {
     id: noticeId, version: 3, originKind: "alumni", author: item.author, publicationState: "hidden",
     publicContent: { title: "非表示題名", body: "本人用本文", categoryCode: "general" },
-    pendingRequest: null, deletedContent: null, deletedAt: null, retentionExpiresAt: null,
+    pendingRequest: null, deletedContent: null, deletedAt: null, retentionExpiresAt: null, holdingState: null,
     capabilities: { ...noCapabilities, canDelete: true },
   };
 

@@ -1,10 +1,11 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, or, sql } from "drizzle-orm";
 import { ApiError } from "@/api/response";
 import { assertExpectedVersion, commitMutation } from "@/api/mutation";
 import { recordReviewRequestNotifications, reviewRequestRecipients } from "@/api/notifications";
 import type { MutationRequest } from "@/api/request";
 import { authorizeActiveEntry, loadAccessState, requireProfileWritable, requireActive } from "@/auth/access";
 import type { Viewer } from "@/auth/access";
+import { retainedDeletedNotice } from "@/auth/visibility";
 import { noticeRequests, noticeRevisions, notices } from "@/db/content-schema";
 import type { db } from "@/db/client";
 import type { createNoticeInput, deletionInput, editNoticeInput, resubmissionInput, withdrawalInput } from "./notices";
@@ -47,10 +48,23 @@ async function notifyReviewers(
   });
 }
 
-/** 申請の再送では保存結果が申請なので、申請経由で所有者を確認する。 */
-async function ensureOwnedResource(tx: Transaction, actorId: string, resource: { type: string; id: string }) {
-  if (resource.type === "notice_request") await ensureOwnedRequest(tx, actorId, resource.id);
-  else await ensureOwnedNotice(tx, actorId, resource.id);
+/**
+ * 確定済み操作の再送で結果を返してよいか。本人の対象で、未削除か削除後の保存期間内であること。
+ * 保存期限が到来した対象は本人向け取得と同じく404にし、古い成功応答を返さない（API設計書 §3 再送キー 5）。
+ * 申請の再送では保存結果が申請なので、申請経由で所有者を確認する。
+ */
+async function authorizeNoticeReplay(
+  tx: Transaction,
+  actorId: string,
+  resource: { type: string; id: string },
+  now: Date,
+) {
+  const noticeId = resource.type === "notice_request"
+    ? (await ensureOwnedRequest(tx, actorId, resource.id)).notice.id
+    : (await ensureOwnedNotice(tx, actorId, resource.id)).id;
+  const [retained] = await tx.select({ id: notices.id }).from(notices)
+    .where(and(eq(notices.id, noticeId), or(isNull(notices.deletedAt), retainedDeletedNotice(now))));
+  if (!retained) throw new ApiError("NOT_FOUND");
 }
 
 async function nextPendingNoticeIds(tx: Transaction, noticeId: string) {
@@ -102,8 +116,8 @@ export async function createNotice(
     async targets() {
       return [];
     },
-    async authorizeReplay({ tx }, original) {
-      await ensureOwnedResource(tx, viewer.userId, original.resource);
+    async authorizeReplay({ tx, now }, original) {
+      await authorizeNoticeReplay(tx, viewer.userId, original.resource, now);
     },
     async execute({ tx, now, requireLockedUsers }) {
       const currentViewer = await activeActor(tx, viewer.userId);
@@ -184,8 +198,8 @@ export async function reviseNotice(
         ids: [noticeId],
       }];
     },
-    async authorizeReplay({ tx }, original) {
-      await ensureOwnedResource(tx, viewer.userId, original.resource);
+    async authorizeReplay({ tx, now }, original) {
+      await authorizeNoticeReplay(tx, viewer.userId, original.resource, now);
     },
     async execute({ tx, now, requireLockedUsers }) {
       const currentViewer = await activeActor(tx, viewer.userId);
@@ -265,8 +279,8 @@ export async function withdrawNoticeRequest(
         { stage: "application", table: noticeRequests, idColumn: noticeRequests.id, ids: [id] },
       ] : [];
     },
-    async authorizeReplay({ tx }, original) {
-      await ensureOwnedRequest(tx, viewer.userId, original.resource.id);
+    async authorizeReplay({ tx, now }, original) {
+      await authorizeNoticeReplay(tx, viewer.userId, original.resource, now);
     },
     async execute({ tx, now }) {
       const currentViewer = await activeActor(tx, viewer.userId);
@@ -314,8 +328,8 @@ export async function resubmitNoticeRequest(
         { stage: "application", table: noticeRequests, idColumn: noticeRequests.id, ids: [id] },
       ] : [];
     },
-    async authorizeReplay({ tx }, original) {
-      await ensureOwnedRequest(tx, viewer.userId, original.resource.id);
+    async authorizeReplay({ tx, now }, original) {
+      await authorizeNoticeReplay(tx, viewer.userId, original.resource, now);
     },
     async execute({ tx, now, requireLockedUsers }) {
       const currentViewer = await activeActor(tx, viewer.userId);
@@ -382,8 +396,8 @@ export async function deleteNotice(
         { stage: "application", table: noticeRequests, idColumn: noticeRequests.id, ids: requestIds },
       ];
     },
-    async authorizeReplay({ tx }, original) {
-      await ensureOwnedNotice(tx, viewer.userId, original.resource.id);
+    async authorizeReplay({ tx, now }, original) {
+      await authorizeNoticeReplay(tx, viewer.userId, original.resource, now);
     },
     async execute({ tx, now }) {
       const notice = await ensureOwnedNotice(tx, viewer.userId, noticeId);

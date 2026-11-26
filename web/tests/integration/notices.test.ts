@@ -397,7 +397,108 @@ it("AC-05 プロフィール非表示中でも削除でき、審査中編集は�
   expect(noticeRequest.status).toBe("withdrawn");
   expect((await get(noticeRoute, `/api/v1/notices/${record.id}`, "poc_s002", noticeContext(record.id))).status).toBe(404);
   const ownerView = await get(myNoticeRoute, `/api/v1/me/notices/${record.id}`, "poc_hidden", noticeContext(record.id));
-  expect(ownerView.body.data).toMatchObject({ publicationState: "deleted", deletedContent: { title: `${marker} 公開題名` } });
+  expect(ownerView.body.data).toMatchObject({
+    publicationState: "deleted", deletedContent: { title: `${marker} 公開題名` }, holdingState: null,
+  });
+  const active = await addNotice({ author: "poc_hidden" });
+  const activeView = await get(myNoticeRoute, `/api/v1/me/notices/${active.id}`, "poc_hidden", noticeContext(active.id));
+  expect(activeView.body.data).toMatchObject({ publicationState: "public", holdingState: null });
+});
+
+it("SEC-15 保存期限の到来後は、確定済みの更新を再送しても結果を返さない", async () => {
+  const staffNotice = await addNotice({ author: "poc_staff" });
+  const deletionKey = randomUUID();
+  const deletionPath = `/api/v1/notices/${staffNotice.id}/deletion`;
+  const deletionBody = { expectedVersion: 1, confirmed: true };
+  const deleted = await post(deletionRoute, deletionPath, "poc_staff", deletionBody,
+    noticeContext(staffNotice.id), deletionKey);
+  expect(deleted.status).toBe(200);
+  const retained = await post(deletionRoute, deletionPath, "poc_staff", deletionBody,
+    noticeContext(staffNotice.id), deletionKey);
+  expect(retained.status).toBe(200);
+  expect(retained.body.data).toMatchObject({ operationId: deleted.body.data?.operationId, state: "deleted" });
+
+  const alumniNotice = await addNotice();
+  const editKey = randomUUID();
+  const editPath = `/api/v1/notices/${alumniNotice.id}/revisions`;
+  const editBody = {
+    expectedVersion: 1, content: { title: `${marker} 期限前の編集`, body: `${marker} 期限前の本文`, categoryCode: "general" },
+  };
+  const edited = await post(revisionsRoute, editPath, "poc_a001", editBody, noticeContext(alumniNotice.id), editKey);
+  expect(edited.status).toBe(200);
+  expect(edited.body.data?.resource).toMatchObject({ type: "notice_request" });
+  const alumniDeleted = await post(deletionRoute, `/api/v1/notices/${alumniNotice.id}/deletion`, "poc_a001",
+    { expectedVersion: 2, confirmed: true }, noticeContext(alumniNotice.id));
+  expect(alumniDeleted.status).toBe(200);
+
+  await target.client.query("UPDATE notices SET deleted_at = now() - interval '180 days' WHERE id = ANY($1::uuid[])",
+    [[staffNotice.id, alumniNotice.id]]);
+  const expiredDeletion = await post(deletionRoute, deletionPath, "poc_staff", deletionBody,
+    noticeContext(staffNotice.id), deletionKey);
+  expect(expiredDeletion.status).toBe(404);
+  expect(expiredDeletion.body.error?.code).toBe("NOT_FOUND");
+  const expiredEdit = await post(revisionsRoute, editPath, "poc_a001", editBody, noticeContext(alumniNotice.id), editKey);
+  expect(expiredEdit.status).toBe(404);
+  expect(expiredEdit.text).not.toContain("期限前の本文");
+});
+
+it("卒業生から在校生へ訂正された後は、却下された申請の再申請を可能と返さない", async () => {
+  const rejected = await addNotice({ published: false, pendingStatus: "rejected", requestKind: "new" });
+  const detailPath = `/api/v1/me/notice-requests/${rejected.requestId}`;
+  const before = await get(requestRoute, detailPath, "poc_a001", requestContext(rejected.requestId!));
+  expect(before.body.data?.capabilities).toMatchObject({ canResubmit: true });
+
+  const userId = id("poc_a001");
+  await target.client.query("UPDATE community_users SET base_role = 'student' WHERE user_id = $1", [userId]);
+  try {
+    const request = await get(requestRoute, detailPath, "poc_a001", requestContext(rejected.requestId!));
+    expect(request.body.data?.capabilities).toMatchObject({ canResubmit: false });
+    const notice = await get(myNoticeRoute, `/api/v1/me/notices/${rejected.id}`, "poc_a001", noticeContext(rejected.id));
+    expect(notice.body.data?.capabilities).toMatchObject({ canResubmit: false });
+    const list = await get(myNoticesRoute, "/api/v1/me/notices?state=rejected", "poc_a001", {});
+    const item = (list.body.data?.items ?? []).find((value) => value.id === rejected.id);
+    expect(item?.capabilities).toMatchObject({ canResubmit: false });
+    const resubmitted = await post(resubmissionRoute, `${detailPath}/resubmission`, "poc_a001",
+      { expectedVersion: 1, content: { title: `${marker} 訂正後`, body: "本文", categoryCode: "general" } },
+      requestContext(rejected.requestId!));
+    expect(resubmitted.status).toBe(403);
+  } finally {
+    await target.client.query("UPDATE community_users SET base_role = 'alumni' WHERE user_id = $1", [userId]);
+  }
+});
+
+it("公開内容の更新時刻は、審査を経た版では承認時刻、職員の直接公開では版の作成時刻を返す", async () => {
+  const reviewed = await addNotice({ title: `${marker} 審査済み` });
+  const { rows: [times] } = await target.client.query<{ created: Date; published: Date }>(`
+    WITH revision AS (
+      UPDATE notice_revisions SET created_at = now() - interval '2 days'
+      WHERE id = (SELECT public_revision_id FROM notices WHERE id = $1)
+      RETURNING created_at
+    ), notice AS (
+      UPDATE notices SET first_published_at = now() - interval '1 day' WHERE id = $1 RETURNING first_published_at
+    )
+    SELECT (SELECT created_at FROM revision) AS created, (SELECT first_published_at FROM notice) AS published
+  `, [reviewed.id]);
+  await target.client.query(`
+    INSERT INTO notice_requests
+      (notice_id, revision_id, request_kind, status, submitted_at, reviewer_id, decided_at, version)
+    SELECT id, public_revision_id, 'new', 'approved', $2, $3, $4, 2 FROM notices WHERE id = $1
+  `, [reviewed.id, times.created, id("poc_school"), times.published]);
+
+  const detail = await get(noticeRoute, `/api/v1/notices/${reviewed.id}`, "poc_s002", noticeContext(reviewed.id));
+  expect(detail.body.data).toMatchObject({
+    firstPublishedAt: times.published.toISOString(), updatedAt: times.published.toISOString(),
+  });
+  const list = await get(noticesRoute, `/api/v1/notices?q=${encodeURIComponent(`${marker} 審査済み`)}`, "poc_s002", {});
+  expect(list.body.data?.items?.[0]).toMatchObject({ id: reviewed.id, updatedAt: times.published.toISOString() });
+
+  const direct = await addNotice({ author: "poc_staff" });
+  const { rows: [{ created }] } = await target.client.query<{ created: Date }>(
+    "SELECT r.created_at AS created FROM notices n JOIN notice_revisions r ON r.id = n.public_revision_id WHERE n.id = $1",
+    [direct.id],
+  );
+  const directDetail = await get(noticeRoute, `/api/v1/notices/${direct.id}`, "poc_s002", noticeContext(direct.id));
+  expect(directDetail.body.data).toMatchObject({ updatedAt: created.toISOString() });
 });
 
 it("SEC-14 アプリ管理者は他人の削除済みお知らせ本文を閲覧できない", async () => {

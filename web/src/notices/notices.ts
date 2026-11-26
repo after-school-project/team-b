@@ -71,6 +71,8 @@ export type ManagedContent = {
   deletedContent: NoticeContent | null;
   deletedAt: string | null;
   retentionExpiresAt: string | null;
+  /** お知らせとイベントの共通DTO。お知らせには開催状態がないため常に null（API設計書 §5）。 */
+  holdingState: null;
   capabilities: CapabilitySet;
 };
 export type ReviewRequest = RequestSummary & {
@@ -144,6 +146,19 @@ function requestSummary(row: typeof noticeRequests.$inferSelect): RequestSummary
     version: row.version,
     needsDateCorrection: false,
   };
+}
+
+/** 公開版を承認した申請。審査を経た版だけが一致し、職員が直接公開した版には一致しない。 */
+function approvedPublicRevision() {
+  return and(eq(noticeRequests.revisionId, notices.publicRevisionId), eq(noticeRequests.status, "approved"));
+}
+
+/**
+ * 公開内容の更新時刻（API設計書 §5 PublicNotice）。審査を経た版は公開に反映された承認時刻、
+ * 職員が直接公開した版は版の作成時刻を使う。申請時に作った版の作成時刻は公開前なので使わない。
+ */
+function publicUpdatedAt(row: { revisionCreatedAt: Date; approvedAt: Date | null }): Date {
+  return row.approvedAt ?? row.revisionCreatedAt;
 }
 
 function retentionExpiresAt(deletedAt: Date | null): string | null {
@@ -225,10 +240,12 @@ export async function searchNotices(
       authorName: profileRevisions.displayName,
       authorProfileState: communityUsers.profileState,
       firstPublishedAt: notices.firstPublishedAt,
-      updatedAt: noticeRevisions.createdAt,
+      revisionCreatedAt: noticeRevisions.createdAt,
+      approvedAt: noticeRequests.decidedAt,
       cursorAt: cursorTimestamp(notices.firstPublishedAt),
     }).from(notices)
       .innerJoin(noticeRevisions, eq(noticeRevisions.id, notices.publicRevisionId))
+      .leftJoin(noticeRequests, approvedPublicRevision())
       .innerJoin(communityUsers, eq(communityUsers.userId, notices.authorId))
       .innerJoin(profiles, eq(profiles.userId, communityUsers.userId))
       .innerJoin(profileRevisions, eq(profileRevisions.id, profiles.currentRevisionId))
@@ -251,7 +268,7 @@ export async function searchNotices(
         originKind: row.originKind,
         author: authorView(row.authorId, row.authorName, row.authorProfileState),
         firstPublishedAt: row.firstPublishedAt.toISOString(),
-        updatedAt: row.updatedAt.toISOString(),
+        updatedAt: publicUpdatedAt(row).toISOString(),
       };
     },
   });
@@ -268,9 +285,11 @@ export async function loadPublicNotice(reader: AccessReader, noticeId: string): 
     authorName: profileRevisions.displayName,
     authorProfileState: communityUsers.profileState,
     firstPublishedAt: notices.firstPublishedAt,
-    updatedAt: noticeRevisions.createdAt,
+    revisionCreatedAt: noticeRevisions.createdAt,
+    approvedAt: noticeRequests.decidedAt,
   }).from(notices)
     .innerJoin(noticeRevisions, eq(noticeRevisions.id, notices.publicRevisionId))
+    .leftJoin(noticeRequests, approvedPublicRevision())
     .innerJoin(communityUsers, eq(communityUsers.userId, notices.authorId))
     .innerJoin(profiles, eq(profiles.userId, communityUsers.userId))
     .innerJoin(profileRevisions, eq(profileRevisions.id, profiles.currentRevisionId))
@@ -283,7 +302,7 @@ export async function loadPublicNotice(reader: AccessReader, noticeId: string): 
     originKind: row.originKind,
     author: authorView(row.authorId, row.authorName, row.authorProfileState),
     firstPublishedAt: row.firstPublishedAt.toISOString(),
-    updatedAt: row.updatedAt.toISOString(),
+    updatedAt: publicUpdatedAt(row).toISOString(),
   };
 }
 
@@ -341,8 +360,9 @@ function capabilitiesFor(
       pending === null && (viewer.baseRole === "staff" || viewer.baseRole === "alumni"),
     canDelete: own && notice.publicRevisionId !== null && notice.deletedAt === null,
     canWithdraw: own && writable && pending !== null,
-    canResubmit: own && writable && notice.originKind === "alumni" && notice.deletedAt === null &&
-      pending === null && latest?.status === "rejected",
+    // 再申請は現在の所属が卒業生のときだけ受け付ける（更新処理と同じ条件）。
+    canResubmit: own && writable && viewer.baseRole === "alumni" && notice.originKind === "alumni" &&
+      notice.deletedAt === null && pending === null && latest?.status === "rejected",
   };
 }
 
@@ -454,7 +474,7 @@ export async function loadMyNotice(reader: AccessReader, viewer: Viewer, noticeI
       publicationState, publicContent: null,
       pendingRequest: requestSet.pending ? requestSummary(requestSet.pending) : null,
       deletedContent: content, deletedAt: row.deletedAt.toISOString(),
-      retentionExpiresAt: retentionExpiresAt(row.deletedAt), capabilities,
+      retentionExpiresAt: retentionExpiresAt(row.deletedAt), holdingState: null, capabilities,
     };
   }
   return {
@@ -462,7 +482,7 @@ export async function loadMyNotice(reader: AccessReader, viewer: Viewer, noticeI
     author: { userId: row.authorId, displayName: row.authorName },
     publicationState, publicContent: content,
     pendingRequest: requestSet.pending ? requestSummary(requestSet.pending) : null,
-    deletedContent: null, deletedAt: null, retentionExpiresAt: null, capabilities,
+    deletedContent: null, deletedAt: null, retentionExpiresAt: null, holdingState: null, capabilities,
   };
 }
 
@@ -546,7 +566,7 @@ export async function loadMyNoticeRequest(
       canWithdraw: row.request.status === "pending" && viewer.profileState === "public",
       canResubmit: row.request.status === "rejected" && row.originKind === "alumni" &&
         row.deletedAt === null && requestSet.pending === null && requestSet.latest?.id === row.request.id &&
-        viewer.profileState === "public",
+        viewer.profileState === "public" && viewer.baseRole === "alumni",
     },
   };
 }
