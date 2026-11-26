@@ -22,6 +22,9 @@ export default async function EventsPage({ searchParams }: { searchParams: Promi
     else if (typeof value === "string" && (name !== "q" || value.trim())) query.set(name, value);
   }
 
+  const keyword = query.get("q") ?? "";
+  const keywordTooLong = [...keyword.trim()].length > 100;
+
   let result: Awaited<ReturnType<typeof listEvents>> | undefined;
   let errorCode: string | undefined;
   try {
@@ -44,10 +47,13 @@ export default async function EventsPage({ searchParams }: { searchParams: Promi
     <AppShell viewer={shell}>
       <div className={styles.page}>
         <h1 className={styles.title}>イベント</h1>
-        <form action="/events" method="get" role="search" aria-label="イベントの検索条件" className={styles.panel}>
+        <form key={firstPage} action="/events" method="get" role="search" aria-label="イベントの検索条件" className={styles.panel}>
           <label className={styles.field}>キーワード
-            <input name="q" defaultValue={query.get("q") ?? ""} />
+            <input name="q" defaultValue={keyword}
+              aria-invalid={keywordTooLong || undefined}
+              aria-describedby={keywordTooLong ? "event-keyword-error" : undefined} />
           </label>
+          {keywordTooLong && <p id="event-keyword-error" className={styles.fieldError}>キーワードは100文字以内で入力してください。</p>}
           <div className={styles.selects}>
             <label className={styles.field}>開催状態
               <select name="state" defaultValue={query.get("state") ?? "all"}>
@@ -71,7 +77,7 @@ export default async function EventsPage({ searchParams }: { searchParams: Promi
 
         {errorCode ? (
           <div role="alert" className={styles.warning}>
-            <p>{errorCode === "INVALID_CURSOR" ? "イベントの続きを表示できませんでした。" : "検索条件を確認してください。キーワードは100文字以内で入力してください。"}</p>
+            <p>{errorCode === "INVALID_CURSOR" ? "イベントの続きを表示できませんでした。" : "検索条件を確認してください。"}</p>
             {errorCode === "INVALID_CURSOR" && <Link href={firstPage}>最初のページを表示</Link>}
           </div>
         ) : null}
