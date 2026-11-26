@@ -31,7 +31,7 @@ import {
 import { EmptyState, ErrorState, LoadingState } from "@/components/feedback/StateMessage";
 
 /** 共通ナビの導線のうち、実装済みの画面（`implementedScreenRoutes`）。ほかは「準備中」として押せない状態にする。 */
-const implementedNavHrefs = new Set(["/", "/questions", "/alumni", "/me/profile"]);
+const implementedNavHrefs = new Set(["/", "/questions", "/events", "/alumni", "/me/profile"]);
 
 function renderShell(options: { canAccessAdmin: boolean; pathname?: string; unread?: number }) {
   navigation.pathname = options.pathname ?? "/";
