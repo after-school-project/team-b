@@ -8,7 +8,7 @@ import { ApiError, type PageInfo } from "@/api/response";
 import type { AccessReader, Viewer } from "@/auth/access";
 import { noCapabilities, type CapabilitySet } from "@/auth/capabilities";
 import { isOwner } from "@/auth/ownership";
-import { publishedNotice, retainedDeletedNotice } from "@/auth/visibility";
+import { deletedNoticeRetentionDays, publishedNotice, retainedDeletedNotice } from "@/auth/visibility";
 import { longText, title, uuid } from "@/api/request";
 import { noticeRequests, noticeRevisions, notices } from "@/db/content-schema";
 import { communityUsers, profileRevisions, profiles } from "@/db/schema";
@@ -148,7 +148,9 @@ function requestSummary(row: typeof noticeRequests.$inferSelect): RequestSummary
 }
 
 function retentionExpiresAt(deletedAt: Date | null): string | null {
-  return deletedAt ? new Date(deletedAt.getTime() + 180 * 24 * 60 * 60 * 1000).toISOString() : null;
+  return deletedAt
+    ? new Date(deletedAt.getTime() + deletedNoticeRetentionDays * 24 * 60 * 60 * 1000).toISOString()
+    : null;
 }
 
 function latestStatusCondition(status: "rejected" | "withdrawn") {

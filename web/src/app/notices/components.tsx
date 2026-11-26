@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import type { PageInfo } from "@/api/response";
 import type {
   ManagedContent, ManagedNoticeListItem, NoticeContent, NoticeListItem, PublicNotice, RequestSummary, ReviewRequest,
@@ -119,31 +119,42 @@ export function NoticeForm({
   const [body, setBody] = useState(initialContent?.body ?? "");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // 保存されたか確認できない間は、同じ内容なら同じ再送キーで送り直す。
+  const pending = useRef<{ body: string; key: string } | null>(null);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (submitting) return;
     setError(null);
     setSubmitting(true);
     const content = { title, body, categoryCode: "general" };
     const path = mode === "create" ? "/api/v1/notices"
       : mode === "edit" ? `/api/v1/notices/${encodeURIComponent(noticeId ?? "")}/revisions`
         : `/api/v1/me/notice-requests/${encodeURIComponent(requestId ?? "")}/resubmission`;
-    const payload = mode === "create" ? content : { expectedVersion, content };
+    const payload = JSON.stringify(mode === "create" ? content : { expectedVersion, content });
+    const key = pending.current?.body === payload ? pending.current.key : idempotencyKey();
+    pending.current = { body: payload, key };
     try {
       const response = await fetch(path, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey() },
-        body: JSON.stringify(payload),
+        headers: { "Content-Type": "application/json", "Idempotency-Key": key },
+        body: payload,
       });
       const result = await response.json() as ApiEnvelope<{ resource: { id: string }; state: string }>;
+      pending.current = null;
       if (!response.ok || !result.data) {
         setError(errorText(result, response.status));
         return;
       }
-      if (mode === "create" && result.data.state === "public") {
-        router.push(`/notices/${encodeURIComponent(result.data.resource.id)}`);
+      if (mode === "create") {
+        // 審査が必要な新規投稿の結果は申請なので、本人一覧へ戻る。
+        router.push(result.data.state === "public"
+          ? `/notices/${encodeURIComponent(result.data.resource.id)}` : "/me/notices");
+      } else if (mode === "edit") {
+        router.push(`/me/notices?notice=${encodeURIComponent(noticeId ?? "")}`);
       } else {
-        router.push(`/me/notices?notice=${encodeURIComponent(result.data.resource.id)}`);
+        router.push(`/me/notices?notice=${encodeURIComponent(noticeId ?? "")}`
+          + `&request=${encodeURIComponent(result.data.resource.id)}`);
       }
       router.refresh();
     } catch {
@@ -195,12 +206,7 @@ async function postJson<T>(path: string, value: unknown): Promise<T> {
   return result.data;
 }
 
-export function NoticeActions({
-  notice, request,
-}: {
-  notice: ManagedContent;
-  request?: ReviewRequest;
-}) {
+export function NoticeActions({ notice }: { notice: ManagedContent }) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -237,7 +243,8 @@ export function NoticeActions({
     }
   }
 
-  const requestSummary = request ?? notice.pendingRequest;
+  // 取り下げられるのは審査中の申請だけ。履歴で選択中の申請ではなく、審査中の申請を対象にする。
+  const requestSummary = notice.pendingRequest;
   return (
     <div className={styles.actionsPanel}>
       {error ? <p className={styles.formError} role="alert">{error}</p> : null}

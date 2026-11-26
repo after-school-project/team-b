@@ -22,6 +22,7 @@ let categoriesRoute: typeof import("../../src/app/api/v1/notice-categories/route
 let noticesRoute: typeof import("../../src/app/api/v1/notices/route");
 let noticeRoute: typeof import("../../src/app/api/v1/notices/[noticeId]/route");
 let deletionRoute: typeof import("../../src/app/api/v1/notices/[noticeId]/deletion/route");
+let revisionsRoute: typeof import("../../src/app/api/v1/notices/[noticeId]/revisions/route");
 let myNoticesRoute: typeof import("../../src/app/api/v1/me/notices/route");
 let myNoticeRoute: typeof import("../../src/app/api/v1/me/notices/[noticeId]/route");
 let requestListRoute: typeof import("../../src/app/api/v1/me/notices/[noticeId]/requests/route");
@@ -52,6 +53,7 @@ beforeAll(async () => {
   noticesRoute = await import("../../src/app/api/v1/notices/route");
   noticeRoute = await import("../../src/app/api/v1/notices/[noticeId]/route");
   deletionRoute = await import("../../src/app/api/v1/notices/[noticeId]/deletion/route");
+  revisionsRoute = await import("../../src/app/api/v1/notices/[noticeId]/revisions/route");
   myNoticesRoute = await import("../../src/app/api/v1/me/notices/route");
   myNoticeRoute = await import("../../src/app/api/v1/me/notices/[noticeId]/route");
   requestListRoute = await import("../../src/app/api/v1/me/notices/[noticeId]/requests/route");
@@ -104,13 +106,13 @@ async function cookieFor(username: string) {
   return cookie;
 }
 
-async function headersFor(viewer: string | null, mutation = false): Promise<HeadersInit> {
+async function headersFor(viewer: string | null, mutation = false, key: string = randomUUID()): Promise<HeadersInit> {
   return {
     ...(viewer ? { Cookie: await cookieFor(viewer) } : {}),
     ...(mutation ? {
       Origin: origin,
       "Content-Type": "application/json",
-      "Idempotency-Key": randomUUID(),
+      "Idempotency-Key": key,
     } : {}),
   };
 }
@@ -141,10 +143,11 @@ async function post<Context>(
   viewer: string,
   body: unknown,
   context: Context,
+  key?: string,
 ) {
   return parse(await route.POST(new Request(origin + path, {
     method: "POST",
-    headers: await headersFor(viewer, true),
+    headers: await headersFor(viewer, true, key),
     body: JSON.stringify(body),
   }), context));
 }
@@ -271,15 +274,21 @@ it("AC-02 職員は即時公開、卒業生は審査申請となり、在校生�
   }, {});
   expect(alumni.status).toBe(201);
   expect(alumni.body.data?.state).toBe("pending");
-  const alumniId = String((alumni.body.data?.resource as { id: string }).id);
+  const alumniResource = alumni.body.data?.resource as { type: string; id: string };
+  expect(alumniResource.type).toBe("notice_request");
+  expect(alumni.body.data?.version).toBe(1);
+  const { rows: [{ notice_id: alumniId }] } = await target.client.query<{ notice_id: string }>(
+    "SELECT notice_id FROM notice_requests WHERE id = $1", [alumniResource.id],
+  );
   createdNoticeIds.add(alumniId);
   expect((await get(noticeRoute, `/api/v1/notices/${alumniId}`, "poc_s002", noticeContext(alumniId))).status).toBe(404);
   expect((await get(myNoticeRoute, `/api/v1/me/notices/${alumniId}`, "poc_a001", noticeContext(alumniId))).status).toBe(200);
-  const { rows: [{ total }] } = await target.client.query<{ total: number }>(
-    "SELECT count(*)::int AS total FROM notifications WHERE notice_request_id IN (SELECT id FROM notice_requests WHERE notice_id = $1)",
-    [alumniId],
+  const { rows: notified } = await target.client.query<{ event_key: string }>(
+    "SELECT event_key FROM notifications WHERE notice_request_id = $1", [alumniResource.id],
   );
-  expect(total).toBeGreaterThan(0);
+  expect(notified.length).toBeGreaterThan(0);
+  expect(new Set(notified.map(({ event_key }) => event_key)))
+    .toEqual(new Set([`notice_review_requested:${alumniResource.id}:${alumniResource.id}`]));
 
   const student = await post(noticesRoute, "/api/v1/notices", "poc_s001", {
     ...content, title: `${marker} 不許可投稿`,
@@ -287,6 +296,62 @@ it("AC-02 職員は即時公開、卒業生は審査申請となり、在校生�
   expect(student.status).toBe(403);
   expect(student.body.error?.code).toBe("FORBIDDEN");
   expect(student.text).not.toContain("不許可投稿");
+});
+
+it("AC-03 公開後編集は職員が即時反映・卒業生が再審査となり、版番号・審査中の競合と再送を扱う", async () => {
+  const content = { title: `${marker} 編集後題名`, body: `${marker} 編集後本文`, categoryCode: "general" };
+  const revisionCount = async (noticeId: string) => (await target.client.query<{ total: number }>(
+    "SELECT count(*)::int AS total FROM notice_revisions WHERE notice_id = $1", [noticeId],
+  )).rows[0].total;
+
+  const staffNotice = await addNotice({ author: "poc_staff" });
+  const staffPath = `/api/v1/notices/${staffNotice.id}/revisions`;
+  const key = randomUUID();
+  const staffEdit = await post(revisionsRoute, staffPath, "poc_staff",
+    { expectedVersion: 1, content }, noticeContext(staffNotice.id), key);
+  expect(staffEdit.status).toBe(200);
+  expect(staffEdit.body.data).toMatchObject({
+    resource: { type: "notice", id: staffNotice.id }, version: 2, state: "public",
+  });
+  const replay = await post(revisionsRoute, staffPath, "poc_staff",
+    { expectedVersion: 1, content }, noticeContext(staffNotice.id), key);
+  expect(replay.status).toBe(200);
+  expect(replay.body.data).toMatchObject({ operationId: staffEdit.body.data?.operationId, version: 2 });
+  expect(await revisionCount(staffNotice.id)).toBe(2);
+  const staffDetail = await get(noticeRoute, `/api/v1/notices/${staffNotice.id}`, "poc_s002",
+    noticeContext(staffNotice.id));
+  expect(staffDetail.body.data).toMatchObject({ content: { title: `${marker} 編集後題名` } });
+  const stale = await post(revisionsRoute, staffPath, "poc_staff",
+    { expectedVersion: 1, content }, noticeContext(staffNotice.id));
+  expect(stale.status).toBe(409);
+  expect(stale.body.error?.code).toBe("VERSION_CONFLICT");
+
+  const hiddenNotice = await addNotice({ author: "poc_staff", hidden: true });
+  const hiddenEdit = await post(revisionsRoute, `/api/v1/notices/${hiddenNotice.id}/revisions`, "poc_staff",
+    { expectedVersion: 1, content }, noticeContext(hiddenNotice.id));
+  expect(hiddenEdit.status).toBe(200);
+  expect(hiddenEdit.body.data?.state).toBe("hidden");
+
+  const alumniNotice = await addNotice();
+  const alumniEdit = await post(revisionsRoute, `/api/v1/notices/${alumniNotice.id}/revisions`, "poc_a001",
+    { expectedVersion: 1, content }, noticeContext(alumniNotice.id));
+  expect(alumniEdit.status).toBe(200);
+  const editRequest = alumniEdit.body.data?.resource as { type: string; id: string };
+  expect(alumniEdit.body.data).toMatchObject({ resource: { type: "notice_request" }, version: 1, state: "pending" });
+  const alumniDetail = await get(noticeRoute, `/api/v1/notices/${alumniNotice.id}`, "poc_s002",
+    noticeContext(alumniNotice.id));
+  expect(alumniDetail.body.data).toMatchObject({ content: { title: `${marker} 公開題名` } });
+  const { rows: [{ total: notified }] } = await target.client.query<{ total: number }>(
+    "SELECT count(*)::int AS total FROM notifications WHERE notice_request_id = $1", [editRequest.id],
+  );
+  expect(notified).toBeGreaterThan(0);
+
+  const pendingNotice = await addNotice({ pendingStatus: "pending" });
+  const pendingEdit = await post(revisionsRoute, `/api/v1/notices/${pendingNotice.id}/revisions`, "poc_a001",
+    { expectedVersion: 1, content }, noticeContext(pendingNotice.id));
+  expect(pendingEdit.status).toBe(409);
+  expect(pendingEdit.body.error?.code).toBe("STATE_CONFLICT");
+  expect(await revisionCount(pendingNotice.id)).toBe(2);
 });
 
 it("AC-04 取り下げ履歴を保ち、却下後の再申請は別レコードにする", async () => {

@@ -1,11 +1,10 @@
-import { and, desc, eq, ne, or, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { ApiError } from "@/api/response";
 import { assertExpectedVersion, commitMutation } from "@/api/mutation";
+import { recordReviewRequestNotifications, reviewRequestRecipients } from "@/api/notifications";
 import type { MutationRequest } from "@/api/request";
 import { authorizeActiveEntry, loadAccessState, requireProfileWritable, requireActive } from "@/auth/access";
 import type { Viewer } from "@/auth/access";
-import { communityUsers } from "@/db/schema";
-import { notifications } from "@/db/moderation-schema";
 import { noticeRequests, noticeRevisions, notices } from "@/db/content-schema";
 import type { db } from "@/db/client";
 import type { createNoticeInput, deletionInput, editNoticeInput, resubmissionInput, withdrawalInput } from "./notices";
@@ -34,41 +33,24 @@ async function nextRevisionNo(tx: Transaction, noticeId: string): Promise<number
   return (last?.revisionNo ?? 0) + 1;
 }
 
-async function reviewerIds(tx: Transaction, authorId: string, originKind: "school" | "alumni") {
-  const roleFilter = originKind === "school"
-    ? eq(communityUsers.schoolManager, true)
-    : or(eq(communityUsers.schoolManager, true), and(
-      eq(communityUsers.appManager, true), eq(communityUsers.profileState, "public"),
-    ));
-  const rows = await tx.select({ userId: communityUsers.userId }).from(communityUsers).where(and(
-    ne(communityUsers.userId, authorId),
-    eq(communityUsers.accountStatus, "active"),
-    eq(communityUsers.eligibilityStatus, "verified"),
-    eq(communityUsers.provisioningStatus, "ready"),
-    roleFilter,
-  ));
-  return rows.map(({ userId }) => userId);
-}
-
 async function notifyReviewers(
   tx: Transaction,
   requireLockedUsers: (...ids: string[]) => void,
-  authorId: string,
-  originKind: "school" | "alumni",
+  applicantId: string,
   requestId: string,
   now: Date,
 ) {
-  const recipients = await reviewerIds(tx, authorId, originKind);
-  requireLockedUsers(...recipients);
-  if (!recipients.length) return;
-  await tx.insert(notifications).values(recipients.map((recipientId) => ({
-    recipientId,
-    kind: "notice_review_requested" as const,
-    noticeRequestId: requestId,
-    eventKey: `notice-review:${requestId}`,
-    publicMessage: "審査が必要なお知らせの申請があります。",
-    createdAt: now,
-  })));
+  await recordReviewRequestNotifications({ tx, requireLockedUsers }, {
+    applicantId,
+    subject: { kind: "notice_review_requested", noticeRequestId: requestId },
+    at: now,
+  });
+}
+
+/** 申請の再送では保存結果が申請なので、申請経由で所有者を確認する。 */
+async function ensureOwnedResource(tx: Transaction, actorId: string, resource: { type: string; id: string }) {
+  if (resource.type === "notice_request") await ensureOwnedRequest(tx, actorId, resource.id);
+  else await ensureOwnedNotice(tx, actorId, resource.id);
 }
 
 async function nextPendingNoticeIds(tx: Transaction, noticeId: string) {
@@ -99,14 +81,6 @@ async function ensureLatestRequest(tx: Transaction, requestId: string, noticeId:
   if (latest?.id !== requestId) throw new ApiError("STATE_CONFLICT");
 }
 
-async function activeManagersToLock(
-  tx: Transaction,
-  authorId: string,
-  originKind: "school" | "alumni",
-) {
-  return reviewerIds(tx, authorId, originKind);
-}
-
 export async function createNotice(
   database: Database,
   viewer: Viewer,
@@ -121,7 +95,7 @@ export async function createNotice(
     resolveUserIds: async (tx) => {
       const currentViewer = await activeActor(tx, viewer.userId);
       return currentViewer.baseRole === "alumni"
-        ? activeManagersToLock(tx, viewer.userId, "alumni")
+        ? reviewRequestRecipients(tx, viewer.userId)
         : [];
     },
     authorizeEntry: authorizeActiveEntry(viewer.userId, { profileWritable: true }),
@@ -129,7 +103,7 @@ export async function createNotice(
       return [];
     },
     async authorizeReplay({ tx }, original) {
-      await ensureOwnedNotice(tx, viewer.userId, original.resource.id);
+      await ensureOwnedResource(tx, viewer.userId, original.resource);
     },
     async execute({ tx, now, requireLockedUsers }) {
       const currentViewer = await activeActor(tx, viewer.userId);
@@ -173,10 +147,10 @@ export async function createNotice(
         submittedAt: now,
         version: 1,
       }).returning({ id: noticeRequests.id });
-      await notifyReviewers(tx, requireLockedUsers, viewer.userId, currentOrigin, reviewRequest.id, now);
+      await notifyReviewers(tx, requireLockedUsers, viewer.userId, reviewRequest.id, now);
       return {
         status: 201,
-        resource: { type: "notice", id: notice.id },
+        resource: { type: "notice_request", id: reviewRequest.id },
         version: 1,
         state: "pending",
       };
@@ -198,21 +172,20 @@ export async function reviseNotice(
     body: input,
     resolveUserIds: async (tx) => {
       const currentViewer = await activeActor(tx, viewer.userId);
-      const [notice] = await tx.select({ originKind: notices.originKind }).from(notices).where(eq(notices.id, noticeId));
-      return currentViewer.baseRole === "alumni" && notice
-        ? activeManagersToLock(tx, viewer.userId, notice.originKind) : [];
+      return currentViewer.baseRole === "alumni" ? reviewRequestRecipients(tx, viewer.userId) : [];
     },
     authorizeEntry: authorizeActiveEntry(viewer.userId, { profileWritable: true }),
-    async targets(_tx, replayResource) {
+    async targets() {
+      // 再送の照合はパスを含むため、再送時も対象はパスのお知らせと同じ。
       return [{
-        stage: "application",
+        stage: "resource",
         table: notices,
         idColumn: notices.id,
-        ids: [replayResource?.id ?? noticeId],
+        ids: [noticeId],
       }];
     },
     async authorizeReplay({ tx }, original) {
-      await ensureOwnedNotice(tx, viewer.userId, original.resource.id);
+      await ensureOwnedResource(tx, viewer.userId, original.resource);
     },
     async execute({ tx, now, requireLockedUsers }) {
       const currentViewer = await activeActor(tx, viewer.userId);
@@ -260,11 +233,11 @@ export async function reviseNotice(
         version: 1,
       }).returning({ id: noticeRequests.id });
       await tx.update(notices).set({ version: nextVersion, updatedAt: now }).where(eq(notices.id, noticeId));
-      await notifyReviewers(tx, requireLockedUsers, viewer.userId, notice.originKind, reviewRequest.id, now);
+      await notifyReviewers(tx, requireLockedUsers, viewer.userId, reviewRequest.id, now);
       return {
         status: 200,
-        resource: { type: "notice", id: noticeId },
-        version: nextVersion,
+        resource: { type: "notice_request", id: reviewRequest.id },
+        version: 1,
         state: "pending",
       };
     },
@@ -288,7 +261,7 @@ export async function withdrawNoticeRequest(
       const [noticeRequest] = await tx.select({ noticeId: noticeRequests.noticeId }).from(noticeRequests)
         .where(eq(noticeRequests.id, id));
       return noticeRequest ? [
-        { stage: "application", table: notices, idColumn: notices.id, ids: [noticeRequest.noticeId] },
+        { stage: "resource", table: notices, idColumn: notices.id, ids: [noticeRequest.noticeId] },
         { stage: "application", table: noticeRequests, idColumn: noticeRequests.id, ids: [id] },
       ] : [];
     },
@@ -329,12 +302,7 @@ export async function resubmitNoticeRequest(
     body: input,
     resolveUserIds: async (tx) => {
       const currentViewer = await activeActor(tx, viewer.userId);
-      const [noticeRequest] = await tx.select({ noticeId: noticeRequests.noticeId }).from(noticeRequests)
-        .where(eq(noticeRequests.id, requestId));
-      if (!noticeRequest || currentViewer.baseRole !== "alumni") return [];
-      const [notice] = await tx.select({ originKind: notices.originKind }).from(notices)
-        .where(eq(notices.id, noticeRequest.noticeId));
-      return notice ? activeManagersToLock(tx, viewer.userId, notice.originKind) : [];
+      return currentViewer.baseRole === "alumni" ? reviewRequestRecipients(tx, viewer.userId) : [];
     },
     authorizeEntry: authorizeActiveEntry(viewer.userId, { profileWritable: true }),
     async targets(tx, replayResource) {
@@ -342,7 +310,7 @@ export async function resubmitNoticeRequest(
       const [noticeRequest] = await tx.select({ noticeId: noticeRequests.noticeId }).from(noticeRequests)
         .where(eq(noticeRequests.id, id));
       return noticeRequest ? [
-        { stage: "application", table: notices, idColumn: notices.id, ids: [noticeRequest.noticeId] },
+        { stage: "resource", table: notices, idColumn: notices.id, ids: [noticeRequest.noticeId] },
         { stage: "application", table: noticeRequests, idColumn: noticeRequests.id, ids: [id] },
       ] : [];
     },
@@ -383,7 +351,7 @@ export async function resubmitNoticeRequest(
       }).returning({ id: noticeRequests.id });
       await tx.update(notices).set({ version: notice.version + 1, updatedAt: now })
         .where(eq(notices.id, notice.id));
-      await notifyReviewers(tx, requireLockedUsers, viewer.userId, notice.originKind, newRequest.id, now);
+      await notifyReviewers(tx, requireLockedUsers, viewer.userId, newRequest.id, now);
       return {
         status: 201,
         resource: { type: "notice_request", id: newRequest.id },
@@ -410,7 +378,7 @@ export async function deleteNotice(
       const id = replayResource?.id ?? noticeId;
       const requestIds = await nextPendingNoticeIds(tx, id);
       return [
-        { stage: "application", table: notices, idColumn: notices.id, ids: [id] },
+        { stage: "resource", table: notices, idColumn: notices.id, ids: [id] },
         { stage: "application", table: noticeRequests, idColumn: noticeRequests.id, ids: requestIds },
       ];
     },

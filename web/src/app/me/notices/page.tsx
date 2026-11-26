@@ -64,6 +64,7 @@ export default async function MyNoticesPage({ searchParams }: { searchParams: Pr
   let requestHistory: RequestSummary[] = [];
   let requestNextCursor: string | null = null;
   let selectedRequest: ReviewRequest | null = null;
+  let historyInvalid: string | null = null;
   if (rawRequestId && !rawNoticeId) notFound();
   if (rawNoticeId) {
     const parsedNoticeId = uuid.safeParse(rawNoticeId);
@@ -86,7 +87,7 @@ export default async function MyNoticesPage({ searchParams }: { searchParams: Pr
     } catch (error) {
       if (error instanceof ApiError && error.code === "NOT_FOUND") notFound();
       if (error instanceof ApiError && error.code === "INVALID_CURSOR") {
-        invalid = "申請履歴の続きを表示できませんでした。履歴の先頭から確認してください。";
+        historyInvalid = "申請履歴の続きを表示できませんでした。履歴の先頭から確認してください。";
       } else {
         throw error;
       }
@@ -119,13 +120,15 @@ export default async function MyNoticesPage({ searchParams }: { searchParams: Pr
           <section className={styles.managedView} aria-labelledby="selected-notice-heading">
             <h2 id="selected-notice-heading">選択したお知らせ</h2>
             <ManagedNoticeDetail notice={notice} />
-            <NoticeActions notice={notice} request={selectedRequest ?? undefined} />
-            <NoticeRequests items={requestHistory} selectedId={rawRequestId} noticeId={notice.id}
-              nextPageHref={requestNextCursor ? `/me/notices?${historyParams}` : null} />
+            <NoticeActions notice={notice} />
+            {historyInvalid ? <p className={styles.notice} role="alert">{historyInvalid}</p> : (
+              <NoticeRequests items={requestHistory} selectedId={rawRequestId} noticeId={notice.id}
+                nextPageHref={requestNextCursor ? `/me/notices?${historyParams}` : null} />
+            )}
             {selectedRequest ? <NoticeRequestDetail request={selectedRequest} /> : null}
             {selectedRequest?.capabilities.canResubmit ? (
               <NoticeForm mode="resubmit" initialContent={selectedRequest.content} requestId={selectedRequest.id}
-                expectedVersion={selectedRequest.version} />
+                noticeId={notice.id} expectedVersion={selectedRequest.version} />
             ) : null}
           </section>
         ) : null}
