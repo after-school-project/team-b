@@ -153,3 +153,25 @@ export async function removeQuestions(marker: string, username?: string) {
       AND (($2::text IS NULL AND author_label = 'e2eの投稿者名')
         OR author_id = (SELECT id FROM "user" WHERE username = $2))`, [marker, username ?? null]));
 }
+
+type NewNotification = { message: string; read?: boolean; minutesAgo?: number };
+
+/**
+ * 利用者宛ての通知を、event_key に目印を付けて作る。対象は受信者本人のプロフィール（profile_hidden）にして、
+ * ほかのデータに依存させない。終わったら `removeNotifications` で消す。
+ */
+export async function createNotifications(username: string, marker: string, notifications: NewNotification[]) {
+  const recipientId = await userIdOf(username);
+  await withDatabase(async (client) => {
+    for (const [index, notification] of notifications.entries()) {
+      await client.query(`INSERT INTO notifications (recipient_id, kind, profile_user_id, event_key, public_message, read_at, created_at)
+        VALUES ($1, 'profile_hidden', $1, $2, $3, CASE WHEN $4 THEN now() END, now() - make_interval(mins => $5))`,
+      [recipientId, `e2e-notification:${marker}:${index}`, notification.message, notification.read ?? false,
+        notification.minutesAgo ?? index]);
+    }
+  });
+}
+
+export async function removeNotifications(marker: string) {
+  await withDatabase((client) => client.query("DELETE FROM notifications WHERE event_key LIKE $1", [`e2e-notification:${marker}:%`]));
+}

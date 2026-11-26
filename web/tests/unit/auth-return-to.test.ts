@@ -62,6 +62,7 @@ describe("可変パスを含む画面のルート", () => {
       "/", "/me/profile", "/users/[userId]", "/alumni", "/questions", "/questions/[questionId]",
       "/questions/new", "/questions/[questionId]/edit",
       "/admin/users/[userId]", "/admin/profile-reviews", "/admin/graduation",
+      "/notifications",
     ]);
     expect(resolveReturnTo(`/events/${questionId}`)).toBe("/");
     expect([resolveReturnTo("/questions/new"), resolveReturnTo(`/questions/${questionId}/edit`)]).toEqual(["/questions/new", `/questions/${questionId}/edit`]);

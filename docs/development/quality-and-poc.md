@@ -81,7 +81,7 @@ docker rm -f team-b-e2e-db
 
 実セッションのテストは、パスワードを画面に入力せず要求コンテキストからサインインし、トレース・スクリーンショット・動画を無効にします。失敗時のレポートにパスワードを残さないためです。`web/.seed/` と `web/test-results/` はコミットしないでください。
 
-[admin-profiles.spec.ts](../../web/tests/e2e/admin-profiles.spec.ts)・[graduation.spec.ts](../../web/tests/e2e/graduation.spec.ts)・[questions.spec.ts](../../web/tests/e2e/questions.spec.ts) は、画面からまだ用意できない状態（アプリ管理者の権限解除、非表示・削除済みの質問など）を、テストの実行環境の `DATABASE_URL` でE2E用DBに直接設定します（[database.ts](../../web/tests/e2e/database.ts)）。繰り返し実行できるよう、テスト用の利用者の再公開申請と通知の削除、一時的な利用者と質問の作成と削除も行います。そのため、手順1の `-c cluster_name=team-b-e2e` を付けて起動した使い捨てDB以外では、状態を変更せずに失敗します（ホスト名・DB名だけでは、ポートを公開した開発DBと区別できないため）。また、`DATABASE_URL` が手順2と同じ形（`127.0.0.1:5432` の `team_b_dev`、ロール `team_b_app`、クエリーなし）でなければ、接続せずに失敗します。
+[admin-profiles.spec.ts](../../web/tests/e2e/admin-profiles.spec.ts)・[graduation.spec.ts](../../web/tests/e2e/graduation.spec.ts)・[questions.spec.ts](../../web/tests/e2e/questions.spec.ts)・[notifications.spec.ts](../../web/tests/e2e/notifications.spec.ts) は、画面からまだ用意できない状態（アプリ管理者の権限解除、非表示・削除済みの質問、通知など）を、テストの実行環境の `DATABASE_URL` でE2E用DBに直接設定します（[database.ts](../../web/tests/e2e/database.ts)）。繰り返し実行できるよう、テスト用の利用者の再公開申請と通知の削除、一時的な利用者・質問・通知の作成と削除も行います。そのため、手順1の `-c cluster_name=team-b-e2e` を付けて起動した使い捨てDB以外では、状態を変更せずに失敗します（ホスト名・DB名だけでは、ポートを公開した開発DBと区別できないため）。また、`DATABASE_URL` が手順2と同じ形（`127.0.0.1:5432` の `team_b_dev`、ロール `team_b_app`、クエリーなし）でなければ、接続せずに失敗します。
 
 ## 接続済みの公開環境
 
