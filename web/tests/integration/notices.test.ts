@@ -492,6 +492,19 @@ it("公開内容の更新時刻は、審査を経た版では承認時刻、職�
   const list = await get(noticesRoute, `/api/v1/notices?q=${encodeURIComponent(`${marker} 審査済み`)}`, "poc_s002", {});
   expect(list.body.data?.items?.[0]).toMatchObject({ id: reviewed.id, updatedAt: times.published.toISOString() });
 
+  // 承認済み申請の一意性はDBで保証されない。同じ公開版に2件あっても一覧の行と件数をずらさない。
+  const { rows: [{ decided: secondApproval }] } = await target.client.query<{ decided: Date }>(`
+    INSERT INTO notice_requests
+      (notice_id, revision_id, request_kind, status, submitted_at, reviewer_id, decided_at, version)
+    SELECT id, public_revision_id, 'edit', 'approved', $2, $3, now() - interval '12 hours', 2 FROM notices WHERE id = $1
+    RETURNING decided_at AS decided
+  `, [reviewed.id, times.created, id("poc_school")]);
+  const duplicated = await get(noticesRoute,
+    `/api/v1/notices?q=${encodeURIComponent(`${marker} 審査済み`)}`, "poc_s002", {});
+  expect(duplicated.body.data?.items).toHaveLength(1);
+  expect(duplicated.body.meta.page?.totalCount).toBe(1);
+  expect(duplicated.body.data?.items?.[0]).toMatchObject({ id: reviewed.id, updatedAt: secondApproval.toISOString() });
+
   const direct = await addNotice({ author: "poc_staff" });
   const { rows: [{ created }] } = await target.client.query<{ created: Date }>(
     "SELECT r.created_at AS created FROM notices n JOIN notice_revisions r ON r.id = n.public_revision_id WHERE n.id = $1",
