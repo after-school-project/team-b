@@ -1,5 +1,5 @@
-import { expect, test } from "@playwright/test";
-import { signIn } from "./session";
+import { expect, test, type Route } from "@playwright/test";
+import { canonicalOrigin, signIn } from "./session";
 
 /**
  * 実セッションでホームへ入れることを確認する。モックせず、本番ビルドの認証・利用状態API・ホームの認可を通す。
@@ -10,6 +10,15 @@ import { signIn } from "./session";
  * トレースなどの記録をこのファイルでは無効にする。画面での入力と送信は login.spec.ts で確認する。
  */
 test.use({ trace: "off", screenshot: "off", video: "off" });
+
+async function fetchSignOutAtAuthOrigin(route: Route) {
+  return route.fetch({
+    headers: {
+      ...await route.request().allHeaders(),
+      origin: canonicalOrigin ?? new URL(route.request().url()).origin,
+    },
+  });
+}
 
 test("利用中の利用者は実セッションでホームを表示し、再読み込み後も表示を保つ", async ({ page, baseURL }) => {
   await page.goto("/");
@@ -48,6 +57,100 @@ test("ホームに共通レイアウトを表示し、本人メニューに自�
   await expect(accountButton).toHaveAttribute("aria-expanded", "true");
   await expect(page.getByText(/^ログイン中\s*はる$/).filter({ visible: true })).toHaveCount(1);
   await expect(page.getByText("管理エリアへ")).toHaveCount(0);
+});
+
+for (const username of ["poc_s001", "poc_a001", "poc_staff", "poc_school"]) {
+  test(`${username} はマイメニューからログアウトし、旧Cookieを使えない`, async ({ page, baseURL }) => {
+    await signIn(page, baseURL!, username);
+    await page.goto("/");
+    await page.getByRole("button", { name: "マイメニュー" }).click();
+    const signOut = page.getByRole("button", { name: "ログアウト" });
+    await expect(signOut).toBeVisible();
+    const sessionCookie = (await page.context().cookies(baseURL))
+      .find(({ name }) => name.endsWith("better-auth.session_token"));
+    expect(sessionCookie).toBeDefined();
+
+    await page.route("**/api/auth/sign-out", async (route) => {
+      await route.fulfill({ response: await fetchSignOutAtAuthOrigin(route) });
+    });
+    await signOut.click();
+    await expect(page).toHaveURL(/\/login$/);
+
+    const oldCookie = `${sessionCookie!.name}=${sessionCookie!.value}`;
+    const me = await page.request.get("/api/v1/me", { headers: { Cookie: oldCookie } });
+    expect(me.status()).toBe(401);
+
+    await page.setExtraHTTPHeaders({ Cookie: oldCookie });
+    await page.goto("/");
+    await expect(page).toHaveURL(/\/login$/);
+    await expect(page.getByRole("heading", { level: 1, name: "ログイン" })).toBeVisible();
+  });
+}
+
+test("スマートフォンのマイメニューでキーボードからログアウトできる", async ({ page, baseURL }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await signIn(page, baseURL!, "poc_a001");
+  await page.goto("/");
+  const menuButton = page.getByRole("button", { name: "メニュー", exact: true });
+  await menuButton.focus();
+  await page.keyboard.press("Enter");
+
+  const signOut = page.getByRole("button", { name: "ログアウト" });
+  await expect(signOut).toBeVisible();
+  await page.route("**/api/auth/sign-out", async (route) => {
+    await route.fulfill({ response: await fetchSignOutAtAuthOrigin(route) });
+  });
+  await signOut.focus();
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(/\/login$/);
+});
+
+test("ログアウト失敗時はエラーを表示し、再試行できる", async ({ page, baseURL }) => {
+  await signIn(page, baseURL!, "poc_s001");
+  await page.goto("/");
+  await page.getByRole("button", { name: "マイメニュー" }).click();
+  let requests = 0;
+  await page.route("**/api/auth/sign-out", async (route) => {
+    requests += 1;
+    if (requests === 1) {
+      await route.fulfill({ status: 503, contentType: "application/json", body: "{}" });
+      return;
+    }
+    await route.fulfill({ response: await fetchSignOutAtAuthOrigin(route) });
+  });
+  const signOut = page.getByRole("button", { name: "ログアウト" });
+  await signOut.click();
+  const error = page.getByText("ログアウトできませんでした。時間をおいてもう一度お試しください。", { exact: true })
+    .filter({ visible: true });
+  await expect(error).toHaveAttribute("role", "alert");
+  await expect(signOut).toBeEnabled();
+
+  await signOut.click();
+  await expect(page).toHaveURL(/\/login$/);
+  expect(requests).toBe(2);
+});
+
+test("ログアウト処理中はボタンを無効化し、要求を一度だけ送る", async ({ page, baseURL }) => {
+  await signIn(page, baseURL!, "poc_s001");
+  await page.goto("/");
+  await page.getByRole("button", { name: "マイメニュー" }).click();
+  let releaseSignOut: () => void = () => {};
+  const pending = new Promise<void>((resolve) => { releaseSignOut = resolve; });
+  let requests = 0;
+  await page.route("**/api/auth/sign-out", async (route) => {
+    requests += 1;
+    await pending;
+    await route.fulfill({ response: await fetchSignOutAtAuthOrigin(route) });
+  });
+
+  const signOut = page.getByRole("button", { name: "ログアウト" });
+  await signOut.click();
+  const busyButton = page.getByRole("button", { name: "ログアウト中..." });
+  await expect(busyButton).toBeDisabled();
+  expect(requests).toBe(1);
+  releaseSignOut();
+  await expect(page).toHaveURL(/\/login$/);
+  expect(requests).toBe(1);
 });
 
 test("学校管理者には管理導線を表示する（管理エリアの実装前は準備中）", async ({ page, baseURL }) => {
