@@ -147,7 +147,9 @@ export async function createQuestions(marker: string, questions: NewQuestion[]):
   });
 }
 
-export async function removeQuestions(marker: string) {
+export async function removeQuestions(marker: string, username?: string) {
   await withDatabase((client) => client.query(
-    "DELETE FROM qa_questions WHERE body_markdown LIKE '%' || $1 AND author_label = 'e2eの投稿者名'", [marker]));
+    `DELETE FROM qa_questions WHERE right(body_markdown, length($1)) = $1
+      AND (($2::text IS NULL AND author_label = 'e2eの投稿者名')
+        OR author_id = (SELECT id FROM "user" WHERE username = $2))`, [marker, username ?? null]));
 }

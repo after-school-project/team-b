@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ApiError, type PageInfo } from "@/api/response";
+import { canWriteContent } from "@/auth/access";
 import type { ScreenSearchParams } from "@/auth/screen";
 import { AppShell } from "@/components/app-shell/AppShell";
 import { requireAppScreen } from "@/components/app-shell/screen";
@@ -57,6 +58,10 @@ export default async function QuestionsPage({ searchParams }: { searchParams: Pr
         <header className={styles.header}>
           <h1 className={styles.title}>Q&A</h1>
           <p className={styles.lead}>在校生・卒業生・学校職員の質問を探せます。</p>
+          {canWriteContent(viewer) ? <Link className={styles.formLink}
+            href={query.size ? `/questions/new?${new URLSearchParams({ from: `/questions?${query}` })}` : "/questions/new"}>
+            質問を投稿
+          </Link> : null}
         </header>
 
         {/* 適用中の条件が変わる画面内の遷移（共通ナビなど）では、未送信の入力を残さず入力欄を作り直す。 */}

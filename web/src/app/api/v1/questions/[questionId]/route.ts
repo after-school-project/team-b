@@ -1,5 +1,6 @@
 import { defineAuthorizedApiRoute } from "@/api/authorized-route";
-import { parsePathParams, parseQuery, uuid } from "@/api/request";
+import { parsePathParams, parseQuery, readJson, uuid } from "@/api/request";
+import { questionPatchSchema, updateQuestion } from "@/qa/question-mutations";
 import { loadQuestion } from "@/qa/questions";
 
 export const runtime = "nodejs";
@@ -17,5 +18,12 @@ export const { GET, HEAD, OPTIONS, POST, PUT, DELETE, PATCH } = defineAuthorized
     parseQuery(new URL(request.url), {});
     const { db } = await import("@/db/client");
     return { data: await loadQuestion(db, viewer, questionId) };
+  },
+  async PATCH(request, context, viewer, input) {
+    const { questionId } = parsePathParams(await context.params, { questionId: uuid });
+    parseQuery(new URL(request.url), {});
+    const body = await readJson(request, questionPatchSchema);
+    const { db } = await import("@/db/client");
+    return updateQuestion(db, viewer.userId, input, questionId, body);
   },
 });
