@@ -1,4 +1,4 @@
-import { expect, test, type Route } from "@playwright/test";
+import { expect, test, type Page, type Route } from "@playwright/test";
 import { canonicalOrigin, signIn } from "./session";
 
 /**
@@ -18,6 +18,20 @@ async function fetchSignOutAtAuthOrigin(route: Route) {
       origin: canonicalOrigin ?? new URL(route.request().url()).origin,
     },
   });
+}
+
+/**
+ * ページがバックフォワードキャッシュから復元されたときのイベントを送る。Playwright の Chromium は BFCache を無効にして起動し、
+ * 無効化を外しても保護画面は実際には復元されなかった（2026-11-26 にローカルで確認）ため、復元時の `pageshow` を直接送って分岐を確認する。
+ */
+async function showFromBackForwardCache(page: Page) {
+  // 共通ナビゲーションが操作できる（復元時のリスナーを登録済みの）状態になってから送る。
+  const accountMenu = page.getByRole("button", { name: "マイメニュー" });
+  await expect(async () => {
+    if (await accountMenu.getAttribute("aria-expanded") === "false") await accountMenu.click();
+    await expect(accountMenu).toHaveAttribute("aria-expanded", "true", { timeout: 500 });
+  }).toPass({ timeout: 10000 });
+  await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true })));
 }
 
 test("利用中の利用者は実セッションでホームを表示し、再読み込み後も表示を保つ", async ({ page, baseURL }) => {
@@ -277,6 +291,102 @@ test("ログアウト後にブラウザーの戻る操作をしても、保護�
   await expect(page).toHaveURL(/\/login$/);
   await expect(page.getByRole("heading", { level: 1, name: "ログイン" })).toBeVisible();
   await expect(page.getByRole("button", { name: "マイメニュー" })).toHaveCount(0);
+});
+
+test("移動先の画面が表示される前にログアウトが失敗しても、移動先のメニューにエラーを表示し、再試行できる", async ({ page, baseURL }) => {
+  await signIn(page, baseURL!, "poc_s001");
+  let releaseSignOut: () => void = () => {};
+  const signOutGate = new Promise<void>((resolve) => { releaseSignOut = resolve; });
+  let releaseProfile: () => void = () => {};
+  const profileGate = new Promise<void>((resolve) => { releaseProfile = resolve; });
+  let requests = 0;
+  await page.route("**/api/auth/sign-out", async (route) => {
+    requests += 1;
+    if (requests === 1) {
+      await signOutGate;
+      await route.fulfill({ status: 503, contentType: "application/json", body: "{}" });
+      return;
+    }
+    await route.fulfill({ response: await fetchSignOutAtAuthOrigin(route) });
+  });
+  // 移動先の画面の読み込み（先読みを含む）を止め、ログアウトの失敗を移動先の表示より先に返す。
+  await page.route("**/me/profile**", async (route) => {
+    await profileGate;
+    await route.continue();
+  });
+  await page.goto("/");
+
+  const accountMenu = page.getByRole("button", { name: "マイメニュー" });
+  await accountMenu.click();
+  await page.getByRole("button", { name: "ログアウト", exact: true }).click();
+  await expect.poll(() => requests).toBe(1);
+  await page.getByRole("link", { name: "マイプロフィール", exact: true }).click();
+  const failed = page.waitForResponse((response) => response.url().endsWith("/api/auth/sign-out"));
+  releaseSignOut();
+  expect((await failed).status()).toBe(503);
+  releaseProfile();
+  await expect(page).toHaveURL(/\/me\/profile$/);
+
+  await accountMenu.click();
+  await expect(page.getByRole("alert").filter({
+    hasText: "ログアウトできませんでした。時間をおいてもう一度お試しください。",
+  })).toBeVisible();
+  const signOut = page.getByRole("button", { name: "ログアウト", exact: true });
+  await expect(signOut).toBeEnabled();
+  await signOut.click();
+  await expect(page).toHaveURL(/\/login$/);
+  expect(requests).toBe(2);
+});
+
+test("ログアウトしたページがキャッシュから復元されたら、再読み込みしてログイン画面へ移す", async ({ page, baseURL }) => {
+  await signIn(page, baseURL!, "poc_s001");
+  await page.goto("/");
+  await page.route("**/api/auth/sign-out", async (route) => {
+    await route.fulfill({ response: await fetchSignOutAtAuthOrigin(route) });
+  });
+  // 復元される前の状態を作るため、ログアウト成功後のログイン画面への移動を取り消し、ログアウトしたページに留める。
+  await page.route("**/login", async (route) => {
+    if (route.request().isNavigationRequest()) await route.abort("aborted");
+    else await route.continue();
+  });
+  const leaving = page.waitForEvent("requestfailed", (request) => new URL(request.url()).pathname === "/login");
+
+  await page.getByRole("button", { name: "マイメニュー" }).click();
+  await page.getByRole("button", { name: "ログアウト", exact: true }).click();
+  await leaving;
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByRole("button", { name: "ログアウト中..." })).toBeVisible();
+
+  await page.unroute("**/login");
+  await showFromBackForwardCache(page);
+  await expect(page).toHaveURL(/\/login$/);
+  await expect(page.getByRole("heading", { level: 1, name: "ログイン" })).toBeVisible();
+});
+
+test("別のページでログアウトした後に保護画面がキャッシュから復元されたら、ログイン画面へ移す", async ({ page, baseURL }) => {
+  await signIn(page, baseURL!, "poc_s001");
+  await page.goto("/");
+  const response = await page.request.post("/api/auth/sign-out", {
+    headers: { Origin: canonicalOrigin ?? new URL(baseURL!).origin },
+    data: {},
+  });
+  expect(response.ok()).toBe(true);
+
+  await showFromBackForwardCache(page);
+  await expect(page).toHaveURL(/\/login$/);
+  await expect(page.getByRole("heading", { level: 1, name: "ログイン" })).toBeVisible();
+});
+
+test("ログイン中に保護画面がキャッシュから復元されても、再読み込みせず表示を保つ", async ({ page, baseURL }) => {
+  await signIn(page, baseURL!, "poc_s001");
+  await page.goto("/");
+  await page.evaluate(() => { (window as Window & { restoreMarker?: boolean }).restoreMarker = true; });
+
+  const checked = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/me");
+  await showFromBackForwardCache(page);
+  expect((await checked).status()).toBe(200);
+  await expect(page).toHaveURL(/\/$/);
+  expect(await page.evaluate(() => (window as Window & { restoreMarker?: boolean }).restoreMarker)).toBe(true);
 });
 
 test("学校管理者には管理導線を表示する（管理エリアの実装前は準備中）", async ({ page, baseURL }) => {

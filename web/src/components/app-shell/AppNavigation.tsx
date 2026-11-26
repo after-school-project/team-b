@@ -27,11 +27,20 @@ type AppNavigationProps = {
  * 二重送信の防止をモジュール単位で持つ。成功時は残したままにし、ログイン画面へ移動する。
  */
 let pendingSignOut: Promise<boolean> | null = null;
+/**
+ * 最後のログアウトが失敗したか。移動先の画面が表示される前に失敗した場合も、移動先のメニューでエラーを表示できるように、
+ * メニューを閉じるか再試行するまで保持する。
+ */
+let signOutFailed = false;
 
 function startSignOut(): Promise<boolean> {
+  signOutFailed = false;
   pendingSignOut ??= requestSignOut().then((signedOut) => {
     if (signedOut) window.location.replace("/login");
-    else pendingSignOut = null;
+    else {
+      pendingSignOut = null;
+      signOutFailed = true;
+    }
     return signedOut;
   });
   return pendingSignOut;
@@ -47,21 +56,26 @@ export function AppNavigation({ viewer, unreadNotificationCount }: AppNavigation
   const [accountOpen, setAccountOpen] = useState(false);
   // 画面移動で作り直された場合も、進行中のログアウトを処理中として表示する。
   const [loggingOut, setLoggingOut] = useState(() => pendingSignOut !== null);
-  const [logoutMessage, setLogoutMessage] = useState<string | null>(null);
+  // 前の画面で失敗したログアウトも、メニューを閉じるまではエラーとして表示する。
+  const [logoutMessage, setLogoutMessage] = useState<string | null>(() => (signOutFailed ? signOutError : null));
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const accountButtonRef = useRef<HTMLButtonElement>(null);
   const accountRef = useRef<HTMLDivElement>(null);
 
   // 閉じたメニューに前回のログアウト失敗を残さない。
+  const clearLogoutMessage = () => {
+    signOutFailed = false;
+    setLogoutMessage(null);
+  };
   const closeAccountMenu = () => {
     if (!accountOpen) return;
     setAccountOpen(false);
-    setLogoutMessage(null);
+    clearLogoutMessage();
   };
   const closeMainMenu = () => {
     if (!menuOpen) return;
     setMenuOpen(false);
-    setLogoutMessage(null);
+    clearLogoutMessage();
   };
 
   useDismissOnOutsideClick(accountRef, accountOpen, closeAccountMenu);
