@@ -1,4 +1,6 @@
 import { defineAuthorizedApiRoute } from "@/api/authorized-route";
+import { parseQuery, readJson } from "@/api/request";
+import { createQuestion, questionCreateSchema } from "@/qa/question-mutations";
 import { parseQuestionQuery, searchQuestions } from "@/qa/questions";
 
 export const runtime = "nodejs";
@@ -13,5 +15,11 @@ export const { GET, HEAD, OPTIONS, POST, PUT, DELETE, PATCH } = defineAuthorized
     const query = parseQuestionQuery(new URL(request.url));
     const { db } = await import("@/db/client");
     return searchQuestions(db, viewer, query);
+  },
+  async POST(request, _context, viewer, input) {
+    parseQuery(new URL(request.url), {});
+    const body = await readJson(request, questionCreateSchema);
+    const { db } = await import("@/db/client");
+    return createQuestion(db, viewer.userId, input, body);
   },
 });
