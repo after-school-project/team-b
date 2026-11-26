@@ -34,23 +34,13 @@ export function AppNavigation({ viewer, unreadNotificationCount }: AppNavigation
   const [logoutMessage, setLogoutMessage] = useState<string | null>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const accountButtonRef = useRef<HTMLButtonElement>(null);
-  const accountSignOutRef = useRef<HTMLButtonElement>(null);
-  const mobileSignOutRef = useRef<HTMLButtonElement>(null);
   const accountRef = useRef<HTMLDivElement>(null);
   const signOutInFlight = useRef(false);
 
   useDismissOnOutsideClick(accountRef, accountOpen, () => setAccountOpen(false));
 
-  useEffect(() => {
-    if (!logoutMessage) return;
-    if (accountOpen) {
-      accountSignOutRef.current?.focus();
-    } else if (menuOpen) {
-      mobileSignOutRef.current?.focus();
-    }
-  }, [accountOpen, logoutMessage, menuOpen]);
-
   async function signOut() {
+    // 送信中もボタンのフォーカスを維持し、再送はここで防ぐ。
     if (signOutInFlight.current) return;
     signOutInFlight.current = true;
     setLoggingOut(true);
@@ -118,7 +108,6 @@ export function AppNavigation({ viewer, unreadNotificationCount }: AppNavigation
           ref={accountRef}
           onKeyDown={handleAccountKeyDown}
           onBlur={(event) => {
-            if (loggingOut) return;
             if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
               setAccountOpen(false);
             }
@@ -145,7 +134,6 @@ export function AppNavigation({ viewer, unreadNotificationCount }: AppNavigation
             </p>
             <NavList items={ACCOUNT_NAV_ITEMS} pathname={pathname} onNavigate={closeAll} />
             <SignOutControl
-              buttonRef={accountSignOutRef}
               busy={loggingOut}
               error={logoutMessage}
               onSignOut={signOut}
@@ -185,7 +173,6 @@ export function AppNavigation({ viewer, unreadNotificationCount }: AppNavigation
           </p>
           <NavList items={ACCOUNT_NAV_ITEMS} pathname={pathname} onNavigate={closeAll} />
           <SignOutControl
-            buttonRef={mobileSignOutRef}
             busy={loggingOut}
             error={logoutMessage}
             onSignOut={signOut}
@@ -210,9 +197,8 @@ export function AppNavigation({ viewer, unreadNotificationCount }: AppNavigation
 }
 
 function SignOutControl({
-  buttonRef, busy, error, onSignOut,
+  busy, error, onSignOut,
 }: {
-  buttonRef: RefObject<HTMLButtonElement | null>;
   busy: boolean;
   error: string | null;
   onSignOut: () => void;
@@ -221,11 +207,10 @@ function SignOutControl({
     <div className={styles.signOutControl}>
       {error ? <p className={styles.signOutError} role="alert">{error}</p> : null}
       <button
-        ref={buttonRef}
         className={styles.signOutButton}
         type="button"
         onClick={() => void onSignOut()}
-        disabled={busy}
+        aria-disabled={busy}
       >
         {busy ? "ログアウト中..." : "ログアウト"}
       </button>

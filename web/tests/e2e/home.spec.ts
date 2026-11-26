@@ -105,30 +105,65 @@ test("スマートフォンのマイメニューでキーボードからログ�
   await expect(page).toHaveURL(/\/login$/);
 });
 
-test("ログアウト失敗時はエラーを表示し、再試行できる", async ({ page, baseURL }) => {
-  await signIn(page, baseURL!, "poc_s001");
-  await page.goto("/");
-  await page.getByRole("button", { name: "マイメニュー" }).click();
-  let requests = 0;
-  await page.route("**/api/auth/sign-out", async (route) => {
-    requests += 1;
-    if (requests === 1) {
-      await route.fulfill({ status: 503, contentType: "application/json", body: "{}" });
-      return;
-    }
-    await route.fulfill({ response: await fetchSignOutAtAuthOrigin(route) });
-  });
-  const signOut = page.getByRole("button", { name: "ログアウト" });
-  await signOut.click();
-  const error = page.getByText("ログアウトできませんでした。時間をおいてもう一度お試しください。", { exact: true })
-    .filter({ visible: true });
-  await expect(error).toHaveAttribute("role", "alert");
-  await expect(signOut).toBeEnabled();
+for (const { layout, viewport, menuName, firstLinkName } of [
+  {
+    layout: "横向き",
+    viewport: { width: 844, height: 390 },
+    menuName: "マイメニュー",
+    firstLinkName: "マイプロフィール",
+  },
+  {
+    layout: "縦向き",
+    viewport: { width: 375, height: 812 },
+    menuName: "メニュー",
+    firstLinkName: "ホーム",
+  },
+]) {
+  test(`${layout}のメニューでログアウト失敗後に通常のTab順序を保ち、再試行できる`, async ({ page, baseURL }) => {
+    await page.setViewportSize(viewport);
+    await signIn(page, baseURL!, "poc_s001");
+    await page.goto("/");
+    let requests = 0;
+    await page.route("**/api/auth/sign-out", async (route) => {
+      requests += 1;
+      if (requests === 1) {
+        await route.fulfill({ status: 503, contentType: "application/json", body: "{}" });
+        return;
+      }
+      await route.fulfill({ response: await fetchSignOutAtAuthOrigin(route) });
+    });
 
-  await signOut.click();
-  await expect(page).toHaveURL(/\/login$/);
-  expect(requests).toBe(2);
-});
+    const menu = page.getByRole("button", { name: menuName, exact: true });
+    const firstLink = page.getByRole("link", { name: firstLinkName, exact: true });
+    const signOut = page.getByRole("button", { name: "ログアウト", exact: true });
+    await menu.focus();
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Tab");
+    await expect(firstLink).toBeFocused();
+    await signOut.focus();
+    await page.keyboard.press("Enter");
+    const error = page.getByRole("alert").filter({
+      hasText: "ログアウトできませんでした。時間をおいてもう一度お試しください。",
+    });
+    await expect(error).toBeVisible();
+    await expect(signOut).toBeEnabled();
+    await expect(signOut).toBeFocused();
+
+    await page.keyboard.press("Escape");
+    await expect(menu).toBeFocused();
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Tab");
+    await expect(firstLink).toBeFocused();
+
+    // メニュー内をスクロールして、タップできる位置まで再試行ボタンを表示する。
+    await firstLink.hover();
+    await page.mouse.wheel(0, 400);
+    await expect(signOut).toBeInViewport({ ratio: 1 });
+    await signOut.click();
+    await expect(page).toHaveURL(/\/login$/);
+    expect(requests).toBe(2);
+  });
+}
 
 test("ログアウト処理中はボタンを無効化し、要求を一度だけ送る", async ({ page, baseURL }) => {
   await signIn(page, baseURL!, "poc_s001");
@@ -144,10 +179,14 @@ test("ログアウト処理中はボタンを無効化し、要求を一度だ�
   });
 
   const signOut = page.getByRole("button", { name: "ログアウト" });
-  await signOut.click();
+  await signOut.focus();
+  await page.keyboard.press("Enter");
   const busyButton = page.getByRole("button", { name: "ログアウト中..." });
   await expect(busyButton).toBeDisabled();
-  expect(requests).toBe(1);
+  await expect(busyButton).toBeFocused();
+  await expect.poll(() => requests).toBe(1);
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Space");
   releaseSignOut();
   await expect(page).toHaveURL(/\/login$/);
   expect(requests).toBe(1);

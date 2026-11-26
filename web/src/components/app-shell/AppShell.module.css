@@ -30,6 +30,7 @@
 }
 
 .headerInner {
+  --header-row-height: 56px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   grid-template-areas:
@@ -46,7 +47,7 @@
   grid-area: brand;
   display: inline-flex;
   align-items: center;
-  min-height: 56px;
+  min-height: var(--header-row-height);
   color: var(--color-heading);
   font-size: 16px;
   font-weight: 700;
@@ -166,6 +167,10 @@
   width: max-content;
   min-width: 220px;
   max-width: min(320px, calc(100vw - 32px));
+  max-height: calc(100vh - var(--header-row-height) - 2 * var(--space-2));
+  max-height: calc(100dvh - var(--header-row-height) - 2 * var(--space-2));
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: var(--space-2);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-card);
@@ -205,11 +210,11 @@
   cursor: pointer;
 }
 
-.signOutButton:hover:not(:disabled) {
+.signOutButton:hover:not([aria-disabled="true"]) {
   background: var(--color-surface-subtle);
 }
 
-.signOutButton:disabled {
+.signOutButton[aria-disabled="true"] {
   color: var(--color-text-muted);
   cursor: wait;
 }
@@ -298,9 +303,9 @@
   padding: var(--space-2) var(--space-1) var(--space-4);
   border-top: 1px solid var(--color-border);
   /* 画面の高さが低くても開閉ボタン（ヘッダー1行目）を表示したまま、メニュー内だけをスクロールさせる。
-     1行目の高さ（56px）とヘッダー下線（1px）を除いた高さを上限にする。dvh 非対応の環境は vh を使う。 */
-  max-height: calc(100vh - 57px);
-  max-height: calc(100dvh - 57px);
+     ヘッダー1行目と下線を除いた高さを上限にする。dvh 非対応の環境は vh を使う。 */
+  max-height: calc(100vh - var(--header-row-height) - 1px);
+  max-height: calc(100dvh - var(--header-row-height) - 1px);
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -344,12 +349,12 @@
 
 @media (min-width: 768px) {
   .headerInner {
+    --header-row-height: 64px;
     padding-inline: var(--space-6);
   }
 
   .brand {
     font-size: 18px;
-    min-height: 64px;
   }
 
   .menuButton,
