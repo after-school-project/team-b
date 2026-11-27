@@ -1,6 +1,7 @@
 import { and, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { assertExpectedVersion, commitMutation } from "@/api/mutation";
+import { preserveEvidence } from "@/api/report-evidence";
 import { expectedVersion, title, type MutationRequest } from "@/api/request";
 import { ApiError } from "@/api/response";
 import { authorizeActiveEntry, type AccessReader } from "@/auth/access";
@@ -81,6 +82,8 @@ export function updateQuestion(
     async execute({ tx, now }) {
       const question = await requireEditableQuestion(tx, actorId, questionId);
       assertExpectedVersion(question.version, body.expectedVersion);
+      // 通報された公開中の質問なら、編集前の内容を未終了案件の証拠に残す（DB・ER設計書 §5、#47 ③）。
+      await preserveEvidence(tx, { targets: [{ kind: "question", questionId }] });
       const version = question.version + 1;
       await tx.update(qaQuestions).set({
         title: body.title,

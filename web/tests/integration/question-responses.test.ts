@@ -17,6 +17,7 @@ import { endPool, isolatedDatabase } from "./isolated-database";
  * AC-07：有効な質問へ回答・コメント・返信を作成でき、親IDと投稿の種類の組合せを検証する。
  * AC-08：本人だけが自分の未削除の投稿を編集でき、プロフィール非表示中は新規投稿・編集を拒否する。
  * 通知（#17 AC-01・AC-02 の Q&A 部分）：宛先・件数・種類、再送で重複しないこと、失敗時に保存しないこと、本文を保存しないこと。
+ * 通報証拠（DB・ER設計書 §5、#47 ③）：通報された公開中の質問・回答等は、編集の前の内容を未終了案件の証拠に残す。
  */
 
 const origin = "https://school.example";
@@ -29,6 +30,7 @@ let credentialsDir: string;
 let credentials: Record<string, string>;
 let responsesRoute: typeof import("../../src/app/api/v1/questions/[questionId]/responses/route");
 let responseRoute: typeof import("../../src/app/api/v1/responses/[responseId]/route");
+let questionRoute: typeof import("../../src/app/api/v1/questions/[questionId]/route");
 let ipCounter = 0;
 const ids = new Map<string, string>();
 const cookies = new Map<string, string>();
@@ -49,10 +51,18 @@ beforeAll(async () => {
   for (const { id, username } of rows) ids.set(username, id);
   responsesRoute = await import("../../src/app/api/v1/questions/[questionId]/responses/route");
   responseRoute = await import("../../src/app/api/v1/responses/[responseId]/route");
+  questionRoute = await import("../../src/app/api/v1/questions/[questionId]/route");
 });
 
 afterEach(async () => {
   const ours = "SELECT r.id FROM qa_responses r JOIN qa_questions q ON q.id = r.question_id WHERE q.body_markdown LIKE $1";
+  const targets = `SELECT t.id FROM report_targets t WHERE t.response_id IN (${ours})
+    OR t.question_id IN (SELECT id FROM qa_questions WHERE body_markdown LIKE $1)`;
+  const cases = `SELECT id FROM report_cases WHERE target_id IN (${targets})`;
+  await target.client.query(`DELETE FROM report_case_evidence WHERE case_id IN (${cases})`, [`%${marker}%`]);
+  await target.client.query(`DELETE FROM evidence_snapshots WHERE target_id IN (${targets})`, [`%${marker}%`]);
+  await target.client.query(`DELETE FROM report_cases WHERE id IN (${cases})`, [`%${marker}%`]);
+  await target.client.query(`DELETE FROM report_targets WHERE id IN (${targets})`, [`%${marker}%`]);
   await target.client.query(`DELETE FROM notifications WHERE qa_response_id IN (${ours})`, [`%${marker}%`]);
   await target.client.query(`DELETE FROM qa_responses WHERE id IN (${ours})`, [`%${marker}%`]);
   await target.client.query("DELETE FROM qa_questions WHERE body_markdown LIKE $1", [`%${marker}%`]);
@@ -187,6 +197,37 @@ async function withUser<T>(username: string, change: string, restore: string, ru
   } finally {
     await target.client.query(`UPDATE community_users SET ${restore} WHERE user_id = $1`, [id(username)]);
   }
+}
+
+/** 通報対象と案件を作る。通報対象は対象ごとに1行なので、既にあれば使う。未終了の案件は学校管理者の担当にする。 */
+async function addCase(reported: { questionId: string } | { responseId: string }, status: "in_progress" | "closed" = "in_progress") {
+  const [kind, column, targetRef] = "questionId" in reported
+    ? ["question", "question_id", reported.questionId] as const
+    : ["response", "response_id", reported.responseId] as const;
+  const { rows: [{ id: targetId }] } = await target.client.query<{ id: string }>(`
+    WITH found AS (SELECT id FROM report_targets WHERE ${column} = $2),
+      inserted AS (
+        INSERT INTO report_targets (kind, ${column}) SELECT $1, $2 WHERE NOT EXISTS (SELECT 1 FROM found) RETURNING id
+      )
+    SELECT id FROM found UNION ALL SELECT id FROM inserted
+  `, [kind, targetRef]);
+  const { rows: [{ id: caseId }] } = await target.client.query<{ id: string }>(
+    `INSERT INTO report_cases (target_id, status, assignee_id, handoff_pending, closed_at)
+    VALUES ($1, $2, $3, false, CASE WHEN $2 = 'closed' THEN now() END) RETURNING id`,
+    [targetId, status, id("poc_school")]);
+  return caseId;
+}
+
+async function evidenceOf(caseId: string) {
+  const { rows } = await target.client.query<{ source_revision: number; snapshot: Record<string, unknown> }>(
+    `SELECT e.source_revision, e.snapshot FROM report_case_evidence ce JOIN evidence_snapshots e ON e.id = ce.evidence_id
+    WHERE ce.case_id = $1 ORDER BY e.captured_at, e.id`, [caseId]);
+  return rows;
+}
+
+async function editQuestion(viewer: string, questionId: string, body: object) {
+  const request = await mutationRequest(viewer, "PATCH", `/api/v1/questions/${questionId}`, body, randomUUID());
+  return result(await questionRoute.PATCH(request, { params: Promise.resolve({ questionId }) }));
 }
 
 const withheld = { content: null, author: null, version: null, createdAt: null, updatedAt: null, capabilities: noCapabilities };
@@ -462,5 +503,58 @@ describe("API-QA-07・09 回答・コメント・返信の取得（AC-05・AC-06
         expect(response.text).not.toContain("秘密の本文");
       }
     });
+  });
+});
+
+describe("通報証拠：編集の前の内容を保全する（DB・ER設計書 §5、#47 ③）", () => {
+  it("通報された公開中の回答等は、編集の前の本文を未終了案件の証拠に残す。同じ内容への編集では重複させない", async () => {
+    const questionId = await addQuestion();
+    const answerId = await created("poc_a001", questionId, { kind: "answer", bodyMarkdown: "通報された回答" });
+    const caseId = await addCase({ responseId: answerId });
+    const closedCase = await addCase({ responseId: answerId }, "closed");
+
+    expect((await edit("poc_a001", answerId, { expectedVersion: 1, bodyMarkdown: "書き換えた回答" })).status).toBe(200);
+    expect(await evidenceOf(caseId)).toEqual([{
+      source_revision: 1,
+      snapshot: { bodyMarkdown: "通報された回答", authorLabel: "あおい", kind: "answer", questionId, parentResponseId: null },
+    }]);
+    // 対応済みの案件には関連付けない。
+    expect(await evidenceOf(closedCase)).toEqual([]);
+
+    expect((await edit("poc_a001", answerId, { expectedVersion: 2, bodyMarkdown: "さらに書き換えた回答" })).status).toBe(200);
+    expect((await evidenceOf(caseId)).map(({ snapshot }) => snapshot.bodyMarkdown)).toEqual(["通報された回答", "書き換えた回答"]);
+  });
+
+  it("強制非表示中の回答等と、通報されていない回答等では証拠を作らない。編集が失敗した場合も残さない", async () => {
+    const questionId = await addQuestion();
+    const hiddenId = await addResponse(questionId, { hidden: true });
+    const hiddenCase = await addCase({ responseId: hiddenId });
+    expect((await edit("poc_a001", hiddenId, { expectedVersion: 1, bodyMarkdown: "非表示中の編集" })).status).toBe(200);
+    expect(await evidenceOf(hiddenCase)).toEqual([]);
+
+    const answerId = await addResponse(questionId);
+    const reportedCase = await addCase({ responseId: answerId });
+    expect((await edit("poc_a001", answerId, { expectedVersion: 9, bodyMarkdown: "古い版での編集" })).status).toBe(409);
+    expect(await evidenceOf(reportedCase)).toEqual([]);
+
+    const unreported = await addResponse(questionId);
+    expect((await edit("poc_a001", unreported, { expectedVersion: 1, bodyMarkdown: "通報されていない" })).status).toBe(200);
+    const { rows } = await target.client.query<{ total: number }>(
+      "SELECT count(*)::int AS total FROM report_targets WHERE response_id = $1", [unreported]);
+    expect(rows[0].total).toBe(0);
+  });
+
+  it("通報された公開中の質問は、編集の前の題名・本文を未終了案件の証拠に残す", async () => {
+    const questionId = await addQuestion();
+    const caseId = await addCase({ questionId });
+    const saved = await editQuestion("poc_s001", questionId, { expectedVersion: 1, title: "書き換えた題名" });
+    expect(saved.status).toBe(200);
+    expect(await evidenceOf(caseId)).toEqual([{
+      source_revision: 1, snapshot: { title: "題名", bodyMarkdown: `本文 ${marker}`, authorLabel: "はる" },
+    }]);
+    // 証拠に含めない項目（カテゴリー）だけの変更では、同じ内容の証拠を重複させない。
+    expect((await editQuestion("poc_s001", questionId, { expectedVersion: 2, categoryCode: "chat" })).status).toBe(200);
+    expect((await editQuestion("poc_s001", questionId, { expectedVersion: 3, categoryCode: "career" })).status).toBe(200);
+    expect((await evidenceOf(caseId)).map(({ snapshot }) => snapshot.title)).toEqual(["題名", "書き換えた題名"]);
   });
 });

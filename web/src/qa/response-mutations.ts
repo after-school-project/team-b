@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { assertExpectedVersion, commitMutation } from "@/api/mutation";
 import { recordNotification, type NotificationSubject } from "@/api/notifications";
+import { preserveEvidence } from "@/api/report-evidence";
 import { expectedVersion, uuid, type MutationRequest } from "@/api/request";
 import { ApiError, type FieldError } from "@/api/response";
 import { authorizeActiveEntry, type AccessReader } from "@/auth/access";
@@ -22,6 +23,7 @@ import type { ResponseKind } from "./responses";
  * - 新しい回答は質問者、コメント・返信は直接の親の投稿者へ、同じトランザクションで通知する。自己通知は送らない
  *   （DB・ER設計書「通知の生成」）。
  * - 編集で変えられるのは本文だけ。投稿の種類・親・質問は変えられず、強制非表示の状態も解除しない。
+ * - 編集の前に、公開中の内容を通報証拠として同じトランザクションで保全する（DB・ER設計書 §5、#47 ③）。
  */
 
 const shortMarkdownLength = 2_000;
@@ -162,6 +164,8 @@ export function updateResponse(
       if (response.kind !== "answer" && [...body.bodyMarkdown].length > shortMarkdownLength) {
         throw new ApiError("VALIDATION_FAILED", { fields: [{ path: "bodyMarkdown", ...tooLongForShort }] });
       }
+      // 通報された公開中の投稿なら、編集前の内容を未終了案件の証拠に残す。非表示・未通報の投稿では何もしない。
+      await preserveEvidence(tx, { targets: [{ kind: "response", responseId }] });
       const version = response.version + 1;
       await tx.update(qaResponses).set({ bodyMarkdown: body.bodyMarkdown, version, updatedAt: now })
         .where(eq(qaResponses.id, responseId));
