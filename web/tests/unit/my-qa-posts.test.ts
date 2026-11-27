@@ -23,9 +23,15 @@ describe("本文の抜粋", () => {
     expect(markdownExcerpt("``a `b` c``")).toBe("a `b` c");
   });
 
-  it("対にならない記号は残し、対になった強調・取り消しだけを外す", () => {
-    expect(markdownExcerpt("3 * 4 = 12、*斜体*と**太字**と~~取り消し~~")).toBe("3 * 4 = 12、斜体と太字と取り消し");
-    expect(markdownExcerpt("snake_case と __強調__")).toBe("snake_case と 強調");
+  it("詳細の表示で記号として扱うものだけを外し、文字として表示されるものは残す", () => {
+    // 詳細の表示は GFM を使わないため、~~ は取り消し線ではなく文字として表示される。抜粋も同じにする。
+    expect(markdownExcerpt("3 * 4 = 12、*斜体*と**太字**と~~取り消し~~")).toBe("3 * 4 = 12、斜体と太字と~~取り消し~~");
+    expect(markdownExcerpt("snake_case と __強調__ と _斜体_")).toBe("snake_case と 強調 と 斜体");
+  });
+
+  it("バッククォート3つ以上で囲んだ1行のインラインコードも、中身を残す", () => {
+    expect(markdownExcerpt("```a``` はインライン")).toBe("a はインライン");
+    expect(markdownExcerpt("````x ** 2```` の値")).toBe("x ** 2 の値");
   });
 });
 

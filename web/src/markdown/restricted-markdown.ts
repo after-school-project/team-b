@@ -144,8 +144,11 @@ export function exceedsTreeLimits(root: MarkdownNode): boolean {
   return length > markdownLimits.referencedUrlLength;
 }
 
-/** 上限に収まる本文の構文木を返す。収まらない本文と、解析器がスタックを使い切った本文では null を返す。 */
-function parseWithinLimits(value: string): MarkdownNode | null {
+/**
+ * 上限に収まる本文の構文木を返す。収まらない本文と、解析器がスタックを使い切った本文では null を返す。
+ * 保存時の検証・表示と同じ解析器で、一覧の抜粋（`markdownExcerpt`）にも使う。
+ */
+export function parseWithinLimits(value: string): MarkdownNode | null {
   try {
     if (exceedsParseLimits(value)) return null;
     const root = parse(value);

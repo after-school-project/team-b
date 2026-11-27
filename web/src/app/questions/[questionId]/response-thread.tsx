@@ -328,9 +328,11 @@ export function ResponseThread({ questionId, initial, canAnswer, unavailableReas
     const match = /^#response-([0-9a-f-]{36})$/i.exec(window.location.hash);
     const responseId = match?.[1].toLowerCase();
     if (!responseId || initial.items.some(({ id }) => id === responseId)) return;
+    // 取得を待つ間に利用者がフォーカスを移した（回答欄に入力し始めたなど）場合は、投稿を表示するだけにする。
+    const focusedAtStart = document.activeElement;
     void fetchResponse(responseId).then((view) => {
       if (!view || view.questionId !== questionId) return;
-      focusId.current = view.id;
+      if (document.activeElement === focusedAtStart) focusId.current = view.id;
       replace(view);
     });
   });

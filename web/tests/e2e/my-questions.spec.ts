@@ -161,3 +161,64 @@ test("解決状態の変更後、画面の再取得が終わるまでは次の�
     { expectedVersion: 1, resolution: "resolved" }, { expectedVersion: 2, resolution: "open" },
   ]);
 });
+
+test("遅れて表示された投稿は、待つ間に利用者が入力を始めた欄からフォーカスを奪わない", async ({ page, baseURL }) => {
+  const [questionId] = await createQuestions(marker, [{ title: `遅れて表示する質問 ${marker}` }]);
+  await createAnswers(questionId, "poc_s002", Array.from({ length: 51 }, (_, index) => `先の回答${index + 1}`));
+  const answerId = await createAnswer(questionId, "poc_s001", `遅れて表示される回答 ${marker}`);
+  await signIn(page, baseURL!, "poc_s001");
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  let requested!: () => void;
+  const started = new Promise<void>((resolve) => { requested = resolve; });
+  await page.route(`**/api/v1/responses/${answerId}`, async (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    requested();
+    await held;
+    await route.fallback();
+  });
+  await page.goto(`/questions/${questionId}#response-${answerId}`);
+  await started;
+
+  const answerBody = page.getByRole("textbox", { name: "回答の本文" });
+  await answerBody.click();
+  await page.keyboard.type("入力中");
+  release();
+  await expect(page.locator(`#response-${answerId}`)).toContainText(`遅れて表示される回答 ${marker}`);
+  await expect(answerBody).toBeFocused();
+  await page.keyboard.type("の回答");
+  await expect(answerBody).toHaveValue("入力中の回答");
+});
+
+test("解決状態の変更の結果を読めない場合は成功と表示せず、同じ再送キーで結果を確認できる", async ({ page, baseURL }) => {
+  const [questionId] = await createQuestions(marker, [{ title: "結果を読めない質問" }]);
+  await signIn(page, baseURL!, "poc_s001");
+  await allowMutations(page, baseURL!);
+  await page.goto(`/questions/${questionId}`);
+  const sent: { key: string | null; body: string | null }[] = [];
+  page.on("request", (request) => {
+    if (request.method() === "PATCH" && request.url().endsWith("/resolution")) {
+      sent.push({ key: request.headers()["idempotency-key"] ?? null, body: request.postData() });
+    }
+  });
+  // 最初の応答だけ、更新は確定したまま、本文を途中で切って返す。
+  let truncate = true;
+  await page.route(/\/api\/v1\/questions\/[^/?]+\/resolution$/, async (route) => {
+    if (!truncate) return route.fallback();
+    truncate = false;
+    const origin = canonicalOrigin ?? new URL(baseURL!).origin;
+    const response = await route.fetch({ headers: { ...await route.request().allHeaders(), origin } });
+    const text = await response.text();
+    await route.fulfill({ status: 200, contentType: "application/json", body: text.slice(0, Math.floor(text.length / 2)) });
+  });
+
+  await page.getByRole("button", { name: "解決済みにする" }).click();
+  await expect(page.getByText("変更の結果を確認できませんでした。")).toBeVisible();
+  await expect(page.getByText("解決済みにしました。")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "解決済みにする" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "解決済みにしました。" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "未解決に戻す" })).toBeVisible();
+  expect(sent).toHaveLength(2);
+  expect(sent[1]).toEqual(sent[0]);
+});

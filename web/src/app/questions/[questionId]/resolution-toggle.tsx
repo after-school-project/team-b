@@ -49,8 +49,16 @@ export function ResolutionToggle({ questionId, version, resolution }: {
         headers: { "Content-Type": "application/json", "Idempotency-Key": key },
         body,
       });
-      const result: { error?: { code?: string } } | null = await response.json().catch(() => null);
+      const result: {
+        data?: { resource?: { type?: string; id?: string }; state?: string };
+        error?: { code?: string };
+      } | null = await response.json().catch(() => null);
       if (response.ok) {
+        // 有効な更新結果を読み取れるまでは、再送キーと本文を残し、同じ操作として送り直せるようにする（API設計書 §3）。
+        const { resource, state } = result?.data ?? {};
+        if (resource?.type !== "question" || resource.id !== questionId || state !== next) {
+          throw new Error("Resolution result unreadable");
+        }
         pending.current = null;
         setStatus(labels[next].done);
         // 再取得が終わる（`refreshing` が false に戻る）まで、次の操作を受け付けない。
