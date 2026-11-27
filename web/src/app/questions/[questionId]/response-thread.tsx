@@ -329,8 +329,8 @@ export function ResponseThread({ questionId, initial, canAnswer, unavailableReas
   }
 
   /**
-   * 続きのページを、読み込み済みの投稿の後ろに投稿順のまま加える。取得を始めた後（`startedAt` より後）に画面で反映した
-   * 投稿は、一覧の位置へ移しつつ、反映済みの内容を保つ。
+   * 続きのページを、読み込み済みの投稿の後ろに投稿順のまま加える。表示中の投稿は一覧の位置へ移し、内容は版番号の新しいほうを
+   * 使う。版番号で比べられない場合は、取得を始めた後（`startedAt` より後）に画面で反映した内容を保つ。
    */
   function appendPage(views: ResponseView[], startedAt: number) {
     setThread((current) => {
@@ -339,7 +339,10 @@ export function ResponseThread({ questionId, initial, canAnswer, unavailableReas
       const page = views.map((view) => {
         const item = shown.get(view.id);
         if (!item) return view;
-        return (replacedAt.current.get(view.id) ?? 0) > startedAt ? item : newer(item, view);
+        // 両方に版番号があれば、届いた順にかかわらず新しい版を使う。版番号のない状態案内では比べられないため、
+        // 取得を始めた後に画面で反映した内容を残す。
+        if (item.version !== null && view.version !== null) return newer(item, view);
+        return (replacedAt.current.get(view.id) ?? 0) > startedAt ? item : view;
       });
       return {
         pages: [...current.pages.filter(({ id }) => !ids.has(id)), ...page],

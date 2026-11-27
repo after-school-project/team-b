@@ -159,20 +159,26 @@ test("AC-05 投稿の後に続きのページを読み込んでも、作成日�
   expect(order).toHaveLength(52);
 });
 
-/** 指定した要求の応答を、`release` を呼ぶまで止める。`fetched` は、止めた応答をサーバーから受け取ったときに解決する。 */
-function holdResponse(page: Page, url: RegExp, method: string, origin?: string) {
+/**
+ * 指定した要求のうち最初の1件の応答を、`release` を呼ぶまで止める。`received` は、止めた応答をサーバーから受け取ったときに
+ * 解決する。2件目以降はほかの処理へ渡す。`times` で処理を1回に限ると、その処理が外れたときに、別の止めている要求も
+ * 処理済みとして扱われるため、フラグで1件目だけを止める。
+ */
+async function holdResponse(page: Page, url: RegExp, method: string, origin?: string) {
   let release!: () => void;
   let fetched!: () => void;
   const gate = new Promise<void>((resolve) => { release = resolve; });
   const received = new Promise<void>((resolve) => { fetched = resolve; });
-  void page.route(url, async (route) => {
-    if (route.request().method() !== method) return route.fallback();
+  let held = false;
+  await page.route(url, async (route) => {
+    if (held || route.request().method() !== method) return route.fallback();
+    held = true;
     const headers = origin ? { ...await route.request().allHeaders(), origin } : undefined;
     const response = await route.fetch(headers ? { headers } : undefined);
     fetched();
     await gate;
     await route.fulfill({ response });
-  }, { times: 1 });
+  });
   return { release, received };
 }
 
@@ -182,7 +188,7 @@ test("送信中に閉じて開き直したフォームの下書きは、先の�
   await signIn(page, baseURL!, "poc_s002");
   await allowMutations(page, baseURL!);
   await page.goto(`/questions/${questionId}`);
-  const post = holdResponse(page, /\/api\/v1\/questions\/[^/?]+\/responses$/, "POST",
+  const post = await holdResponse(page, /\/api\/v1\/questions\/[^/?]+\/responses$/, "POST",
     canonicalOrigin ?? new URL(baseURL!).origin);
 
   const answer = page.getByRole("article", { name: "e2eの回答者名さんの回答" });
@@ -213,7 +219,7 @@ test("続きのページの取得中に保存した編集を、遅れて届い�
   await expect(own).toContainText("編集前の回答");
 
   // 編集前の内容を含む一覧の応答を受け取った後、画面へ届ける前に止める。
-  const more = holdResponse(page, /\/api\/v1\/questions\/[^/?]+\/responses\?/, "GET");
+  const more = await holdResponse(page, /\/api\/v1\/questions\/[^/?]+\/responses\?/, "GET");
   await page.getByRole("button", { name: "さらに表示" }).click();
   await more.received;
   await own.getByRole("button", { name: "回答を編集" }).click();
@@ -282,7 +288,7 @@ test("遅れて届いた個別取得の古い版で、表示中の新しい版�
   await expect(own.getByRole("alert")).toContainText("回答が更新されています");
 
   // 版2を受け取った個別取得を止めている間に版3が保存され、次の読み込みで版3を表示する。
-  const stale = holdResponse(page, new RegExp(`/api/v1/responses/${answerId}$`), "GET");
+  const stale = await holdResponse(page, new RegExp(`/api/v1/responses/${answerId}$`), "GET");
   const reload = own.getByRole("button", { name: "最新の内容を読み込む" });
   await reload.click();
   await stale.received;
@@ -298,4 +304,44 @@ test("遅れて届いた個別取得の古い版で、表示中の新しい版�
   await body.fill("最新の版からの編集");
   await own.getByRole("button", { name: "保存する" }).click();
   await expect(own).toContainText("最新の版からの編集");
+});
+
+test("個別取得の古い版を先に反映しても、後から届いた一覧の新しい版を使う", async ({ page, baseURL }) => {
+  const [questionId] = await createQuestions(marker, [{ title: "一覧のほうが新しい質問" }]);
+  await createAnswers(questionId, "poc_s001", Array.from({ length: 51 }, (_, index) => `既存の回答${index + 1}`));
+  await signIn(page, baseURL!, "poc_s002");
+  await allowMutations(page, baseURL!);
+  const origin = canonicalOrigin ?? new URL(baseURL!).origin;
+  await page.goto(`/questions/${questionId}`);
+
+  // 投稿直後の個別取得は版1を受け取ったまま止める。
+  const single = await holdResponse(page, /\/api\/v1\/responses\/[^/?]+$/, "GET");
+  const posted = page.waitForResponse((response) => response.request().method() === "POST"
+    && /\/api\/v1\/questions\/[^/?]+\/responses$/.test(response.url()));
+  await page.getByRole("textbox", { name: "回答の本文" }).fill("版1の新しい回答");
+  await page.getByRole("button", { name: "投稿する" }).click();
+  const answerId: string = (await (await posted).json()).data.resource.id;
+  await single.received;
+
+  // 別の画面で版2を保存し、続きのページはその版2を受け取ったまま止める。
+  const saved = await page.request.patch(`/api/v1/responses/${answerId}`, {
+    headers: { Origin: origin, "Idempotency-Key": randomUUID() }, data: { expectedVersion: 1, bodyMarkdown: "版2の回答" },
+  });
+  expect(saved.status()).toBe(200);
+  const more = await holdResponse(page, /\/api\/v1\/questions\/[^/?]+\/responses\?/, "GET");
+  await page.getByRole("button", { name: "さらに表示" }).click();
+  await more.received;
+
+  const own = page.getByRole("article", { name: "みなとさんの回答" });
+  single.release();
+  await expect(own).toContainText("版1の新しい回答");
+  more.release();
+  await expect(page.getByText("既存の回答51", { exact: true })).toBeVisible();
+  await expect(own).toContainText("版2の回答");
+
+  // 次の編集も版2から送るため、競合にならない。
+  await own.getByRole("button", { name: "回答を編集" }).click();
+  await own.getByRole("textbox", { name: "回答の本文" }).fill("版3の回答");
+  await own.getByRole("button", { name: "保存する" }).click();
+  await expect(own).toContainText("版3の回答");
 });
