@@ -29,6 +29,25 @@ describe("本文の抜粋", () => {
     expect(markdownExcerpt("snake_case と __強調__ と _斜体_")).toBe("snake_case と 強調 と 斜体");
   });
 
+  it("長い本文は冒頭だけを解析し、段落・行・コードブロックの途中で切っても冒頭の文字は全体の解析と同じにする", () => {
+    const paragraph = "これは**強調**と`code * 2`と[リンク](https://example.com)を含む段落です。".repeat(3);
+    let body = "";
+    while ([...body].length < 9_000) body += `${paragraph}\n\n- 箇条書き\n\n`;
+    const expected = markdownExcerpt(paragraph.repeat(1));
+    expect(markdownExcerpt(body).startsWith(expected.slice(0, 60))).toBe(true);
+    expect(markdownExcerpt(body.replaceAll("\n\n", "\n"))).toBe(markdownExcerpt(`${paragraph}\n- 箇条書き\n${paragraph}`));
+    expect(markdownExcerpt("長い一行の本文です。".repeat(900))).toBe(`${"長い一行の本文です。".repeat(12)}…`);
+    const code = "```\n" + "x * y = z の計算\n".repeat(700) + "```\n後ろ";
+    expect(markdownExcerpt(code)).toBe(`${"x * y = z の計算 ".repeat(9)}x * y = z の計`.slice(0, 120) + "…");
+  });
+
+  it("範囲の外にある参照リンクの定義も使い、リンクの文字を詳細の表示と同じにする", () => {
+    const body = `[参照先][ref]を読んでください。\n\n${"段落の本文です。\n\n".repeat(300)}[ref]: https://example.com/ref\n`;
+    expect(markdownExcerpt(body).startsWith("参照先を読んでください。 段落の本文です。")).toBe(true);
+    // 定義がなければ、詳細の表示と同じく記号のまま残る。
+    expect(markdownExcerpt("[参照先][ref]だけ")).toBe("[参照先][ref]だけ");
+  });
+
   it("バッククォート3つ以上で囲んだ1行のインラインコードも、中身を残す", () => {
     expect(markdownExcerpt("```a``` はインライン")).toBe("a はインライン");
     expect(markdownExcerpt("````x ** 2```` の値")).toBe("x ** 2 の値");
