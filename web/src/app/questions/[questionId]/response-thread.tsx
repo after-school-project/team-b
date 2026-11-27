@@ -319,6 +319,22 @@ export function ResponseThread({ questionId, initial, canAnswer, unavailableReas
     focusId.current = null;
   }, [thread]);
 
+  // GE-05 などから開いた投稿（`#response-{id}`）が最初のページにないときは、API-QA-09 で読み込んで加え、フォーカスを移す。
+  // 画面の再取得（質問の削除など）で `initial` が変わっても繰り返さないよう、最初の表示で1回だけ行う。
+  const anchorHandled = useRef(false);
+  useEffect(() => {
+    if (anchorHandled.current) return;
+    anchorHandled.current = true;
+    const match = /^#response-([0-9a-f-]{36})$/i.exec(window.location.hash);
+    const responseId = match?.[1].toLowerCase();
+    if (!responseId || initial.items.some(({ id }) => id === responseId)) return;
+    void fetchResponse(responseId).then((view) => {
+      if (!view || view.questionId !== questionId) return;
+      focusId.current = view.id;
+      replace(view);
+    });
+  });
+
   const forms: FormControls = {
     open,
     openForm: (mode, id) => setOpen({ mode, id, token: ++formToken.current }),

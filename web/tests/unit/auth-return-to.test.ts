@@ -60,7 +60,7 @@ describe("可変パスを含む画面のルート", () => {
   it("実装済みの画面に含まれないルートは、既定では戻り先にしない", () => {
     expect(implementedScreenRoutes).toEqual([
       "/", "/me/profile", "/users/[userId]", "/alumni", "/questions", "/questions/[questionId]",
-      "/questions/new", "/questions/[questionId]/edit",
+      "/questions/new", "/questions/[questionId]/edit", "/me/questions",
       "/events",
       "/notices", "/notices/[noticeId]", "/notices/new", "/me/notices", "/me/notices/[noticeId]/edit",
       "/admin/users/[userId]", "/admin/profile-reviews", "/admin/graduation",

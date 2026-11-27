@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { expect, test, type Page } from "@playwright/test";
-import { createAnswer, createQuestions, removeQuestions } from "./database";
+import { createAnswer, createAnswers, createQuestions, removeQuestions } from "./database";
 import { canonicalOrigin, signIn } from "./session";
 
 /**
@@ -71,7 +71,11 @@ test("AC-12 モバイルで自分の投稿を種類で絞り込み、残存す�
   const answerId = await createAnswer(deletedQuestion, "poc_s001", `残っている回答 ${marker}`);
   await page.setViewportSize({ width: 375, height: 812 });
   await signIn(page, baseURL!, "poc_s001");
-  await page.goto("/me/questions");
+  // 本人メニュー（モバイルではメニューの中）から開ける。
+  await page.goto("/");
+  await page.getByRole("button", { name: "メニュー", exact: true }).click();
+  await page.getByRole("navigation", { name: "マイメニュー" }).getByRole("link", { name: "自分のQ&A" }).click();
+  await expect(page).toHaveURL(/\/me\/questions$/);
 
   await expect(page.getByRole("heading", { level: 1, name: "自分のQ&A" })).toBeVisible();
   const kinds = page.getByRole("navigation", { name: "投稿の種類" });
@@ -96,4 +100,64 @@ test("AC-12 モバイルで自分の投稿を種類で絞り込み、残存す�
   await expect(page).toHaveURL(new RegExp(`/questions/${deletedQuestion}#response-${answerId}$`));
   await expect(page.getByText("この質問は削除されました。")).toBeVisible();
   await expect(page.locator(`#response-${answerId}`)).toContainText(`残っている回答 ${marker}`);
+});
+
+test("最初に表示する50件より後の自分の回答へのリンクでも、その回答まで移動する", async ({ page, baseURL }) => {
+  const [questionId] = await createQuestions(marker, [{ title: `回答の多い質問 ${marker}` }]);
+  await createAnswers(questionId, "poc_s002", Array.from({ length: 51 }, (_, index) => `先の回答${index + 1}`));
+  const answerId = await createAnswer(questionId, "poc_s001", `52件目の自分の回答 ${marker}`);
+  await signIn(page, baseURL!, "poc_s001");
+  await page.goto("/me/questions?kind=answer");
+  await page.getByRole("listitem").filter({ hasText: `52件目の自分の回答 ${marker}` })
+    .getByRole("link", { name: `「回答の多い質問 ${marker}」への回答` }).click();
+  await expect(page).toHaveURL(new RegExp(`/questions/${questionId}#response-${answerId}$`));
+  const target = page.locator(`#response-${answerId}`);
+  await expect(target).toContainText(`52件目の自分の回答 ${marker}`);
+  await expect(target).toBeFocused();
+  await expect(target).toBeInViewport();
+});
+
+test("解決状態の変更後、画面の再取得が終わるまでは次の変更を送らない", async ({ page, baseURL }) => {
+  const [questionId] = await createQuestions(marker, [{ title: "続けて切り替える質問" }]);
+  await signIn(page, baseURL!, "poc_s001");
+  await allowMutations(page, baseURL!);
+  await page.goto(`/questions/${questionId}`);
+  // 画面の再取得（RSC の要求）を、合図があるまで止める。
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  let heldRefresh = false;
+  await page.route(`**/questions/${questionId}*`, async (route) => {
+    const headers = route.request().headers();
+    if (route.request().method() !== "GET" || !headers.rsc) return route.fallback();
+    heldRefresh = true;
+    await held;
+    await route.fallback();
+  });
+  const patches: string[] = [];
+  page.on("request", (request) => {
+    if (request.method() === "PATCH" && request.url().endsWith("/resolution")) patches.push(request.postData() ?? "");
+  });
+
+  const toggle = page.getByRole("button", { name: "解決済みにする" });
+  await toggle.click();
+  await expect(page.getByRole("status").filter({ hasText: "解決済みにしました。" })).toBeVisible();
+  await expect.poll(() => heldRefresh).toBe(true);
+  // 再取得中は変更中のまま。押しても送信しない。
+  const busy = page.getByRole("button", { name: "変更中…" });
+  await expect(busy).toHaveAttribute("aria-disabled", "true");
+  await expect(busy).toBeFocused();
+  // Playwright の click は aria-disabled の要素が押せるようになるまで待つため、イベントを直接送って押下を試す。
+  await busy.dispatchEvent("click");
+  await page.keyboard.press("Enter");
+  expect(patches).toHaveLength(1);
+
+  release();
+  await expect(page.getByRole("button", { name: "未解決に戻す" })).toBeVisible();
+  await page.getByRole("button", { name: "未解決に戻す" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "未解決に戻しました。" })).toBeVisible();
+  // 古い版で送っていれば、版の競合の案内が出る。
+  await expect(page.getByText("質問が更新されています。")).toHaveCount(0);
+  expect(patches.map((body) => JSON.parse(body))).toEqual([
+    { expectedVersion: 1, resolution: "resolved" }, { expectedVersion: 2, resolution: "open" },
+  ]);
 });

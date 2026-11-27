@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import styles from "./page.module.css";
 
 type Resolution = "open" | "resolved";
@@ -14,6 +14,7 @@ const labels: Record<Resolution, { action: string; done: string }> = {
 /**
  * 質問者本人による解決状態の変更（QA-02、API-QA-12）。切り替えではなく、設定する状態を送る。
  * 成功したら画面を再取得して、状態の表示と版番号を更新する。ボタンは再取得の後も同じ位置に残り、フォーカスを保つ。
+ * 再取得が終わるまでは、変更前の版番号・状態のままのため、次の操作を受け付けない（古い版での送信を防ぐ）。
  * 結果を確認できなかった場合は、同じ Idempotency-Key で送り直せる。
  */
 export function ResolutionToggle({ questionId, version, resolution }: {
@@ -24,16 +25,22 @@ export function ResolutionToggle({ questionId, version, resolution }: {
   const router = useRouter();
   const next: Resolution = resolution === "open" ? "resolved" : "open";
   const pending = useRef<{ body: string; key: string } | null>(null);
-  const [busy, setBusy] = useState(false);
+  // 送信中は、再描画を待たずに二重の送信を防ぐため ref でも判定する。
+  const inFlight = useRef(false);
+  const [sending, setSending] = useState(false);
+  const [refreshing, startRefresh] = useTransition();
+  const busy = sending || refreshing;
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
 
   async function change() {
-    if (busy) return;
+    if (inFlight.current || busy) return;
+    inFlight.current = true;
     const body = JSON.stringify({ expectedVersion: version, resolution: next });
     const key = pending.current?.body === body ? pending.current.key : crypto.randomUUID();
     pending.current = { body, key };
-    setBusy(true);
+    let refreshStarted = false;
+    setSending(true);
     setStatus("");
     setError("");
     try {
@@ -46,7 +53,9 @@ export function ResolutionToggle({ questionId, version, resolution }: {
       if (response.ok) {
         pending.current = null;
         setStatus(labels[next].done);
-        router.refresh();
+        // 再取得が終わる（`refreshing` が false に戻る）まで、次の操作を受け付けない。
+        refreshStarted = true;
+        startRefresh(() => router.refresh());
         return;
       }
       if (!result || response.status >= 500) throw new Error("Resolution result unavailable");
@@ -66,9 +75,15 @@ export function ResolutionToggle({ questionId, version, resolution }: {
     } catch {
       setError("変更の結果を確認できませんでした。もう一度押すと、同じ操作として確認できます。");
     } finally {
-      setBusy(false);
+      setSending(false);
+      if (!refreshStarted) inFlight.current = false;
     }
   }
+
+  // 再取得が終わったら、新しい版番号・状態で次の操作を受け付ける。
+  useEffect(() => {
+    if (!refreshing) inFlight.current = false;
+  }, [refreshing]);
 
   return (
     <>
