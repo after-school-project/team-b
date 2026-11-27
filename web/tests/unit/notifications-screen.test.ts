@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 
-import { kindLabels, splitMessage } from "@/app/notifications/labels";
+import { isAppPath, kindLabels, splitMessage, targetStateNotes } from "@/app/notifications/labels";
 import { notificationStates, readNotificationParams } from "@/app/notifications/notification-filters";
 import { NotificationList } from "@/app/notifications/notification-list";
 import type { NotificationView } from "@/notifications/notifications";
@@ -53,15 +53,27 @@ describe("通知の文面", () => {
   });
 });
 
+describe("通知の遷移先", () => {
+  it("同一アプリの相対パスだけを遷移先として受け付ける", () => {
+    for (const path of ["/questions/1#response-2", "/me/notices?notice=1&request=2", "/me/profile"]) {
+      expect(isAppPath(path)).toBe(true);
+    }
+    for (const path of ["https://example.com/", "//example.com/", "/\\example.com", "javascript:alert(1)", "", null, 1]) {
+      expect(isAppPath(path)).toBe(false);
+    }
+  });
+});
+
 describe("通知の一覧", () => {
   const unread: NotificationView = {
     id: "00000000-0000-4000-8000-000000000001", kind: "qa_hidden",
     message: "投稿が管理者により非表示になりました。\n理由：<b>個人情報</b>を含むため",
-    createdAt: "2026-11-26T03:00:00.000Z", readAt: null,
+    createdAt: "2026-11-26T03:00:00.000Z", readAt: null, targetState: "available",
   };
   const read: NotificationView = {
     id: "00000000-0000-4000-8000-000000000002", kind: "notice_review_requested",
     message: "お知らせの審査依頼が届きました。", createdAt: "2026-11-25T03:00:00.000Z", readAt: "2026-11-25T04:00:00.000Z",
+    targetState: "withdrawn",
   };
   const render = (items: NotificationView[]) =>
     renderToStaticMarkup(createElement(NotificationList, { items, headingId: "notification-results" }));
@@ -87,6 +99,22 @@ describe("通知の一覧", () => {
     expect(html).toContain(">お知らせ</span>");
     expect(html).not.toContain("既読にする");
     expect(html).not.toContain("未読");
+  });
+
+  it("遷移できる通知には、通知の文面を説明に持つ「対象を表示する」を表示する", () => {
+    expect(render([unread])).toMatch(/<button type="button"[^>]*aria-describedby="notification-00000000-0000-4000-8000-000000000001"[^>]*>対象を表示する<\/button>/);
+  });
+
+  it("遷移できない通知には状態案内だけを表示し、「対象を表示する」を表示しない", () => {
+    const html = render([read]);
+    expect(html).toContain(targetStateNotes.withdrawn);
+    expect(html).not.toContain("対象を表示する");
+  });
+
+  it("対象を見る資格がない通知には、汎用の文面のほかに状態案内を追加しない", () => {
+    const html = render([{ ...read, message: "この通知の対象は、現在の権限では表示できません。", targetState: "not_available" }]);
+    expect(html).not.toContain("対象を表示する");
+    for (const note of Object.values(targetStateNotes)) if (note) expect(html).not.toContain(note);
   });
 
   it("既読の案内を読み上げる領域を、一覧の前に空のまま用意する", () => {

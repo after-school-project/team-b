@@ -27,6 +27,7 @@ let credentials: Record<string, string>;
 let listRoute: typeof import("../../src/app/api/v1/notifications/route");
 let countRoute: typeof import("../../src/app/api/v1/notifications/unread-count/route");
 let readRoute: typeof import("../../src/app/api/v1/notifications/[notificationId]/read/route");
+let targetRoute: typeof import("../../src/app/api/v1/notifications/[notificationId]/target/route");
 let ipCounter = 0;
 const ids = new Map<string, string>();
 const cookies = new Map<string, string>();
@@ -50,6 +51,7 @@ beforeAll(async () => {
   listRoute = await import("../../src/app/api/v1/notifications/route");
   countRoute = await import("../../src/app/api/v1/notifications/unread-count/route");
   readRoute = await import("../../src/app/api/v1/notifications/[notificationId]/read/route");
+  targetRoute = await import("../../src/app/api/v1/notifications/[notificationId]/target/route");
 });
 
 afterEach(async () => {
@@ -87,9 +89,9 @@ async function cookieFor(username: string) {
   return cookie;
 }
 
-type Item = { id: string; kind: string; message: string; createdAt: string; readAt: string | null };
+type Item = { id: string; kind: string; message: string; createdAt: string; readAt: string | null; targetState: string };
 type Body = {
-  data?: { items?: Item[]; count?: number; operationId?: string; resource?: { type: string; id: string };
+  data?: { items?: Item[]; count?: number; path?: string | null; operationId?: string; resource?: { type: string; id: string };
     version?: number | null; state?: string; committedAt?: string };
   error?: { code: string };
   meta: { replayed?: true; page?: { totalCount: number; hasMore: boolean; nextCursor: string | null; limit: number } };
@@ -244,7 +246,7 @@ describe("API-NT-01 通知一覧", () => {
     expect(itemIds(body)).toEqual([newest, high, low, older]);
     expect(body.data?.items?.[0]).toEqual({
       id: newest, kind: "profile_hidden", message: "プロフィールが管理者により非表示になりました。\n理由：確認のため",
-      createdAt: "2026-11-03T00:00:00.000Z", readAt: "2026-11-03T01:00:00.000Z",
+      createdAt: "2026-11-03T00:00:00.000Z", readAt: "2026-11-03T01:00:00.000Z", targetState: "available",
     });
     expect(body.data?.items?.[1].readAt).toBeNull();
     expect(body.meta.page).toEqual({ limit: 20, hasMore: false, nextCursor: null, totalCount: 4 });
@@ -430,13 +432,188 @@ describe("SEC-04：在校生が通知の閲覧を経由して他人の実名に�
       const { status, body, text } = await list("poc_s001");
       expect(status).toBe(200);
       expect(body.data?.items?.map((item) => item.kind)).toContain("qa_answer_created");
-      for (const item of body.data?.items ?? []) expect(Object.keys(item).sort()).toEqual(["createdAt", "id", "kind", "message", "readAt"]);
+      for (const item of body.data?.items ?? []) expect(Object.keys(item).sort()).toEqual(["createdAt", "id", "kind", "message", "readAt", "targetState"]);
       const { rows } = await target.client.query<{ name: string }>("SELECT private_real_name AS name FROM identity_records");
       expect(rows.length).toBeGreaterThan(0);
       for (const { name } of rows) expect(text).not.toContain(name);
       for (const secret of [id("poc_a001"), "あおい", id("poc_s001")]) expect(text).not.toContain(secret);
     } finally {
       await target.client.query("UPDATE notifications SET read_at = created_at WHERE recipient_id = $1 AND read_at IS NULL", [id("poc_s001")]);
+    }
+  });
+});
+
+async function navigationTarget(viewer: string | null, notificationId: string, search = "") {
+  return result(await targetRoute.GET(
+    new Request(`${origin}/api/v1/notifications/${encodeURIComponent(notificationId)}/target${search}`, {
+      headers: await headersFor(viewer),
+    }),
+    { params: Promise.resolve({ notificationId }) },
+  ));
+}
+
+type TargetReference = "qa_response_id" | "qa_question_id" | "notice_request_id" | "event_request_id";
+
+/** 対象を参照する通知を作る。対象は seed のレコードを使い、このテストの後に通知だけを消す。 */
+async function addTargetNotification(recipient: string, kind: string, column: TargetReference, targetId: string) {
+  const { rows } = await target.client.query<{ id: string }>(`
+    INSERT INTO notifications (recipient_id, kind, ${column}, event_key, public_message, created_at)
+    VALUES ($1, $2, $3, $4, $5, now()) RETURNING id
+  `, [id(recipient), kind, targetId, `${keyPrefix}${randomUUID()}`, "定型文\n理由：本人向けの理由（秘密）"]);
+  return rows[0].id;
+}
+
+async function seedTarget<T extends Record<string, string>>(sql: string, params: unknown[] = []): Promise<T> {
+  const { rows } = await target.client.query<T>(sql, params);
+  if (!rows[0]) throw new Error(`seed の対象がありません：${sql}`);
+  return rows[0];
+}
+
+/** 一覧の通知1件。 */
+async function listedItem(viewer: string, notificationId: string) {
+  const { body } = await list(viewer);
+  return body.data?.items?.find((item) => item.id === notificationId);
+}
+
+describe("API-NT-04 通知の遷移先", () => {
+  it("受信者本人には、サーバーで組み立てた同一アプリの相対パスを返し、取得しただけでは既読にしない", async () => {
+    const [notificationId] = await addNotifications("poc_s002", [{ at: "2026-11-01T00:00:00Z" }]);
+    const { status, body, headers } = await navigationTarget("poc_s002", notificationId);
+    expect({ status, data: body.data }).toEqual({ status: 200, data: { state: "available", path: "/me/profile" } });
+    expect(headers.get("Cache-Control")).toBe("private, no-store");
+    expect(await readAtOf(notificationId)).toBeNull();
+  });
+
+  it("AC-04 未認証は401、停止中は403、他人の通知と存在しない通知は404とし、遷移先を返さない", async () => {
+    const [suspendedOwn] = await addNotifications("poc_suspended", [{ at: "2026-11-01T00:00:00Z" }]);
+    const [others] = await addNotifications("poc_s001", [{ at: "2026-11-01T00:00:00Z" }]);
+    for (const [viewer, notificationId, status, code] of [
+      [null, suspendedOwn, 401, "AUTH_REQUIRED"],
+      ["poc_suspended", suspendedOwn, 403, "ACCOUNT_SUSPENDED"],
+      ["poc_s002", others, 404, "NOT_FOUND"],
+      ["poc_s002", randomUUID(), 404, "NOT_FOUND"],
+    ] as const) {
+      const response = await navigationTarget(viewer, notificationId);
+      expect({ status: response.status, code: response.body.error?.code }).toEqual({ status, code });
+      expect(Object.keys(response.body).sort()).toEqual(["error", "meta"]);
+      expect(response.text).not.toContain("/me/profile");
+    }
+  });
+
+  it("通知IDの形式の誤りと未定義のクエリーは400、取得以外の操作は405にする", async () => {
+    const [notificationId] = await addNotifications("poc_s002", [{ at: "2026-11-01T00:00:00Z" }]);
+    expect((await navigationTarget("poc_s002", "not-a-uuid")).status).toBe(400);
+    expect((await navigationTarget("poc_s002", notificationId, "?path=/admin")).status).toBe(400);
+    const post = await targetRoute.POST(new Request(`${origin}/api/v1/notifications/${notificationId}/target`, { method: "POST" }), {
+      params: Promise.resolve({ notificationId }),
+    });
+    expect(post.status).toBe(405);
+    expect(await readAtOf(notificationId)).toBeNull();
+  });
+});
+
+describe("AC-05：閲覧資格を失った場合は本文やリンクを返さず、取り下げ済みの申請は状態案内だけを返す", () => {
+  it("AC-05 Q&Aの回答の通知は、回答の非表示・削除に合わせて状態だけを返す", async () => {
+    const { responseId, questionId } = await seedTarget<{ responseId: string; questionId: string }>(`
+      SELECT r.id AS "responseId", r.question_id AS "questionId" FROM notifications n
+      JOIN qa_responses r ON r.id = n.qa_response_id
+      WHERE n.recipient_id = $1 AND n.kind = 'qa_answer_created' LIMIT 1`, [id("poc_s001")]);
+    const notificationId = await addTargetNotification("poc_s001", "qa_answer_created", "qa_response_id", responseId);
+    try {
+      expect((await navigationTarget("poc_s001", notificationId)).body.data)
+        .toEqual({ state: "available", path: `/questions/${questionId}#response-${responseId}` });
+      expect((await listedItem("poc_s001", notificationId))?.targetState).toBe("available");
+
+      await target.client.query("UPDATE qa_responses SET forced_hidden_at = now() WHERE id = $1", [responseId]);
+      expect((await navigationTarget("poc_s001", notificationId)).body.data).toEqual({ state: "hidden", path: null });
+      expect((await listedItem("poc_s001", notificationId))?.targetState).toBe("hidden");
+      // 当該投稿を管理できる管理者なら、非表示の投稿にも遷移できる（遷移先の QA-02 でも同じ条件で投影する）。
+      const managerNotification = await addTargetNotification("poc_school", "qa_answer_created", "qa_response_id", responseId);
+      expect((await navigationTarget("poc_school", managerNotification)).body.data?.state).toBe("available");
+
+      await target.client.query("UPDATE qa_responses SET deleted_at = now() WHERE id = $1", [responseId]);
+      const deleted = await navigationTarget("poc_s001", notificationId);
+      expect(deleted.body.data).toEqual({ state: "deleted", path: null });
+      expect(deleted.text).not.toContain(questionId);
+    } finally {
+      await target.client.query("UPDATE qa_responses SET forced_hidden_at = NULL, deleted_at = NULL WHERE id = $1", [responseId]);
+    }
+  });
+
+  it("AC-05 審査依頼の通知は、管理権限を解除された受信者には状態・リンク・保存した文面を返さない", async () => {
+    const { requestId, noticeId } = await seedTarget<{ requestId: string; noticeId: string }>(`
+      SELECT nr.id AS "requestId", nr.notice_id AS "noticeId" FROM notices n
+      JOIN notice_requests nr ON nr.notice_id = n.id
+      WHERE n.author_id = $1 AND nr.status = 'pending' LIMIT 1`, [id("poc_a001")]);
+    const notificationId = await addTargetNotification("poc_s_mgr", "notice_review_requested", "notice_request_id", requestId);
+    try {
+      expect((await navigationTarget("poc_s_mgr", notificationId)).body.data)
+        .toEqual({ state: "available", path: `/admin/notices/${noticeId}?request=${requestId}` });
+      expect(await listedItem("poc_s_mgr", notificationId)).toMatchObject({
+        message: "定型文\n理由：本人向けの理由（秘密）", targetState: "available",
+      });
+
+      await target.client.query("UPDATE community_users SET app_manager = false WHERE user_id = $1", [id("poc_s_mgr")]);
+      // 取り下げ済みでも、資格がない受信者には取り下げの状態を明かさない。
+      await target.client.query("UPDATE notice_requests SET status = 'withdrawn' WHERE id = $1", [requestId]);
+      const revoked = await navigationTarget("poc_s_mgr", notificationId);
+      expect({ status: revoked.status, data: revoked.body.data }).toEqual({ status: 200, data: { state: "not_available", path: null } });
+      expect(revoked.text).not.toContain(noticeId);
+      const listed = await list("poc_s_mgr");
+      const item = listed.body.data?.items?.find((candidate) => candidate.id === notificationId);
+      expect(item).toMatchObject({ message: "この通知の対象は、現在の権限では表示できません。", targetState: "not_available" });
+      expect(listed.text).not.toContain("本人向けの理由（秘密）");
+      expect(listed.text).not.toContain(noticeId);
+      // 既読の保存と対象の閲覧は別々に確認する。資格を失っても、受信者本人は通知を既読にできる。
+      expect((await markRead("poc_s_mgr", notificationId)).status).toBe(200);
+    } finally {
+      await target.client.query("UPDATE community_users SET app_manager = true WHERE user_id = $1", [id("poc_s_mgr")]);
+      await target.client.query("UPDATE notice_requests SET status = 'pending' WHERE id = $1", [requestId]);
+    }
+  });
+
+  it("AC-05 取り下げ済みのお知らせ・イベントの申請は、審査できる管理者に withdrawn だけを返す", async () => {
+    const { noticeRequestId } = await seedTarget<{ noticeRequestId: string }>(
+      "SELECT id AS \"noticeRequestId\" FROM notice_requests WHERE status = 'pending' LIMIT 1");
+    const { eventRequestId } = await seedTarget<{ eventRequestId: string }>(
+      "SELECT id AS \"eventRequestId\" FROM event_requests WHERE status = 'pending' LIMIT 1");
+    const noticeNotification = await addTargetNotification("poc_school", "notice_review_requested", "notice_request_id", noticeRequestId);
+    const eventNotification = await addTargetNotification("poc_school", "event_review_requested", "event_request_id", eventRequestId);
+    try {
+      expect((await navigationTarget("poc_school", eventNotification)).body.data?.path)
+        .toMatch(new RegExp(`^/admin/events/[0-9a-f-]{36}\\?request=${eventRequestId}$`));
+      await target.client.query("UPDATE notice_requests SET status = 'withdrawn' WHERE id = $1", [noticeRequestId]);
+      await target.client.query("UPDATE event_requests SET status = 'withdrawn' WHERE id = $1", [eventRequestId]);
+      for (const notificationId of [noticeNotification, eventNotification]) {
+        expect((await navigationTarget("poc_school", notificationId)).body.data).toEqual({ state: "withdrawn", path: null });
+        expect(await listedItem("poc_school", notificationId))
+          .toMatchObject({ message: "定型文\n理由：本人向けの理由（秘密）", targetState: "withdrawn" });
+      }
+    } finally {
+      await target.client.query("UPDATE notice_requests SET status = 'pending' WHERE id = $1", [noticeRequestId]);
+      await target.client.query("UPDATE event_requests SET status = 'pending' WHERE id = $1", [eventRequestId]);
+    }
+  });
+
+  it("AC-05 審査結果の通知は、削除済みのお知らせなら保存期間内は deleted、期限後は expired だけを返す", async () => {
+    const { requestId, noticeId } = await seedTarget<{ requestId: string; noticeId: string }>(`
+      SELECT nr.id AS "requestId", nr.notice_id AS "noticeId" FROM notices n
+      JOIN notice_requests nr ON nr.notice_id = n.id WHERE n.author_id = $1 LIMIT 1`, [id("poc_a001")]);
+    const notificationId = await addTargetNotification("poc_a001", "notice_review_decided", "notice_request_id", requestId);
+    try {
+      expect((await navigationTarget("poc_a001", notificationId)).body.data)
+        .toEqual({ state: "available", path: `/me/notices?notice=${noticeId}&request=${requestId}` });
+      // 他人（申請者でない受信者）宛ての審査結果は、本人の申請履歴へ遷移させない。
+      const misdirected = await addTargetNotification("poc_s002", "notice_review_decided", "notice_request_id", requestId);
+      expect((await navigationTarget("poc_s002", misdirected)).body.data).toEqual({ state: "not_available", path: null });
+
+      await target.client.query("UPDATE notices SET deleted_at = now() - interval '179 days' WHERE id = $1", [noticeId]);
+      expect((await navigationTarget("poc_a001", notificationId)).body.data).toEqual({ state: "deleted", path: null });
+      await target.client.query("UPDATE notices SET deleted_at = now() - interval '181 days' WHERE id = $1", [noticeId]);
+      expect((await navigationTarget("poc_a001", notificationId)).body.data).toEqual({ state: "expired", path: null });
+      expect((await listedItem("poc_a001", notificationId))?.targetState).toBe("expired");
+    } finally {
+      await target.client.query("UPDATE notices SET deleted_at = NULL WHERE id = $1", [noticeId]);
     }
   });
 });

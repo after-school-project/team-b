@@ -7,9 +7,13 @@ import { ApiError } from "@/api/response";
 import type { AccessReader, Viewer } from "@/auth/access";
 import { ownedBy } from "@/auth/ownership";
 import { notifications } from "@/db/moderation-schema";
+import {
+  resolveNotificationTarget, selectNotificationsWithTargets, unavailableMessage,
+  type NavigationTarget, type NotificationTargetRow, type TargetState,
+} from "./targets";
 
 /**
- * 通知の一覧・未読件数・既読（API-NT-01〜03、画面ID GE-06）。Issue #17 ②。
+ * 通知の一覧・未読件数・既読・遷移先（API-NT-01〜04、画面ID GE-06）。Issue #17 ②③。
  *
  * - 一覧・件数・既読の対象は、受信者本人の通知だけ（`ownedBy`）。他人の通知は一覧・件数・カーソルに含まれず、
  *   既読の操作では存在しない通知と同じ 404 にする。停止中の利用者は、業務APIと画面の入口で拒否する。
@@ -17,17 +21,23 @@ import { notifications } from "@/db/moderation-schema";
  *   既読済みの通知を再度既読にしても、最初の既読時刻を変えない（API設計書 §3「版番号」、§10）。
  * - 通知に保存しているのは、種類ごとの定型文と本人向けの理由だけ（#47）。対象の題名・本文や操作者は返さない。
  *
- * 通知の対象の状態案内（`targetState`）と、対象への遷移（API-NT-04）は #17 ③ で追加する。
+ * - 対象の状態（`targetState`）と遷移先（API-NT-04）は、取得のたびに現在の権限で判定する（`./targets`）。
+ *   対象を見る資格がない通知は、保存した文面の代わりに汎用の案内文だけを返す。
  */
 
-/** API設計書 §5 NotificationView。`targetState` は #17 ③ で追加する。 */
+/** API設計書 §5 NotificationView。 */
 export type NotificationView = {
   id: string;
   kind: NotificationKind;
-  /** 種類ごとの定型文。本人向けの理由がある通知は、改行の後に理由が続く。 */
+  /**
+   * 種類ごとの定型文。本人向けの理由がある通知は、改行の後に理由が続く。
+   * 対象を見る資格がない通知（`targetState` が not_available）は、汎用の案内文だけ。
+   */
   message: string;
   createdAt: string;
   readAt: string | null;
+  /** 対象の現在の状態。遷移先のパスは API-NT-04 で取得する。 */
+  targetState: TargetState;
 };
 
 /** 通知一覧のクエリー（API設計書 §3）。state=all/unread、既定は all。 */
@@ -68,27 +78,42 @@ export async function listNotifications(reader: AccessReader, viewer: Viewer, qu
       ? sql`(${notifications.createdAt}, ${notifications.id}) < (${last[0]}::timestamptz, ${last[1]}::uuid)`
       : undefined,
     limit,
-    rows: (where, take) => reader.select({
-      id: notifications.id,
-      kind: notifications.kind,
-      message: notifications.publicMessage,
-      createdAt: notifications.createdAt,
-      readAt: notifications.readAt,
-      cursorAt: cursorTimestamp(notifications.createdAt),
-    }).from(notifications).where(where).orderBy(desc(notifications.createdAt), desc(notifications.id)).limit(take),
+    rows: (where, take) => selectNotificationsWithTargets(reader, { cursorAt: cursorTimestamp(notifications.createdAt) })
+      .where(where).orderBy(desc(notifications.createdAt), desc(notifications.id)).limit(take),
     count: async (where) => {
       const [{ total }] = await reader.select({ total: count() }).from(notifications).where(where);
       return total;
     },
     cursorFor: (row) => codec.encode([row.cursorAt, row.id]),
-    toItem: (row): NotificationView => ({
-      id: row.id,
-      kind: row.kind,
-      message: row.message,
-      createdAt: row.createdAt.toISOString(),
-      readAt: row.readAt?.toISOString() ?? null,
-    }),
+    toItem: (row) => toNotificationView(viewer, row),
   });
+}
+
+type NotificationRow = NotificationTargetRow & { id: string; message: string; createdAt: Date; readAt: Date | null };
+
+function toNotificationView(viewer: Viewer, row: NotificationRow): NotificationView {
+  const { state } = resolveNotificationTarget(viewer, row);
+  return {
+    id: row.id,
+    kind: row.kind,
+    message: state === "not_available" ? unavailableMessage : row.message,
+    createdAt: row.createdAt.toISOString(),
+    readAt: row.readAt?.toISOString() ?? null,
+    targetState: state,
+  };
+}
+
+/**
+ * 通知の対象の遷移先（API-NT-04）。受信者本人の通知だけを対象にし、存在しない通知と他人の通知はどちらも 404。
+ * 対象を見る資格・対象の状態は、取得のたびに現在の状態で判定する。取得しただけでは既読にしない。
+ */
+export async function loadNotificationTarget(
+  reader: AccessReader, viewer: Viewer, notificationId: string,
+): Promise<NavigationTarget> {
+  const [row] = await selectNotificationsWithTargets(reader, {})
+    .where(and(eq(notifications.id, notificationId), ownedBy(notifications.recipientId, viewer)));
+  if (!row) throw new ApiError("NOT_FOUND");
+  return resolveNotificationTarget(viewer, row);
 }
 
 /** 未読件数（API-NT-02）。受信者本人の未読の通知を、一覧と同じ条件で数える。ヘッダーとホームで使う。 */
