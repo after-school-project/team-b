@@ -84,7 +84,7 @@ export function NoticeAction({ id, version, action }: {
             </div>
           ) : null}
           <div className={review ? styles.rejection : undefined}>
-            <ReasonField id={fieldId} label={label} required="任意" help={review ? "入力した理由は本人への結果通知に含まれます。" : ""}
+            <ReasonField id={fieldId} label={label} required="任意" help={review ? "却下した場合に限り、入力した理由を本人に通知します。" : ""}
               value={reason} error={error} disabled={sending} onChange={(value) => { setReason(value); setError(null); }} />
             <div className={styles.actions}>
               <button type="button" className={action === "public" ? styles.primaryButton : styles.dangerButton}

@@ -297,8 +297,12 @@ it("Issue #14 SEC-08 卒業生兼アプリ管理者は自己審査を拒否さ�
   for (const decision of ["approve", "reject"]) {
     expectNoticeDenied(await post(decisionRoute, path + "/decision", manager, { decision, expectedVersion: 1 }, ctx), 403, "FORBIDDEN");
   }
+  await target.client.query("UPDATE notices SET updated_at = '2025-01-01' WHERE id = $1", [noticeId]);
+  const noticeState = () => target.client.query("SELECT version, updated_at, public_revision_id FROM notices WHERE id = $1", [noticeId]);
+  const before = await noticeState();
   const rejected = await post(decisionRoute, path + "/decision", "poc_s_mgr", { decision: "reject", expectedVersion: 1 }, ctx);
-  expect(rejected.body.data).toMatchObject({ state: "rejected" });
+  expect(rejected.body.data).toMatchObject({ state: "rejected", version: 2 });
+  expect((await noticeState()).rows).toEqual(before.rows);
   const ownerResult = await get(requestRoute, `/api/v1/me/notice-requests/${requestId}`, manager, ctx);
   expect(ownerResult.body.data).toMatchObject({ status: "rejected", decisionReason: null });
   const notices = await target.client.query("SELECT public_message FROM notifications WHERE notice_request_id = $1 AND kind = 'notice_review_decided'", [requestId]);
@@ -306,9 +310,9 @@ it("Issue #14 SEC-08 卒業生兼アプリ管理者は自己審査を拒否さ�
 
   const visibilityPath = `${managedNoticesPath}/${noticeId}/visibility`;
   expect((await post(visibilityRoute, visibilityPath, manager,
-    { visibility: "hidden", expectedVersion: 2 }, noticeContext(noticeId))).body.data?.state).toBe("hidden");
+    { visibility: "hidden", expectedVersion: 1 }, noticeContext(noticeId))).body.data?.state).toBe("hidden");
   expect((await post(visibilityRoute, visibilityPath, manager,
-    { visibility: "public", expectedVersion: 3 }, noticeContext(noticeId))).body.data?.state).toBe("public");
+    { visibility: "public", expectedVersion: 2 }, noticeContext(noticeId))).body.data?.state).toBe("public");
 });
 
 it("Issue #14 SEC-07 アプリ管理者は学校公式を非表示・復元できず、強制非表示の本体と件数を取得できない", async () => {
@@ -323,8 +327,10 @@ it("Issue #14 SEC-07 アプリ管理者は学校公式を非表示・復元で�
     { visibility: "hidden", expectedVersion: 1 }, ctx), 403, "FORBIDDEN");
   expect((await post(visibilityRoute, path + "/visibility", "poc_school",
     { visibility: "hidden", expectedVersion: 1 }, ctx)).body.data?.state).toBe("hidden");
-  expectNoticeDenied(await post(visibilityRoute, path + "/visibility", manager,
-    { visibility: "public", expectedVersion: 2 }, ctx), 403, "FORBIDDEN");
+  for (const visibility of ["hidden", "public"]) {
+    expectNoticeDenied(await post(visibilityRoute, path + "/visibility", manager,
+      { visibility, expectedVersion: 2 }, ctx), 404, "NOT_FOUND");
+  }
   expectNoticeDenied(await get(managedNoticeRoute, path, manager, ctx), 404, "NOT_FOUND");
   const after = await get(managedNoticesRoute, managedNoticesPath + "?state=hidden", manager, {});
   expect(after.body.meta.page?.totalCount).toBe(before.body.meta.page?.totalCount);
@@ -334,6 +340,12 @@ it("Issue #14 SEC-07 アプリ管理者は学校公式を非表示・復元で�
   });
   expect((await post(visibilityRoute, path + "/visibility", "poc_school",
     { visibility: "public", expectedVersion: 2 }, ctx)).body.data?.state).toBe("public");
+  expect((await post(deletionRoute, `/api/v1/notices/${noticeId}/deletion`, "poc_staff",
+    { expectedVersion: 3, confirmed: true }, ctx)).status).toBe(200);
+  for (const visibility of ["hidden", "public"]) {
+    expectNoticeDenied(await post(visibilityRoute, path + "/visibility", manager,
+      { visibility, expectedVersion: 4 }, ctx), 404, "NOT_FOUND");
+  }
 });
 
 it("Issue #14 SEC-23 空欄の非表示・復元を監査し、再送で重複記録や個別通知を作らない", async () => {
@@ -397,8 +409,13 @@ it("Issue #14 AC-04 削除本体は保存期間中の学校管理者に限り閲
   });
   expectNoticeDenied(await get(managedNoticeRoute, path, "poc_s_mgr", ctx), 404, "NOT_FOUND");
   expectNoticeDenied(await get(managedNoticesRoute, managedNoticesPath + "?state=deleted", "poc_s_mgr", {}), 403, "FORBIDDEN");
-  expectNoticeDenied(await post(visibilityRoute, path + "/visibility", "poc_school",
-    { visibility: "public", expectedVersion: 1 }, ctx), 404, "NOT_FOUND");
+  for (const visibility of ["hidden", "public"]) {
+    const input = { visibility, expectedVersion: 1 };
+    expectNoticeDenied(await post(visibilityRoute, path + "/visibility", "poc_school", input, ctx), 409, "STATE_CONFLICT");
+    expectNoticeDenied(await post(visibilityRoute, path + "/visibility", "poc_s_mgr", input, ctx), 404, "NOT_FOUND");
+    expectNoticeDenied(await post(visibilityRoute, `${managedNoticesPath}/${expired.id}/visibility`, "poc_school",
+      input, noticeContext(expired.id)), 404, "NOT_FOUND");
+  }
   expectNoticeDenied(await get(managedNoticeRoute, `${managedNoticesPath}/${expired.id}`, "poc_school", noticeContext(expired.id)), 404, "NOT_FOUND");
   expectNoticeDenied(await get(adminRequestRoute, `${adminRequestsPath}/${expired.requestId}`, "poc_school",
     requestContext(expired.requestId!)), 404, "NOT_FOUND");

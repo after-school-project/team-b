@@ -110,12 +110,12 @@ export function noticeVisibilityScope(originKind: "school" | "alumni"): AdminSco
   return originKind === "school" ? "school" : "any";
 }
 
-function managedAccess(viewer: Viewer) {
+export function managedNoticeAccess(viewer: Viewer, now?: Date) {
   return and(isNotNull(notices.publicRevisionId), or(
     publishedNotice(),
     and(isNull(notices.deletedAt), isNotNull(notices.forcedHiddenAt),
       viewer.roles.schoolManager ? undefined : eq(notices.originKind, "alumni")),
-    viewer.roles.schoolManager ? retainedDeletedNotice() : undefined,
+    viewer.roles.schoolManager ? retainedDeletedNotice(now) : undefined,
   ))!;
 }
 
@@ -150,7 +150,7 @@ export async function listAdminNotices(
   }, cursorPosition);
   const last = codec.decode(cursor);
   const { data, page } = await queryListPage({
-    authorized: managedAccess(viewer),
+    authorized: managedNoticeAccess(viewer),
     filters: filters[state],
     after: last ? sql`(${notices.updatedAt}, ${notices.id}) < (${last[0]}::timestamptz, ${last[1]}::uuid)` : undefined,
     limit,
@@ -193,7 +193,7 @@ export async function loadAdminNotice(reader: AccessReader, viewer: Viewer, noti
     .innerJoin(communityUsers, eq(communityUsers.userId, notices.authorId))
     .innerJoin(profiles, eq(profiles.userId, notices.authorId))
     .innerJoin(profileRevisions, eq(profileRevisions.id, profiles.currentRevisionId))
-    .where(and(managedAccess(viewer), eq(notices.id, noticeId)));
+    .where(and(managedNoticeAccess(viewer), eq(notices.id, noticeId)));
   if (!row) throw new ApiError("NOT_FOUND");
   const { notice } = row;
   const content = noticeContentView(row);

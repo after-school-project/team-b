@@ -6,11 +6,11 @@ import { recordNotification } from "@/api/notifications";
 import { expectedVersion, optionalReason, type MutationRequest } from "@/api/request";
 import { ApiError } from "@/api/response";
 import { loadAccessState, requireActive, type AccessReader } from "@/auth/access";
-import { authorizeAdminEntry } from "@/auth/admin";
+import { authorizeAdminEntry, requireAdmin } from "@/auth/admin";
 import { retainedDeletedNotice } from "@/auth/visibility";
 import { noticeRequests, notices } from "@/db/content-schema";
 import type { db } from "@/db/client";
-import { noticeVisibilityScope } from "./admin";
+import { managedNoticeAccess, noticeVisibilityScope } from "./admin";
 
 export const noticeDecisionInput = z.strictObject({
   expectedVersion,
@@ -87,14 +87,14 @@ export function decideNoticeRequest(
       const reason = state === "rejected" ? input.reason : null;
       await tx.update(noticeRequests).set({ status: state, reviewerId: actorId, decidedAt: now, decisionReason: reason, version })
         .where(eq(noticeRequests.id, requestId));
-      await tx.update(notices).set({
-        version: notice.version + 1,
-        updatedAt: now,
-        ...(state === "approved" ? {
+      if (state === "approved") {
+        await tx.update(notices).set({
           publicRevisionId: target.revisionId,
           firstPublishedAt: notice.firstPublishedAt ?? now,
-        } : {}),
-      }).where(eq(notices.id, notice.id));
+          version: notice.version + 1,
+          updatedAt: now,
+        }).where(eq(notices.id, notice.id));
+      }
       await recordNotification(context, {
         recipientId: notice.authorId, actorId,
         subject: state === "approved"
@@ -107,11 +107,12 @@ export function decideNoticeRequest(
   });
 }
 
-async function authorizeVisibility(tx: AccessReader, actorId: string, noticeId: string, replayAt?: Date) {
-  const [notice] = await tx.select().from(notices).where(eq(notices.id, noticeId));
-  if (!notice?.publicRevisionId) throw new ApiError("NOT_FOUND");
-  await authorizeAdminEntry(actorId, noticeVisibilityScope(notice.originKind))(tx);
-  if (notice.deletedAt) await requireRetainedNoticeReplay(tx, actorId, noticeId, replayAt);
+async function authorizeVisibility(tx: AccessReader, actorId: string, noticeId: string, now: Date) {
+  const viewer = requireActive(await loadAccessState(tx, actorId));
+  const [notice] = await tx.select().from(notices)
+    .where(and(eq(notices.id, noticeId), managedNoticeAccess(viewer, now)));
+  if (!notice) throw new ApiError("NOT_FOUND");
+  requireAdmin(viewer, noticeVisibilityScope(notice.originKind));
   return notice;
 }
 
@@ -129,7 +130,8 @@ export function changeNoticeVisibility(
       await authorizeVisibility(tx, actorId, noticeId, now);
     },
     async execute({ tx, now }) {
-      const notice = await authorizeVisibility(tx, actorId, noticeId);
+      const notice = await authorizeVisibility(tx, actorId, noticeId, now);
+      if (notice.deletedAt) throw new ApiError("STATE_CONFLICT");
       assertExpectedVersion(notice.version, input.expectedVersion);
       const previous = notice.forcedHiddenAt ? "hidden" : "public";
       const state = input.visibility;

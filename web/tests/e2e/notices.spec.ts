@@ -115,7 +115,9 @@ test("管理者がモバイル幅で申請詳細を開き、キーボードで�
   await page.getByRole("link", { name: title }).press("Enter");
   await expect(page.getByRole("heading", { name: title })).toBeVisible();
   await expect(page.getByText("公開前のお知らせ本文。")).toBeVisible();
-  await expect(page.getByRole("textbox", { name: /却下の理由/ })).toHaveValue("");
+  const rejectionReason = page.getByRole("textbox", { name: /却下の理由/ });
+  await expect(rejectionReason).toHaveValue("");
+  await expect(rejectionReason).toHaveAccessibleDescription(/却下した場合に限り、入力した理由を本人に通知します。/);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
 
   await page.getByRole("button", { name: "承認する" }).press("Enter");
