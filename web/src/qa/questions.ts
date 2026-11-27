@@ -202,6 +202,11 @@ export async function loadQuestion(reader: AccessReader, viewer: Viewer, questio
     version: row.version,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
-    capabilities: { ...noCapabilities, canEdit: own && canWriteContent(viewer) },
+    capabilities: {
+      ...noCapabilities,
+      canEdit: own && canWriteContent(viewer),
+      // 回答・直接のコメントは、公開中の質問にだけ付けられる（API-QA-08）。
+      canRespond: canWriteContent(viewer) && publicationState === "public",
+    },
   };
 }

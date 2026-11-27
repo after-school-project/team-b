@@ -1,6 +1,7 @@
 import { and, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { assertExpectedVersion, commitMutation } from "@/api/mutation";
+import { preserveEvidence } from "@/api/report-evidence";
 import { expectedVersion, title, type MutationRequest } from "@/api/request";
 import { ApiError } from "@/api/response";
 import { authorizeActiveEntry, type AccessReader } from "@/auth/access";
@@ -35,6 +36,15 @@ async function requireEditableQuestion(reader: AccessReader, actorId: string, qu
   return requireOwned(question, (row) => row.authorId, { userId: actorId });
 }
 
+/** 投稿時点の公開表示名。投稿上の著者名（`author_label`）として保存する。 */
+export async function currentDisplayName(reader: AccessReader, actorId: string): Promise<string> {
+  const [profile] = await reader.select({ displayName: profileRevisions.displayName }).from(profiles)
+    .innerJoin(profileRevisions, eq(profileRevisions.id, profiles.currentRevisionId))
+    .where(eq(profiles.userId, actorId));
+  if (!profile) throw new ApiError("NOT_FOUND");
+  return profile.displayName;
+}
+
 function questionLocks(ids: readonly string[]) {
   return [{ stage: "resource" as const, table: qaQuestions, idColumn: qaQuestions.id, ids }];
 }
@@ -49,12 +59,8 @@ export function createQuestion(database: Database, actorId: string, request: Mut
       await requireEditableQuestion(tx, actorId, resource.id);
     },
     async execute({ tx, now }) {
-      const [profile] = await tx.select({ displayName: profileRevisions.displayName }).from(profiles)
-        .innerJoin(profileRevisions, eq(profileRevisions.id, profiles.currentRevisionId))
-        .where(eq(profiles.userId, actorId));
-      if (!profile) throw new ApiError("NOT_FOUND");
       const [question] = await tx.insert(qaQuestions).values({
-        authorId: actorId, authorLabel: profile.displayName, title: body.title, bodyMarkdown: body.bodyMarkdown,
+        authorId: actorId, authorLabel: await currentDisplayName(tx, actorId), title: body.title, bodyMarkdown: body.bodyMarkdown,
         categoryId: await categoryId(tx, body.categoryCode), createdAt: now, updatedAt: now,
       }).returning({ id: qaQuestions.id, version: qaQuestions.version });
       return { status: 201, resource: { type: "question", id: question.id }, version: question.version, state: "public" };
@@ -76,6 +82,8 @@ export function updateQuestion(
     async execute({ tx, now }) {
       const question = await requireEditableQuestion(tx, actorId, questionId);
       assertExpectedVersion(question.version, body.expectedVersion);
+      // 通報された公開中の質問なら、編集前の内容を未終了案件の証拠に残す（DB・ER設計書 §5、#47 ③）。
+      await preserveEvidence(tx, { targets: [{ kind: "question", questionId }] });
       const version = question.version + 1;
       await tx.update(qaQuestions).set({
         title: body.title,
