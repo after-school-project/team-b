@@ -121,7 +121,7 @@ describe("通知の一覧", () => {
       expect(html).not.toContain("対象を表示する");
     });
 
-  it.each(["notice_review_requested", "event_review_requested", "event_review_decided"] as const)(
+  it.each(["event_review_requested", "event_review_decided"] as const)(
     "遷移先の画面が未実装の %s は、保存した文面と準備中の案内を表示し、「対象を表示する」を出さない", (kind) => {
       // 資格のある閲覧者：サーバーは not_available と screenPending を返し、保存した文面を残す。
       const html = render([{ ...unread, kind, message: "定型文", targetState: "not_available", screenPending: true }]);
@@ -147,7 +147,7 @@ describe("通知の一覧", () => {
   });
 
   it.each([
-    "qa_answer_created", "qa_comment_created", "qa_reply_created", "qa_hidden", "notice_review_decided",
+    "qa_answer_created", "qa_comment_created", "qa_reply_created", "qa_hidden", "notice_review_requested", "notice_review_decided",
     "profile_review_decided", "profile_hidden",
   ] as const)("遷移先の画面がある %s は「対象を表示する」を出す", (kind) => {
     expect(canOpenTarget(kind, "available")).toBe(true);

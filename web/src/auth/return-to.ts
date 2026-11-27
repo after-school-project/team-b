@@ -32,7 +32,7 @@ export const implementedScreenRoutes: readonly string[] = [
   "/questions/new", "/questions/[questionId]/edit", "/me/questions",
   "/events",
   "/notices", "/notices/[noticeId]", "/notices/new", "/me/notices", "/me/notices/[noticeId]/edit",
-  "/admin/users/[userId]", "/admin/profile-reviews", "/admin/graduation",
+  "/admin/users/[userId]", "/admin/profile-reviews", "/admin/graduation", "/admin/notices", "/admin/notices/[noticeId]",
   "/notifications",
 ];
 

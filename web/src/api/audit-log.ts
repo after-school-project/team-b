@@ -10,13 +10,14 @@ import type { RecordWriter } from "./notifications";
  * 取り違えても、秘密値・ハッシュ・セッショントークン・投稿本文・本人確認情報・本人のみの任意プロフィール項目を
  * コピーしない（DB・ER設計書 §5、API設計書 §14）。
  *
- * 許可リストには、このIssueで #8 が使う操作を定める。その他の操作は、その操作を実装する各機能Issueで追加する。
+ * 各機能の監査対象操作を許可リストに定める。
  * 監査ログの閲覧（API-LOG-01・02）は #16 で実装する。
  */
 
 const profileState = z.enum(["public", "hidden"]);
 const reviewStatus = z.enum(["pending", "approved", "rejected"]);
 const version = z.number().int().positive();
+const noticeVisibilityFields = { publicationState: z.enum(["public", "hidden"]), version };
 const graduationRole = z.enum(["student", "alumni"]);
 const graduationFields = { baseRole: graduationRole, isGraduating: z.boolean(), version, batchId: z.uuid() };
 
@@ -28,6 +29,9 @@ export const auditOperations = {
   "profile_review.approved": { targetType: "profile_review", fields: { status: reviewStatus, profileState, version } },
   /** 再公開審査の却下（API-PR-03）。対象は審査。publicReason に却下理由を記録する。 */
   "profile_review.rejected": { targetType: "profile_review", fields: { status: reviewStatus, profileState, version } },
+  /** お知らせの強制非表示・復元（API-AN-06）。 */
+  "notice.hidden": { targetType: "notice", fields: noticeVisibilityFields },
+  "notice.restored": { targetType: "notice", fields: noticeVisibilityFields },
   /** 卒業区分の一括変更（API-GR-02）。対象者ごとに1件記録する。 */
   "graduation.graduated": { targetType: "user", fields: graduationFields },
   /** 卒業区分の誤変更修正（API-GR-03）。 */

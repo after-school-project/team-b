@@ -12,7 +12,7 @@ describe("ログイン後の戻り先", () => {
     "/login",
     "/login?returnTo=/",
     "/api/auth/sign-out",
-    "/admin/notices",
+    "/admin/events",
     "/\\example.com",
     "/%2F%2Fexample.com",
     "javascript:alert(1)",
@@ -63,7 +63,7 @@ describe("可変パスを含む画面のルート", () => {
       "/questions/new", "/questions/[questionId]/edit", "/me/questions",
       "/events",
       "/notices", "/notices/[noticeId]", "/notices/new", "/me/notices", "/me/notices/[noticeId]/edit",
-      "/admin/users/[userId]", "/admin/profile-reviews", "/admin/graduation",
+      "/admin/users/[userId]", "/admin/profile-reviews", "/admin/graduation", "/admin/notices", "/admin/notices/[noticeId]",
       "/notifications",
     ]);
     expect(resolveReturnTo(`/events/${questionId}`)).toBe("/");
@@ -81,11 +81,14 @@ describe("可変パスを含む画面のルート", () => {
       .toBe("/alumni?q=%E5%8D%92%E6%A5%AD&graduationYear=2026");
   });
 
-  it("実装済みの管理画面（AD-11・AD-15）は戻り先にし、未実装の管理画面は戻り先にしない", () => {
+  it("実装済みの管理画面は戻り先にし、未実装の管理画面は戻り先にしない", () => {
     expect(resolveReturnTo("/admin/users/abcDEF_123-x")).toBe("/admin/users/abcDEF_123-x");
     expect(resolveReturnTo("/admin/profile-reviews?status=all&review=" + questionId))
       .toBe("/admin/profile-reviews?status=all&review=" + questionId);
     expect(resolveReturnTo("/admin/graduation?mode=history")).toBe("/admin/graduation?mode=history");
+    expect(resolveReturnTo("/admin/notices?view=publication")).toBe("/admin/notices?view=publication");
+    const noticeReview = `/admin/notices/${questionId}?request=${questionId}`;
+    expect(resolveReturnTo(noticeReview)).toBe(noticeReview);
     for (const path of ["/admin", "/admin/users", "/admin/users/a/b", "/admin/profile-reviews/" + questionId]) {
       expect(resolveReturnTo(path), path).toBe("/");
     }
@@ -123,7 +126,7 @@ describe("戻り先付きのログイン画面URL", () => {
     expect(loginPathFor("/?tab=home")).toBe("/login?returnTo=%2F%3Ftab%3Dhome");
   });
 
-  it.each([undefined, "/", "//example.com", "/admin/notices"])("既定・許可外の戻り先 %s は付けない", (value) => {
+  it.each([undefined, "/", "//example.com", "/admin/events"])("既定・許可外の戻り先 %s は付けない", (value) => {
     expect(loginPathFor(value)).toBe("/login");
   });
 });
