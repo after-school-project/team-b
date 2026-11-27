@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { expect, test, type Page } from "@playwright/test";
-import { createAnswer, createQuestions, removeQuestions } from "./database";
+import { createAnswer, createAnswers, createQuestions, removeQuestions } from "./database";
 import { canonicalOrigin, signIn } from "./session";
 
 /**
@@ -111,4 +111,50 @@ test("AC-06 削除済みの質問では本文を出さず、残存する回答�
   await answer.getByRole("textbox", { name: "コメントの本文" }).fill("残存回答へのコメント");
   await answer.getByRole("button", { name: "投稿する" }).click();
   await expect(page.getByRole("article", { name: "みなとさんのコメント" })).toContainText("残存回答へのコメント");
+});
+
+test("投稿を保存すると、保存したフォームだけを閉じ、ほかのフォームの入力を残す", async ({ page, baseURL }) => {
+  const [questionId] = await createQuestions(marker, [{ title: "フォームを複数開く質問" }]);
+  await createAnswer(questionId, "poc_s001", "コメントを付ける回答");
+  await signIn(page, baseURL!, "poc_s002");
+  await allowMutations(page, baseURL!);
+  await page.goto(`/questions/${questionId}`);
+
+  await page.getByRole("button", { name: "質問にコメントする" }).click();
+  const questionComment = page.getByRole("textbox", { name: "コメントの本文" }).last();
+  await questionComment.fill("書きかけの質問へのコメント");
+  await page.getByRole("textbox", { name: "回答の本文" }).fill("書きかけの回答");
+
+  const answer = page.getByRole("article", { name: "e2eの回答者名さんの回答" });
+  await answer.getByRole("button", { name: "コメントする" }).click();
+  await answer.getByRole("textbox", { name: "コメントの本文" }).fill("回答へのコメント");
+  await answer.getByRole("button", { name: "投稿する" }).click();
+  await expect(page.getByRole("article", { name: "みなとさんのコメント" })).toContainText("回答へのコメント");
+  await expect(answer.getByRole("textbox")).toHaveCount(0);
+
+  await expect(questionComment).toHaveValue("書きかけの質問へのコメント");
+  await expect(page.getByRole("textbox", { name: "回答の本文" })).toHaveValue("書きかけの回答");
+});
+
+test("AC-05 投稿の後に続きのページを読み込んでも、作成日時の順に表示する", async ({ page, baseURL }) => {
+  const [questionId] = await createQuestions(marker, [{ title: "回答の多い質問" }]);
+  // 最初のページは50件。51件目は続きのページに入る。
+  await createAnswers(questionId, "poc_s001", Array.from({ length: 51 }, (_, index) => `既存の回答${index + 1}`));
+  await signIn(page, baseURL!, "poc_s002");
+  await allowMutations(page, baseURL!);
+  await page.goto(`/questions/${questionId}`);
+  await expect(page.getByText("既存の回答50", { exact: true })).toBeVisible();
+  await expect(page.getByText("既存の回答51", { exact: true })).toHaveCount(0);
+
+  await page.getByRole("textbox", { name: "回答の本文" }).fill("新しい回答");
+  await page.getByRole("button", { name: "投稿する" }).click();
+  await expect(page.getByText("新しい回答", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "さらに表示" }).click();
+  await expect(page.getByText("既存の回答51", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "さらに表示" })).toHaveCount(0);
+
+  const bodies = await page.getByRole("region", { name: "回答・コメント" }).getByRole("article").allInnerTexts();
+  const order = bodies.map((text) => text.match(/既存の回答\d+|新しい回答/)?.[0]);
+  expect(order.slice(-3)).toEqual(["既存の回答50", "既存の回答51", "新しい回答"]);
+  expect(order).toHaveLength(52);
 });

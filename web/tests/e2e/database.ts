@@ -149,10 +149,23 @@ export async function createQuestions(marker: string, questions: NewQuestion[]):
 
 /** 質問に回答を1件作る。質問と一緒に `removeQuestions` で消える。 */
 export async function createAnswer(questionId: string, username: string, body: string): Promise<string> {
+  return (await createAnswers(questionId, username, [body]))[0];
+}
+
+/** 質問に回答を、渡した順に作成日時が古い順になるよう作る。質問と一緒に `removeQuestions` で消える。 */
+export async function createAnswers(questionId: string, username: string, bodies: string[]): Promise<string[]> {
   const authorId = await userIdOf(username);
-  return withDatabase(async (client) => (await client.query<{ id: string }>(
-    `INSERT INTO qa_responses (question_id, author_id, kind, body_markdown, author_label)
-    VALUES ($1, $2, 'answer', $3, 'e2eの回答者名') RETURNING id`, [questionId, authorId, body])).rows[0].id);
+  return withDatabase(async (client) => {
+    const ids: string[] = [];
+    for (const [index, body] of bodies.entries()) {
+      const { rows } = await client.query<{ id: string }>(
+        `INSERT INTO qa_responses (question_id, author_id, kind, body_markdown, author_label, created_at, updated_at)
+        VALUES ($1, $2, 'answer', $3, 'e2eの回答者名', now() - make_interval(secs => $4), now() - make_interval(secs => $4))
+        RETURNING id`, [questionId, authorId, body, bodies.length - index]);
+      ids.push(rows[0].id);
+    }
+    return ids;
+  });
 }
 
 /** 目印の付いた質問を消す。質問に付いた回答・コメント・返信と、それらの通知も先に消す。 */

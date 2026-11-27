@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type Dispatch, type FormEvent, type SetStateAction } from "react";
 import { RestrictedMarkdown } from "@/components/markdown/RestrictedMarkdown";
 import type { ResponseKind, ResponseView } from "@/qa/responses";
 import { formatDateTime } from "../labels";
@@ -168,7 +168,7 @@ function ResponseItem({ response, childrenOf, depth, questionId, open, setOpen, 
   depth: number;
   questionId: string;
   open: Open;
-  setOpen: (open: Open) => void;
+  setOpen: Dispatch<SetStateAction<Open>>;
   onSaved: (view: ResponseView | null, responseId: string) => void;
   onReload: (responseId: string) => void;
 }) {
@@ -177,6 +177,11 @@ function ResponseItem({ response, childrenOf, depth, questionId, open, setOpen, 
   const child = childOf(response);
   const responding = open?.mode === "respond" && open.id === response.id;
   const editing = open?.mode === "edit" && open.id === response.id;
+  // 保存したフォームだけを閉じる。保存を待つ間に別のフォームを開いていれば、そのフォームは開いたままにする。
+  const savedFrom = (mode: "respond" | "edit") => (view: ResponseView | null, responseId: string) => {
+    setOpen((current) => (current?.mode === mode && current.id === response.id ? null : current));
+    onSaved(view, responseId);
+  };
 
   return (
     <li className={styles.item}>
@@ -206,7 +211,7 @@ function ResponseItem({ response, childrenOf, depth, questionId, open, setOpen, 
           </p> : null}
           {editing ? (
             <ResponseForm key={response.version} questionId={questionId} edit={response} label={`${kind}の本文`}
-              onSaved={onSaved} onCancel={() => setOpen(null)} onReload={() => onReload(response.id)} />
+              onSaved={savedFrom("edit")} onCancel={() => setOpen(null)} onReload={() => onReload(response.id)} />
           ) : <RestrictedMarkdown source={response.content.bodyMarkdown} headingLevel={3} />}
           {!editing && (response.capabilities.canRespond || response.capabilities.canEdit) ? (
             <div className={styles.actions}>
@@ -226,7 +231,7 @@ function ResponseItem({ response, childrenOf, depth, questionId, open, setOpen, 
           ) : null}
           {responding ? (
             <ResponseForm questionId={questionId} create={{ kind: child.kind, parentResponseId: response.id }}
-              label={`${kindLabels[child.kind]}の本文`} onSaved={onSaved} onCancel={() => setOpen(null)} />
+              label={`${kindLabels[child.kind]}の本文`} onSaved={savedFrom("respond")} onCancel={() => setOpen(null)} />
           ) : null}
         </article>
       )}
@@ -250,7 +255,11 @@ export function ResponseThread({ questionId, initial, canAnswer, unavailableReas
   /** 回答できない理由の案内。表示しない場合は null。 */
   unavailableReason: string | null;
 }) {
-  const [items, setItems] = useState(initial.items);
+  // 一覧APIから読み込んだ投稿（投稿順）と、この画面で新しく投稿した投稿。新しい投稿は、まだ読み込んでいない
+  // 続きのページの投稿よりも後に作られているため、読み込み済みの投稿の後ろに置く。続きのページに含まれていれば、
+  // そのページの位置へ移す。
+  const [pages, setPages] = useState(initial.items);
+  const [added, setAdded] = useState<ResponseView[]>([]);
   const [nextCursor, setNextCursor] = useState(initial.nextCursor);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
@@ -263,8 +272,10 @@ export function ResponseThread({ questionId, initial, canAnswer, unavailableReas
     if (!focusId.current) return;
     document.getElementById(`response-${focusId.current}`)?.focus();
     focusId.current = null;
-  }, [items]);
+  }, [pages, added]);
 
+  const paged = new Set(pages.map(({ id }) => id));
+  const items = [...pages, ...added.filter(({ id }) => !paged.has(id))];
   const loaded = new Set(items.map(({ id }) => id));
   const byParent = new Map<string | null, ResponseView[]>();
   for (const item of items) {
@@ -274,20 +285,26 @@ export function ResponseThread({ questionId, initial, canAnswer, unavailableReas
   const childrenOf = (id: string) => byParent.get(id) ?? [];
   const roots = byParent.get(null) ?? [];
 
-  function merge(views: ResponseView[]) {
-    setItems((current) => {
-      const next = new Map(current.map((item) => [item.id, item]));
-      for (const view of views) next.set(view.id, view);
-      return [...next.values()];
-    });
+  /**
+   * 1件の最新の内容を、表示中の位置のまま差し替える。読み込み済みのページにない投稿は、新しい投稿として末尾に加える。
+   * 保存を待つ間に続きのページを読み込んでいてもよいよう、両方を更新し、重複は表示時に除く。
+   */
+  function replace(view: ResponseView) {
+    setPages((current) => current.map((item) => (item.id === view.id ? view : item)));
+    setAdded((current) => [...current.filter(({ id }) => id !== view.id), view]);
+  }
+
+  /** 続きのページを、読み込み済みの投稿の後ろに投稿順のまま加える。 */
+  function appendPage(views: ResponseView[]) {
+    const ids = new Set(views.map(({ id }) => id));
+    setPages((current) => [...current.filter(({ id }) => !ids.has(id)), ...views]);
+    setAdded((current) => current.filter(({ id }) => !ids.has(id)));
   }
 
   function saved(view: ResponseView | null, responseId: string) {
     const edited = loaded.has(responseId);
-    setOpen(null);
-    setCommenting(false);
     if (view) {
-      merge([view]);
+      replace(view);
       setStatus(`${kindLabels[view.kind]}を${edited ? "保存" : "投稿"}しました。`);
       focusId.current = view.id;
     } else {
@@ -297,7 +314,7 @@ export function ResponseThread({ questionId, initial, canAnswer, unavailableReas
 
   async function reload(responseId: string) {
     const view = await fetchResponse(responseId);
-    if (view) merge([view]);
+    if (view) replace(view);
     else setLoadError("読み込めませんでした。もう一度お試しください。");
   }
 
@@ -311,7 +328,7 @@ export function ResponseThread({ questionId, initial, canAnswer, unavailableReas
         { cache: "no-store" });
       const body: ApiBody<{ items: ResponseView[] }> | null = await response.json().catch(() => null);
       if (!response.ok || !body?.data) throw new Error("Load failed");
-      merge(body.data.items);
+      appendPage(body.data.items);
       setNextCursor(body.meta?.page?.nextCursor ?? null);
     } catch {
       setLoadError("読み込めませんでした。もう一度お試しください。");
@@ -348,7 +365,10 @@ export function ResponseThread({ questionId, initial, canAnswer, unavailableReas
             <section className={styles.formCard} aria-labelledby="comment-form-title">
               <h3 className={styles.sectionTitle} id="comment-form-title">質問にコメント</h3>
               <ResponseForm questionId={questionId} create={{ kind: "comment", parentResponseId: null }}
-                label="コメントの本文" onSaved={saved} onCancel={() => setCommenting(false)} />
+                label="コメントの本文" onSaved={(view, responseId) => {
+                  setCommenting(false);
+                  saved(view, responseId);
+                }} onCancel={() => setCommenting(false)} />
             </section>
           ) : (
             <p><button className={styles.textButton} type="button" aria-expanded={false}
