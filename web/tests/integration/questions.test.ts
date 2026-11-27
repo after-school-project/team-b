@@ -464,17 +464,20 @@ describe("API-QA-04 質問の詳細", () => {
   it("AC-05 公開中の質問の内容を返す。まだAPIのない操作は、本人・管理者にも可能として示さない", async () => {
     const questionId = await addQuestion({ title: "題名B", body: "# 見出し", category: "chat" });
     const view = async (viewer: string) => (await getQuestion(viewer, questionId)).body.data!;
+    const respondable = { ...noCapabilities, canRespond: true };
     expect(await view("poc_s002")).toEqual({
       id: questionId, publicationState: "public",
       content: { title: "題名B", bodyMarkdown: `# 見出し ${marker}`, category: { code: "chat", name: "雑談" } },
       author: { userId: id("poc_s001"), displayName: "投稿時の表示名" }, resolution: "open", version: 7,
       createdAt: expect.stringMatching(/Z$/), updatedAt: expect.stringMatching(/Z$/),
-      capabilities: noCapabilities,
+      capabilities: respondable,
     });
-    expect((await view("poc_s001")).capabilities).toEqual({ ...noCapabilities, canEdit: true });
-    for (const viewer of ["poc_school", "poc_s_mgr", "poc_hidden"]) {
-      expect((await view(viewer)).capabilities, viewer).toEqual(noCapabilities);
+    expect((await view("poc_s001")).capabilities).toEqual({ ...respondable, canEdit: true });
+    for (const viewer of ["poc_school", "poc_s_mgr"]) {
+      expect((await view(viewer)).capabilities, viewer).toEqual(respondable);
     }
+    // プロフィール非表示中は回答・コメントできない（AC-08）。
+    expect((await view("poc_hidden")).capabilities).toEqual(noCapabilities);
   });
 
   it("プロフィール非表示中のアプリ管理者には、強制非表示の質問の内容を返さない", async () => {

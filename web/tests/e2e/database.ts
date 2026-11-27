@@ -147,11 +147,26 @@ export async function createQuestions(marker: string, questions: NewQuestion[]):
   });
 }
 
+/** 質問に回答を1件作る。質問と一緒に `removeQuestions` で消える。 */
+export async function createAnswer(questionId: string, username: string, body: string): Promise<string> {
+  const authorId = await userIdOf(username);
+  return withDatabase(async (client) => (await client.query<{ id: string }>(
+    `INSERT INTO qa_responses (question_id, author_id, kind, body_markdown, author_label)
+    VALUES ($1, $2, 'answer', $3, 'e2eの回答者名') RETURNING id`, [questionId, authorId, body])).rows[0].id);
+}
+
+/** 目印の付いた質問を消す。質問に付いた回答・コメント・返信と、それらの通知も先に消す。 */
 export async function removeQuestions(marker: string, username?: string) {
-  await withDatabase((client) => client.query(
-    `DELETE FROM qa_questions WHERE right(body_markdown, length($1)) = $1
+  const questions = `SELECT id FROM qa_questions WHERE right(body_markdown, length($1)) = $1
       AND (($2::text IS NULL AND author_label = 'e2eの投稿者名')
-        OR author_id = (SELECT id FROM "user" WHERE username = $2))`, [marker, username ?? null]));
+        OR author_id = (SELECT id FROM "user" WHERE username = $2))`;
+  const responses = `SELECT id FROM qa_responses WHERE question_id IN (${questions})`;
+  await withDatabase(async (client) => {
+    const values = [marker, username ?? null];
+    await client.query(`DELETE FROM notifications WHERE qa_response_id IN (${responses})`, values);
+    await client.query(`DELETE FROM qa_responses WHERE id IN (${responses})`, values);
+    await client.query(`DELETE FROM qa_questions WHERE id IN (${questions})`, values);
+  });
 }
 
 type NewNotification = { message: string; read?: boolean; minutesAgo?: number };
