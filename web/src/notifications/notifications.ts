@@ -8,7 +8,7 @@ import type { AccessReader, Viewer } from "@/auth/access";
 import { ownedBy } from "@/auth/ownership";
 import { notifications } from "@/db/moderation-schema";
 import {
-  resolveNotificationTarget, selectNotificationsWithTargets, unavailableMessage,
+  resolveNotificationTarget, selectNotificationsWithTargets, stateOnlyMessages,
   type NavigationTarget, type NotificationTargetRow, type TargetState,
 } from "./targets";
 
@@ -22,7 +22,7 @@ import {
  * - 通知に保存しているのは、種類ごとの定型文と本人向けの理由だけ（#47）。対象の題名・本文や操作者は返さない。
  *
  * - 対象の状態（`targetState`）と遷移先（API-NT-04）は、取得のたびに現在の権限で判定する（`./targets`）。
- *   対象を見る資格がない通知は、保存した文面の代わりに汎用の案内文だけを返す。
+ *   対象を見る資格がない・取り下げ済み・保存期限後の通知は、保存した文面の代わりに状態案内だけを返す。
  */
 
 /** API設計書 §5 NotificationView。 */
@@ -31,7 +31,7 @@ export type NotificationView = {
   kind: NotificationKind;
   /**
    * 種類ごとの定型文。本人向けの理由がある通知は、改行の後に理由が続く。
-   * 対象を見る資格がない通知（`targetState` が not_available）は、汎用の案内文だけ。
+   * `targetState` が not_available・withdrawn・expired の通知は、保存した文面の代わりに状態案内だけ（`stateOnlyMessages`）。
    */
   message: string;
   createdAt: string;
@@ -96,7 +96,7 @@ function toNotificationView(viewer: Viewer, row: NotificationRow): NotificationV
   return {
     id: row.id,
     kind: row.kind,
-    message: state === "not_available" ? unavailableMessage : row.message,
+    message: stateOnlyMessages[state] ?? row.message,
     createdAt: row.createdAt.toISOString(),
     readAt: row.readAt?.toISOString() ?? null,
     targetState: state,

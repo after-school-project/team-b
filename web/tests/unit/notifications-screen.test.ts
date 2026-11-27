@@ -4,7 +4,9 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 
-import { isAppPath, kindLabels, splitMessage, targetStateNotes } from "@/app/notifications/labels";
+import {
+  canOpenTarget, isAppPath, kindLabels, pendingScreenNote, splitMessage, targetStateNotes,
+} from "@/app/notifications/labels";
 import { notificationStates, readNotificationParams } from "@/app/notifications/notification-filters";
 import { NotificationList } from "@/app/notifications/notification-list";
 import type { NotificationView } from "@/notifications/notifications";
@@ -105,16 +107,34 @@ describe("通知の一覧", () => {
     expect(render([unread])).toMatch(/<button type="button"[^>]*aria-describedby="notification-00000000-0000-4000-8000-000000000001"[^>]*>対象を表示する<\/button>/);
   });
 
-  it("遷移できない通知には状態案内だけを表示し、「対象を表示する」を表示しない", () => {
-    const html = render([read]);
-    expect(html).toContain(targetStateNotes.withdrawn);
+  it.each(["deleted", "hidden"] as const)("%s の通知には文面に加えて状態案内を表示し、「対象を表示する」を表示しない", (state) => {
+    const html = render([{ ...unread, kind: "qa_answer_created", message: "質問に回答が付きました。", targetState: state }]);
+    expect(html).toContain("質問に回答が付きました。");
+    expect(html).toContain(targetStateNotes[state]);
     expect(html).not.toContain("対象を表示する");
   });
 
-  it("対象を見る資格がない通知には、汎用の文面のほかに状態案内を追加しない", () => {
-    const html = render([{ ...read, message: "この通知の対象は、現在の権限では表示できません。", targetState: "not_available" }]);
-    expect(html).not.toContain("対象を表示する");
-    for (const note of Object.values(targetStateNotes)) if (note) expect(html).not.toContain(note);
+  it.each(["not_available", "withdrawn", "expired"] as const)(
+    "%s の通知は、サーバーが返した状態案内の文面だけを表示し、同じ案内を重ねない", (state) => {
+      const html = render([{ ...read, message: targetStateNotes[state], targetState: state }]);
+      expect(html.split(targetStateNotes[state])).toHaveLength(2);
+      expect(html).not.toContain("対象を表示する");
+    });
+
+  it.each(["notice_review_requested", "event_review_requested", "event_review_decided"] as const)(
+    "遷移先の画面が準備中の %s は、遷移できても「対象を表示する」を出さずに準備中と案内する", (kind) => {
+      const html = render([{ ...unread, kind, message: "定型文", targetState: "available" }]);
+      expect(html).toContain(pendingScreenNote);
+      expect(html).not.toContain("対象を表示する");
+      expect(html).toContain("既読にする");
+    });
+
+  it.each([
+    "qa_answer_created", "qa_comment_created", "qa_reply_created", "qa_hidden", "notice_review_decided",
+    "profile_review_decided", "profile_hidden",
+  ] as const)("遷移先の画面がある %s は「対象を表示する」を出す", (kind) => {
+    expect(canOpenTarget(kind, "available")).toBe(true);
+    expect(canOpenTarget(kind, "deleted")).toBe(false);
   });
 
   it("既読の案内を読み上げる領域を、一覧の前に空のまま用意する", () => {

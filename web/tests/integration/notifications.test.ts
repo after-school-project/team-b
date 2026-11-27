@@ -586,9 +586,12 @@ describe("AC-05：閲覧資格を失った場合は本文やリンクを返さ�
       await target.client.query("UPDATE event_requests SET status = 'withdrawn' WHERE id = $1", [eventRequestId]);
       for (const notificationId of [noticeNotification, eventNotification]) {
         expect((await navigationTarget("poc_school", notificationId)).body.data).toEqual({ state: "withdrawn", path: null });
-        expect(await listedItem("poc_school", notificationId))
-          .toMatchObject({ message: "定型文\n理由：本人向けの理由（秘密）", targetState: "withdrawn" });
+        // 状態案内だけを返し、保存した定型文・本人向けの理由は返さない。
+        expect(await listedItem("poc_school", notificationId)).toMatchObject({
+          message: "この通知の申請は取り下げられたため、内容を表示できません。", targetState: "withdrawn",
+        });
       }
+      expect((await list("poc_school")).text).not.toContain("本人向けの理由（秘密）");
     } finally {
       await target.client.query("UPDATE notice_requests SET status = 'pending' WHERE id = $1", [noticeRequestId]);
       await target.client.query("UPDATE event_requests SET status = 'pending' WHERE id = $1", [eventRequestId]);
@@ -609,9 +612,16 @@ describe("AC-05：閲覧資格を失った場合は本文やリンクを返さ�
 
       await target.client.query("UPDATE notices SET deleted_at = now() - interval '179 days' WHERE id = $1", [noticeId]);
       expect((await navigationTarget("poc_a001", notificationId)).body.data).toEqual({ state: "deleted", path: null });
+      // 保存期間内の削除は、通知に保存した定型文・本人向けの理由（対象の本文ではない）を残す。
+      expect(await listedItem("poc_a001", notificationId))
+        .toMatchObject({ message: "定型文\n理由：本人向けの理由（秘密）", targetState: "deleted" });
       await target.client.query("UPDATE notices SET deleted_at = now() - interval '181 days' WHERE id = $1", [noticeId]);
       expect((await navigationTarget("poc_a001", notificationId)).body.data).toEqual({ state: "expired", path: null });
-      expect((await listedItem("poc_a001", notificationId))?.targetState).toBe("expired");
+      const expired = await list("poc_a001");
+      expect(expired.body.data?.items?.find((item) => item.id === notificationId)).toMatchObject({
+        message: "この通知の対象は保存期間が終了したため、表示できません。", targetState: "expired",
+      });
+      expect(expired.text).not.toContain("本人向けの理由（秘密）");
     } finally {
       await target.client.query("UPDATE notices SET deleted_at = NULL WHERE id = $1", [noticeId]);
     }

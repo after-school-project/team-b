@@ -6,7 +6,9 @@ import { outcomeMessage } from "@/app/admin/submit-outcome";
 import { useSubmission } from "@/app/admin/use-submission";
 import type { NotificationView } from "@/notifications/notifications";
 import type { TargetState } from "@/notifications/targets";
-import { formatDateTime, isAppPath, kindLabels, splitMessage, targetStateNotes } from "./labels";
+import {
+  canOpenTarget, formatDateTime, isAppPath, kindLabels, listedTargetNote, pendingScreenNote, splitMessage, targetStateNotes,
+} from "./labels";
 import styles from "./page.module.css";
 
 const readStates = ["read"] as const;
@@ -60,6 +62,7 @@ function NotificationItem({ notification, read, onRead, onStart }: {
 }) {
   const { summary, detail } = splitMessage(notification.message);
   const messageId = `notification-${notification.id}`;
+  const openable = canOpenTarget(notification.kind, notification.targetState);
   return (
     <li className={read ? styles.item : styles.itemUnread}>
       <p className={styles.badges}>
@@ -71,10 +74,13 @@ function NotificationItem({ notification, read, onRead, onStart }: {
       <p className={styles.meta}>
         <time dateTime={notification.createdAt}>{formatDateTime(notification.createdAt)}</time>
       </p>
-      {notification.targetState === "available" ? null : <TargetNote state={notification.targetState} />}
-      {notification.targetState === "available" || !read ? (
+      <TargetNote state={notification.targetState} />
+      {notification.targetState === "available" && !openable ? (
+        <p className={styles.targetNote}>{pendingScreenNote}</p>
+      ) : null}
+      {openable || !read ? (
         <div className={styles.itemActions}>
-          {notification.targetState === "available" ? (
+          {openable ? (
             <OpenTargetButton notificationId={notification.id} describedBy={messageId} onStart={onStart} />
           ) : null}
           {read ? null : (
@@ -86,8 +92,8 @@ function NotificationItem({ notification, read, onRead, onStart }: {
   );
 }
 
-function TargetNote({ state }: { state: Exclude<TargetState, "available"> }) {
-  const note = targetStateNotes[state];
+function TargetNote({ state }: { state: TargetState }) {
+  const note = listedTargetNote(state);
   return note ? <p className={styles.targetNote}>{note}</p> : null;
 }
 
@@ -145,8 +151,7 @@ function OpenTargetButton({ notificationId, describedBy, onStart }: {
 
 function openFailure(status: number, state: unknown): OpenError {
   if (status >= 200 && status < 300 && typeof state === "string" && state in targetStateNotes) {
-    const note = targetStateNotes[state as keyof typeof targetStateNotes];
-    return { message: note ?? "この通知の対象は、現在の権限では表示できません。", reload: true };
+    return { message: targetStateNotes[state as keyof typeof targetStateNotes], reload: true };
   }
   if (status === 401) return { message: "ログイン状態を確認できませんでした。再読み込みしてください。", reload: true };
   if (status === 403 || status === 404) {

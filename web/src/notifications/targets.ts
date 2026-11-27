@@ -27,6 +27,19 @@ export type NavigationTarget = { state: TargetState; path: string | null };
 /** 対象を見る資格がない通知の文面。保存した定型文・本人向けの理由の代わりに返す（API設計書 §5 NotificationView）。 */
 export const unavailableMessage = "この通知の対象は、現在の権限では表示できません。";
 
+/**
+ * 保存した文面（定型文・本人向けの理由）の代わりに、状態案内だけを返す状態と、その文面。
+ * - not_available：対象を見る資格がない（API設計書 §5 NotificationView）。
+ * - withdrawn：取り下げ済みの申請。管理者向けの通知は状態案内だけを返す（API設計書 §10）。
+ * - expired：保存期限が到来した対象。期限後は通知経由でも内容を返さない（共通認可条件表「期限」）。
+ * deleted・hidden は、通知に保存しているのが定型文と本人向けの理由だけ（対象の本文を含まない）のため、文面を残す。
+ */
+export const stateOnlyMessages: Partial<Record<TargetState, string>> = {
+  not_available: unavailableMessage,
+  withdrawn: "この通知の申請は取り下げられたため、内容を表示できません。",
+  expired: "この通知の対象は保存期間が終了したため、表示できません。",
+};
+
 const questionTarget = alias(qaQuestions, "target_question");
 const responseTarget = alias(qaResponses, "target_response");
 const responseAuthor = alias(communityUsers, "target_response_author");

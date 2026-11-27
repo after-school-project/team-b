@@ -17,15 +17,46 @@ export const kindLabels: Record<NotificationKind, string> = {
 
 /**
  * 遷移できない通知の対象の状態案内（画面遷移設計書 §4）。対象の題名・本文は表示しない。
- * not_available は、通知の文面が既に汎用の案内文になっているため、追加の案内を出さない。
+ * 「対象を表示する」を押したときに状態が変わっていた場合の案内にも使う。
  */
-export const targetStateNotes: Record<Exclude<TargetState, "available">, string | null> = {
-  withdrawn: "この申請は取り下げられたため、内容を表示できません。",
+export const targetStateNotes: Record<Exclude<TargetState, "available">, string> = {
+  withdrawn: "この通知の申請は取り下げられたため、内容を表示できません。",
   deleted: "通知の対象は削除されました。",
   hidden: "通知の対象は非表示になっています。",
-  expired: "通知の対象は保存期間が終了したため、表示できません。",
-  not_available: null,
+  expired: "この通知の対象は保存期間が終了したため、表示できません。",
+  not_available: "この通知の対象は、現在の権限では表示できません。",
 };
+
+/**
+ * サーバーが保存した文面の代わりに状態案内を通知の文面として返す状態（`stateOnlyMessages`）。
+ * 一覧では文面が既に状態案内になっているため、同じ案内を重ねて表示しない。
+ */
+const stateOnlyStates: ReadonlySet<TargetState> = new Set(["not_available", "withdrawn", "expired"]);
+
+/**
+ * 遷移先の画面がまだない通知の種類。API-NT-04 は画面遷移設計書の URL を返すが、画面ができるまでは
+ * 「対象を表示する」を出さずに準備中と案内する。各画面を実装する Issue で、その種類をここから外す。
+ * - notice_review_requested：AD-05 `/admin/notices/[noticeId]`（#14）
+ * - event_review_requested：AD-07 `/admin/events/[eventId]`（#12）
+ * - event_review_decided：EV-05 `/me/events`（#11）
+ */
+export const pendingScreenKinds: ReadonlySet<NotificationKind> = new Set([
+  "notice_review_requested", "event_review_requested", "event_review_decided",
+]);
+
+/** 遷移先の画面が準備中の通知に表示する案内。 */
+export const pendingScreenNote = "この通知の遷移先の画面は準備中です。";
+
+/** 一覧の通知に「対象を表示する」を出すか。対象へ遷移でき、遷移先の画面があるものだけ。 */
+export function canOpenTarget(kind: NotificationKind, state: TargetState): boolean {
+  return state === "available" && !pendingScreenKinds.has(kind);
+}
+
+/** 一覧の通知に、文面とは別に表示する状態案内。表示しない場合は null。 */
+export function listedTargetNote(state: TargetState): string | null {
+  if (state === "available" || stateOnlyStates.has(state)) return null;
+  return targetStateNotes[state];
+}
 
 /**
  * API-NT-04 が返した遷移先が、同一アプリの相対パスか。`/` で始まり、`//`・`/\` で始まらないパスだけを許可する。
