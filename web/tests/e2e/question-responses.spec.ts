@@ -476,3 +476,24 @@ test("削除した回答を、削除の前に取得を始めて遅れて届い�
   await expect(thread.getByText("削除前の回答")).toHaveCount(0);
   await expect(thread.getByRole("button", { name: "回答を削除" })).toHaveCount(0);
 });
+
+test("回答の取得が失敗する状態でも、削除の後に成功を知らせ、削除済みの案内へフォーカスを移す", async ({ page, baseURL }) => {
+  const [questionId] = await createQuestions(marker, [{ title: "取得に失敗する質問" }]);
+  const answerId = await createAnswer(questionId, "poc_s001", "取得に失敗する回答");
+  await signIn(page, baseURL!, "poc_s001");
+  await allowMutations(page, baseURL!);
+  await page.goto(`/questions/${questionId}`);
+  await page.route(`**/api/v1/responses/${answerId}`, async (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    await route.fulfill({ status: 503, json: { error: { code: "SERVICE_UNAVAILABLE", message: "停止中" }, meta: {} } });
+  });
+
+  const answer = page.getByRole("article", { name: "e2eの回答者名さんの回答" });
+  await answer.getByRole("button", { name: "回答を削除" }).click();
+  await page.getByRole("dialog", { name: "回答を削除" }).getByRole("button", { name: "削除する" }).click();
+  const thread = page.getByRole("region", { name: "回答・コメント" });
+  await expect(thread.getByRole("status")).toHaveText("回答を削除しました。");
+  const deletedAnswer = thread.getByRole("article", { name: "回答", exact: true });
+  await expect(deletedAnswer).toContainText("この回答は削除されました。");
+  await expect(deletedAnswer).toBeFocused();
+});

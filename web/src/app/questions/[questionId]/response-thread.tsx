@@ -15,7 +15,8 @@ import styles from "./response-thread.module.css";
  *
  * - 一覧APIのフラットな配列を `parentResponseId` で木に組み立てる。親がまだ読み込まれていない投稿は先頭の階層に表示する。
  * - 操作の入口は、サーバーが返した `capabilities` で出し分ける。受付の可否は各APIで再認可する。
- * - 投稿・編集・削除の後は、その投稿をAPI-QA-09で読み直して一覧へ反映する。読み込み済みの続きのページは保持する。
+ * - 投稿・編集の後は、その投稿をAPI-QA-09で読み直して一覧へ反映する。削除の後は、読み直さずに削除済みの状態案内へ差し替える。
+ *   読み込み済みの続きのページは保持する。
  * - 削除しても子の投稿は残る（API-QA-11）。削除した投稿は状態案内に変わり、子はその下に表示したままにする。
  */
 
@@ -388,21 +389,19 @@ export function ResponseThread({ questionId, initial, canAnswer, unavailableReas
   }
 
   /**
-   * 削除した投稿を、API-QA-09 で読み直した状態案内に差し替える。子の投稿は残るため、スレッドの位置はそのまま。
-   * 読み直せなかった場合も、削除は確定しているため、本文を消した状態案内を画面で作って表示する。
+   * 削除した投稿を、削除済みの状態案内に差し替える。子の投稿は残るため、スレッドの位置はそのまま。
+   * 削除済みの投稿は、だれが取得しても本文・著者・版番号のない同じ形になる（API-QA-09）ため、読み直さずに画面で作る。
+   * 読み直しの失敗で成功の通知やフォーカスの移動が抜けないよう、差し替えと同時に行う。
    */
-  async function deleted(response: ResponseView) {
+  function deleted(response: ResponseView) {
     // 削除した投稿に開いていたフォームだけを閉じる。ほかの投稿のフォームと下書きはそのまま残す。
     setOpen((current) => (current?.id === response.id ? null : current));
-    // 削除は確定しているため、読み直しを待たずに状態案内へ差し替える。読み直した内容も削除済みなら、それで置き換える。
+    focusId.current = response.id;
     replace({
       ...response, publicationState: "deleted", content: null, author: null, version: null, createdAt: null,
       updatedAt: null, capabilities: { ...noCapabilities },
     });
-    const view = await fetchResponse(response.id);
-    if (view?.publicationState === "deleted") replace(view);
     setStatus(`${kindLabels[response.kind]}を削除しました。`);
-    focusId.current = response.id;
   }
 
   async function reload(responseId: string) {
