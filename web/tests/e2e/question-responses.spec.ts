@@ -158,3 +158,102 @@ test("AC-05 投稿の後に続きのページを読み込んでも、作成日�
   expect(order.slice(-3)).toEqual(["既存の回答50", "既存の回答51", "新しい回答"]);
   expect(order).toHaveLength(52);
 });
+
+/** 指定した要求の応答を、`release` を呼ぶまで止める。`fetched` は、止めた応答をサーバーから受け取ったときに解決する。 */
+function holdResponse(page: Page, url: RegExp, method: string, origin?: string) {
+  let release!: () => void;
+  let fetched!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const received = new Promise<void>((resolve) => { fetched = resolve; });
+  void page.route(url, async (route) => {
+    if (route.request().method() !== method) return route.fallback();
+    const headers = origin ? { ...await route.request().allHeaders(), origin } : undefined;
+    const response = await route.fetch(headers ? { headers } : undefined);
+    fetched();
+    await gate;
+    await route.fulfill({ response });
+  }, { times: 1 });
+  return { release, received };
+}
+
+test("送信中に閉じて開き直したフォームの下書きは、先の送信が終わっても残す", async ({ page, baseURL }) => {
+  const [questionId] = await createQuestions(marker, [{ title: "開き直す質問" }]);
+  await createAnswer(questionId, "poc_s001", "コメントを付ける回答");
+  await signIn(page, baseURL!, "poc_s002");
+  await allowMutations(page, baseURL!);
+  await page.goto(`/questions/${questionId}`);
+  const post = holdResponse(page, /\/api\/v1\/questions\/[^/?]+\/responses$/, "POST",
+    canonicalOrigin ?? new URL(baseURL!).origin);
+
+  const answer = page.getByRole("article", { name: "e2eの回答者名さんの回答" });
+  const entry = answer.getByRole("button", { name: "コメントする" });
+  await entry.click();
+  await answer.getByRole("textbox", { name: "コメントの本文" }).fill("先に送るコメント");
+  await answer.getByRole("button", { name: "投稿する" }).click();
+  await post.received;
+  await entry.click();
+  await expect(answer.getByRole("textbox")).toHaveCount(0);
+  await entry.click();
+  await answer.getByRole("textbox", { name: "コメントの本文" }).fill("開き直して書いた下書き");
+
+  post.release();
+  await expect(page.getByRole("article", { name: "みなとさんのコメント" })).toContainText("先に送るコメント");
+  await expect(answer.getByRole("textbox", { name: "コメントの本文" })).toHaveValue("開き直して書いた下書き");
+});
+
+test("続きのページの取得中に保存した編集を、遅れて届いた一覧で巻き戻さない", async ({ page, baseURL }) => {
+  const [questionId] = await createQuestions(marker, [{ title: "取得中に編集する質問" }]);
+  await createAnswers(questionId, "poc_s001", Array.from({ length: 51 }, (_, index) => `既存の回答${index + 1}`));
+  await signIn(page, baseURL!, "poc_s002");
+  await allowMutations(page, baseURL!);
+  await page.goto(`/questions/${questionId}`);
+  await page.getByRole("textbox", { name: "回答の本文" }).fill("編集前の回答");
+  await page.getByRole("button", { name: "投稿する" }).click();
+  const own = page.getByRole("article", { name: "みなとさんの回答" });
+  await expect(own).toContainText("編集前の回答");
+
+  // 編集前の内容を含む一覧の応答を受け取った後、画面へ届ける前に止める。
+  const more = holdResponse(page, /\/api\/v1\/questions\/[^/?]+\/responses\?/, "GET");
+  await page.getByRole("button", { name: "さらに表示" }).click();
+  await more.received;
+  await own.getByRole("button", { name: "回答を編集" }).click();
+  await own.getByRole("textbox", { name: "回答の本文" }).fill("保存した編集");
+  await own.getByRole("button", { name: "保存する" }).click();
+  await expect(own).toContainText("保存した編集");
+
+  more.release();
+  await expect(page.getByText("既存の回答51", { exact: true })).toBeVisible();
+  await expect(own).toContainText("保存した編集");
+  await expect(own).not.toContainText("編集前の回答");
+  // 続きのページの位置（作成日時の順）へ移す。
+  const bodies = await page.getByRole("region", { name: "回答・コメント" }).getByRole("article").allInnerTexts();
+  expect(bodies.slice(-2).map((text) => text.match(/既存の回答51|保存した編集/)?.[0])).toEqual(["既存の回答51", "保存した編集"]);
+  // 再度の編集も、最新の版番号で保存できる。
+  await own.getByRole("button", { name: "回答を編集" }).click();
+  await own.getByRole("textbox", { name: "回答の本文" }).fill("2回目の編集");
+  await own.getByRole("button", { name: "保存する" }).click();
+  await expect(own).toContainText("2回目の編集");
+});
+
+test("続きのページを読み込む前に投稿した投稿を編集しても、表示位置を変えない", async ({ page, baseURL }) => {
+  const [questionId] = await createQuestions(marker, [{ title: "投稿を続ける質問" }]);
+  await createAnswers(questionId, "poc_s001", Array.from({ length: 51 }, (_, index) => `既存の回答${index + 1}`));
+  await signIn(page, baseURL!, "poc_s002");
+  await allowMutations(page, baseURL!);
+  await page.goto(`/questions/${questionId}`);
+  const answerBody = page.getByRole("textbox", { name: "回答の本文" });
+  for (const text of ["1件目の新しい回答", "2件目の新しい回答"]) {
+    await answerBody.fill(text);
+    await page.getByRole("button", { name: "投稿する" }).click();
+    await expect(page.getByText(text, { exact: true })).toBeVisible();
+  }
+  const first = page.getByRole("article", { name: "みなとさんの回答" }).filter({ hasText: "1件目の新しい回答" });
+  await first.getByRole("button", { name: "回答を編集" }).click();
+  await first.getByRole("textbox", { name: "回答の本文" }).fill("1件目を編集した回答");
+  await first.getByRole("button", { name: "保存する" }).click();
+  await expect(page.getByText("1件目を編集した回答", { exact: true })).toBeVisible();
+
+  const bodies = await page.getByRole("region", { name: "回答・コメント" }).getByRole("article").allInnerTexts();
+  expect(bodies.slice(-2).map((text) => text.match(/1件目を編集した回答|2件目の新しい回答/)?.[0]))
+    .toEqual(["1件目を編集した回答", "2件目の新しい回答"]);
+});

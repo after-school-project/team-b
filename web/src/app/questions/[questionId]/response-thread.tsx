@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState, type Dispatch, type FormEvent, type SetStateAction } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { RestrictedMarkdown } from "@/components/markdown/RestrictedMarkdown";
 import type { ResponseKind, ResponseView } from "@/qa/responses";
 import { formatDateTime } from "../labels";
@@ -160,26 +160,34 @@ function ResponseForm({ questionId, create, edit, label, onSaved, onCancel, onRe
   );
 }
 
-type Open = { mode: "respond" | "edit"; id: string } | null;
+/** 開いている投稿のフォーム。`token` はフォームを開くたびに変わり、閉じて開き直したフォームを別のものとして区別する。 */
+type Open = { mode: "respond" | "edit"; id: string; token: number } | null;
 
-function ResponseItem({ response, childrenOf, depth, questionId, open, setOpen, onSaved, onReload }: {
+type FormControls = {
+  open: Open;
+  openForm: (mode: "respond" | "edit", id: string) => void;
+  /** 指定したフォームが今も開いていれば閉じる。省略すると、開いているフォームを閉じる。 */
+  closeForm: (token?: number) => void;
+};
+
+function ResponseItem({ response, childrenOf, depth, questionId, forms, onSaved, onReload }: {
   response: ResponseView;
   childrenOf: (id: string) => ResponseView[];
   depth: number;
   questionId: string;
-  open: Open;
-  setOpen: Dispatch<SetStateAction<Open>>;
+  forms: FormControls;
   onSaved: (view: ResponseView | null, responseId: string) => void;
   onReload: (responseId: string) => void;
 }) {
+  const { open, openForm, closeForm } = forms;
   const children = childrenOf(response.id);
   const kind = kindLabels[response.kind];
   const child = childOf(response);
   const responding = open?.mode === "respond" && open.id === response.id;
   const editing = open?.mode === "edit" && open.id === response.id;
-  // 保存したフォームだけを閉じる。保存を待つ間に別のフォームを開いていれば、そのフォームは開いたままにする。
-  const savedFrom = (mode: "respond" | "edit") => (view: ResponseView | null, responseId: string) => {
-    setOpen((current) => (current?.mode === mode && current.id === response.id ? null : current));
+  // 保存したフォームだけを閉じる。保存を待つ間に閉じて開き直したフォームや、別のフォームは開いたままにする。
+  const savedFrom = (token: number) => (view: ResponseView | null, responseId: string) => {
+    closeForm(token);
     onSaved(view, responseId);
   };
 
@@ -210,28 +218,29 @@ function ResponseItem({ response, childrenOf, depth, questionId, open, setOpen, 
             この{kind}は管理者により非表示になっています。内容は本人と権限のある管理者だけに表示されます。
           </p> : null}
           {editing ? (
-            <ResponseForm key={response.version} questionId={questionId} edit={response} label={`${kind}の本文`}
-              onSaved={savedFrom("edit")} onCancel={() => setOpen(null)} onReload={() => onReload(response.id)} />
+            <ResponseForm key={`${open.token}:${response.version}`} questionId={questionId} edit={response}
+              label={`${kind}の本文`} onSaved={savedFrom(open.token)} onCancel={() => closeForm(open.token)}
+              onReload={() => onReload(response.id)} />
           ) : <RestrictedMarkdown source={response.content.bodyMarkdown} headingLevel={3} />}
           {!editing && (response.capabilities.canRespond || response.capabilities.canEdit) ? (
             <div className={styles.actions}>
               {response.capabilities.canRespond ? (
                 <button className={styles.textButton} type="button" aria-expanded={responding}
-                  onClick={() => setOpen(responding ? null : { mode: "respond", id: response.id })}>
+                  onClick={() => (responding ? closeForm() : openForm("respond", response.id))}>
                   {child.label}
                 </button>
               ) : null}
               {response.capabilities.canEdit ? (
-                <button className={styles.textButton} type="button"
-                  onClick={() => setOpen({ mode: "edit", id: response.id })}>
+                <button className={styles.textButton} type="button" onClick={() => openForm("edit", response.id)}>
                   {kind}を編集
                 </button>
               ) : null}
             </div>
           ) : null}
           {responding ? (
-            <ResponseForm questionId={questionId} create={{ kind: child.kind, parentResponseId: response.id }}
-              label={`${kindLabels[child.kind]}の本文`} onSaved={savedFrom("respond")} onCancel={() => setOpen(null)} />
+            <ResponseForm key={open.token} questionId={questionId}
+              create={{ kind: child.kind, parentResponseId: response.id }} label={`${kindLabels[child.kind]}の本文`}
+              onSaved={savedFrom(open.token)} onCancel={() => closeForm(open.token)} />
           ) : null}
         </article>
       )}
@@ -239,7 +248,7 @@ function ResponseItem({ response, childrenOf, depth, questionId, open, setOpen, 
         <ol className={depth >= 3 ? `${styles.children} ${styles.flat}` : styles.children}>
           {children.map((item) => (
             <ResponseItem key={item.id} response={item} childrenOf={childrenOf} depth={depth + 1} questionId={questionId}
-              open={open} setOpen={setOpen} onSaved={onSaved} onReload={onReload} />
+              forms={forms} onSaved={onSaved} onReload={onReload} />
           ))}
         </ol>
       ) : null}
@@ -255,11 +264,12 @@ export function ResponseThread({ questionId, initial, canAnswer, unavailableReas
   /** 回答できない理由の案内。表示しない場合は null。 */
   unavailableReason: string | null;
 }) {
-  // 一覧APIから読み込んだ投稿（投稿順）と、この画面で新しく投稿した投稿。新しい投稿は、まだ読み込んでいない
-  // 続きのページの投稿よりも後に作られているため、読み込み済みの投稿の後ろに置く。続きのページに含まれていれば、
-  // そのページの位置へ移す。
-  const [pages, setPages] = useState(initial.items);
-  const [added, setAdded] = useState<ResponseView[]>([]);
+  // `pages` は一覧APIから読み込んだ投稿（投稿順）、`added` はこの画面で新しく投稿した投稿（投稿した順）。
+  // 新しい投稿は、まだ読み込んでいない続きのページの投稿よりも後に作られているため、読み込み済みの投稿の後ろに置く。
+  // 続きのページに含まれていれば、そのページの位置へ移す。両方を同時に更新するため、1つの状態にまとめる。
+  const [thread, setThread] = useState<{ pages: ResponseView[]; added: ResponseView[] }>({
+    pages: initial.items, added: [],
+  });
   const [nextCursor, setNextCursor] = useState(initial.nextCursor);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
@@ -267,13 +277,24 @@ export function ResponseThread({ questionId, initial, canAnswer, unavailableReas
   const [open, setOpen] = useState<Open>(null);
   const [commenting, setCommenting] = useState(false);
   const focusId = useRef<string | null>(null);
+  const formToken = useRef(0);
+  // 画面で反映した投稿ごとの反映の順番。取得を始めた後に反映した内容を、遅れて届いた一覧で巻き戻さないために使う。
+  const sequence = useRef(0);
+  const replacedAt = useRef(new Map<string, number>());
 
   useEffect(() => {
     if (!focusId.current) return;
     document.getElementById(`response-${focusId.current}`)?.focus();
     focusId.current = null;
-  }, [pages, added]);
+  }, [thread]);
 
+  const forms: FormControls = {
+    open,
+    openForm: (mode, id) => setOpen({ mode, id, token: ++formToken.current }),
+    closeForm: (token) => setOpen((current) => (token === undefined || current?.token === token ? null : current)),
+  };
+
+  const { pages, added } = thread;
   const paged = new Set(pages.map(({ id }) => id));
   const items = [...pages, ...added.filter(({ id }) => !paged.has(id))];
   const loaded = new Set(items.map(({ id }) => id));
@@ -285,20 +306,32 @@ export function ResponseThread({ questionId, initial, canAnswer, unavailableReas
   const childrenOf = (id: string) => byParent.get(id) ?? [];
   const roots = byParent.get(null) ?? [];
 
-  /**
-   * 1件の最新の内容を、表示中の位置のまま差し替える。読み込み済みのページにない投稿は、新しい投稿として末尾に加える。
-   * 保存を待つ間に続きのページを読み込んでいてもよいよう、両方を更新し、重複は表示時に除く。
-   */
+  /** 1件の最新の内容を、表示中の位置のまま差し替える。表示していない投稿は、新しい投稿として末尾に加える。 */
   function replace(view: ResponseView) {
-    setPages((current) => current.map((item) => (item.id === view.id ? view : item)));
-    setAdded((current) => [...current.filter(({ id }) => id !== view.id), view]);
+    replacedAt.current.set(view.id, ++sequence.current);
+    setThread((current) => {
+      const swap = (items: ResponseView[]) => items.map((item) => (item.id === view.id ? view : item));
+      if (current.pages.some(({ id }) => id === view.id)) return { ...current, pages: swap(current.pages) };
+      if (current.added.some(({ id }) => id === view.id)) return { ...current, added: swap(current.added) };
+      return { ...current, added: [...current.added, view] };
+    });
   }
 
-  /** 続きのページを、読み込み済みの投稿の後ろに投稿順のまま加える。 */
-  function appendPage(views: ResponseView[]) {
-    const ids = new Set(views.map(({ id }) => id));
-    setPages((current) => [...current.filter(({ id }) => !ids.has(id)), ...views]);
-    setAdded((current) => current.filter(({ id }) => !ids.has(id)));
+  /**
+   * 続きのページを、読み込み済みの投稿の後ろに投稿順のまま加える。取得を始めた後（`startedAt` より後）に画面で反映した
+   * 投稿は、一覧の位置へ移しつつ、反映済みの内容を保つ。
+   */
+  function appendPage(views: ResponseView[], startedAt: number) {
+    setThread((current) => {
+      const shown = new Map([...current.pages, ...current.added].map((item) => [item.id, item]));
+      const ids = new Set(views.map(({ id }) => id));
+      const page = views.map((view) => ((replacedAt.current.get(view.id) ?? 0) > startedAt
+        ? shown.get(view.id) ?? view : view));
+      return {
+        pages: [...current.pages.filter(({ id }) => !ids.has(id)), ...page],
+        added: current.added.filter(({ id }) => !ids.has(id)),
+      };
+    });
   }
 
   function saved(view: ResponseView | null, responseId: string) {
@@ -322,13 +355,14 @@ export function ResponseThread({ questionId, initial, canAnswer, unavailableReas
     if (!nextCursor || loading) return;
     setLoading(true);
     setLoadError("");
+    const startedAt = sequence.current;
     try {
       const query = new URLSearchParams({ limit: String(pageLimit), cursor: nextCursor });
       const response = await fetch(`/api/v1/questions/${encodeURIComponent(questionId)}/responses?${query}`,
         { cache: "no-store" });
       const body: ApiBody<{ items: ResponseView[] }> | null = await response.json().catch(() => null);
       if (!response.ok || !body?.data) throw new Error("Load failed");
-      appendPage(body.data.items);
+      appendPage(body.data.items, startedAt);
       setNextCursor(body.meta?.page?.nextCursor ?? null);
     } catch {
       setLoadError("読み込めませんでした。もう一度お試しください。");
@@ -344,7 +378,7 @@ export function ResponseThread({ questionId, initial, canAnswer, unavailableReas
         <ol className={styles.list}>
           {roots.map((item) => (
             <ResponseItem key={item.id} response={item} childrenOf={childrenOf} depth={0} questionId={questionId}
-              open={open} setOpen={setOpen} onSaved={saved} onReload={reload} />
+              forms={forms} onSaved={saved} onReload={reload} />
           ))}
         </ol>
       ) : <p className={styles.empty}>まだ回答・コメントはありません。</p>}
