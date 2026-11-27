@@ -1,5 +1,5 @@
 import {
-  and, count, desc, eq, exists, ilike, inArray, isNotNull, isNull, or, sql,
+  and, count, desc, eq, exists, ilike, inArray, isNotNull, isNull, ne, or, sql,
 } from "drizzle-orm";
 import { z } from "zod";
 import { containing, searchText } from "@/api/list-filters";
@@ -126,16 +126,16 @@ const publicCursorPosition = z.tuple([z.string(), uuid]);
 const managedCursorPosition = z.tuple([z.string(), uuid]);
 const requestCursorPosition = z.tuple([z.string(), uuid]);
 
-function authorView(userId: string, displayName: string, profileState: "public" | "hidden"): PublicAuthor {
+export function authorView(userId: string, displayName: string, profileState: "public" | "hidden"): PublicAuthor {
   return { userId, displayName: profileState === "public" ? displayName : HIDDEN_AUTHOR_NAME };
 }
 
-function noticeContentView(revision: { title: string; body: string; categoryCode: string }): NoticeContent {
+export function noticeContentView(revision: { title: string; body: string; categoryCode: string }): NoticeContent {
   if (revision.categoryCode !== NOTICE_CATEGORY.code) throw new Error("お知らせカテゴリーが不正です。");
   return { title: revision.title, body: revision.body, categoryCode: NOTICE_CATEGORY.code };
 }
 
-function requestSummary(row: typeof noticeRequests.$inferSelect): RequestSummary {
+export function requestSummary(row: typeof noticeRequests.$inferSelect): RequestSummary {
   return {
     id: row.id,
     resourceId: row.noticeId,
@@ -170,7 +170,7 @@ function publicUpdatedAt(row: { revisionCreatedAt: Date; approvedAt: Date | null
   return row.approvedAt ?? row.revisionCreatedAt;
 }
 
-function retentionExpiresAt(deletedAt: Date | null): string | null {
+export function retentionExpiresAt(deletedAt: Date | null): string | null {
   return deletedAt
     ? new Date(deletedAt.getTime() + deletedNoticeRetentionDays * 24 * 60 * 60 * 1000).toISOString()
     : null;
@@ -337,10 +337,11 @@ async function ownedNotice(reader: AccessReader, viewer: Viewer, noticeId: strin
   return row;
 }
 
-async function requestsForNotices(reader: AccessReader, noticeIds: string[]) {
+export async function requestsForNotices(reader: AccessReader, noticeIds: string[], includeWithdrawn = true) {
   if (!noticeIds.length) return new Map<string, { latest: typeof noticeRequests.$inferSelect | null;
     pending: typeof noticeRequests.$inferSelect | null }>();
-  const rows = await reader.select().from(noticeRequests).where(inArray(noticeRequests.noticeId, noticeIds))
+  const rows = await reader.select().from(noticeRequests).where(and(inArray(noticeRequests.noticeId, noticeIds),
+    includeWithdrawn ? undefined : ne(noticeRequests.status, "withdrawn")))
     .orderBy(desc(noticeRequests.submittedAt), desc(noticeRequests.id));
   const byNotice = new Map<string, { latest: typeof noticeRequests.$inferSelect | null;
     pending: typeof noticeRequests.$inferSelect | null }>();

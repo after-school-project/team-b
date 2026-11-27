@@ -86,3 +86,49 @@ test("学校職員の即時公開編集から公開詳細を開く", async ({ pa
   await expect(page).toHaveURL(publicPath);
   await expect(page.getByRole("heading", { level: 1, name: title + " 更新" })).toBeVisible();
 });
+
+test("管理者がモバイル幅で申請詳細を開き、キーボードで承認・強制非表示・復元できる", async ({ browser, page, baseURL }) => {
+  const origin = canonicalOrigin ?? new URL(baseURL!).origin;
+  const title = "審査するお知らせ " + randomUUID();
+  const applicant = await browser.newContext({ baseURL });
+  try {
+    const applicantPage = await applicant.newPage();
+    await signIn(applicantPage, baseURL!, "poc_a001");
+    const response = await applicant.request.post("/api/v1/notices", {
+      headers: { Origin: origin, "Idempotency-Key": randomUUID() },
+      data: { title, body: "公開前のお知らせ本文。", categoryCode: "general" },
+    });
+    expect(response.status()).toBe(201);
+  } finally {
+    await applicant.close();
+  }
+
+  await signIn(page, baseURL!, "poc_school");
+  await page.route("**/api/v1/admin/**", async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    await route.fulfill({ response: await route.fetch({ headers: { ...await route.request().allHeaders(), origin } }) });
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/notices");
+  await page.getByRole("link", { name: "お知らせの審査・公開管理" }).press("Enter");
+  await page.getByRole("link", { name: "新規申請", exact: true }).press("Enter");
+  await page.getByRole("link", { name: title }).press("Enter");
+  await expect(page.getByRole("heading", { name: title })).toBeVisible();
+  await expect(page.getByText("公開前のお知らせ本文。")).toBeVisible();
+  await expect(page.getByRole("textbox", { name: /却下の理由/ })).toHaveValue("");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+
+  await page.getByRole("button", { name: "承認する" }).press("Enter");
+  await expect(page.getByText("お知らせの申請を承認しました。")).toBeFocused();
+  await page.getByRole("link", { name: "公開管理の詳細へ" }).press("Enter");
+  await expect(page.getByText("公開中", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "強制非表示にする" }).press("Enter");
+  await expect(page.getByText("お知らせを強制非表示にしました。")).toBeFocused();
+  await expect(page.getByText("強制非表示", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "公開状態に戻す" }).press("Enter");
+  await expect(page.getByText("お知らせを公開状態に戻しました。")).toBeFocused();
+  await expect(page.getByText("公開中", { exact: true })).toBeVisible();
+  await page.getByRole("link", { name: "公開管理一覧へ" }).press("Enter");
+  await expect(page.getByRole("heading", { name: /公開管理一覧/ })).toBeVisible();
+  await expect(page.getByRole("link", { name: title })).toBeVisible();
+});

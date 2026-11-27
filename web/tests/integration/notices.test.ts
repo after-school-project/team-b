@@ -29,6 +29,12 @@ let requestListRoute: typeof import("../../src/app/api/v1/me/notices/[noticeId]/
 let requestRoute: typeof import("../../src/app/api/v1/me/notice-requests/[requestId]/route");
 let withdrawalRoute: typeof import("../../src/app/api/v1/me/notice-requests/[requestId]/withdrawal/route");
 let resubmissionRoute: typeof import("../../src/app/api/v1/me/notice-requests/[requestId]/resubmission/route");
+let adminRequestsRoute: typeof import("../../src/app/api/v1/admin/notice-requests/route");
+let adminRequestRoute: typeof import("../../src/app/api/v1/admin/notice-requests/[requestId]/route");
+let decisionRoute: typeof import("../../src/app/api/v1/admin/notice-requests/[requestId]/decision/route");
+let managedNoticesRoute: typeof import("../../src/app/api/v1/admin/notices/route");
+let managedNoticeRoute: typeof import("../../src/app/api/v1/admin/notices/[noticeId]/route");
+let visibilityRoute: typeof import("../../src/app/api/v1/admin/notices/[noticeId]/visibility/route");
 let ipCounter = 0;
 const cookies = new Map<string, string>();
 const createdNoticeIds = new Set<string>();
@@ -60,6 +66,12 @@ beforeAll(async () => {
   requestRoute = await import("../../src/app/api/v1/me/notice-requests/[requestId]/route");
   withdrawalRoute = await import("../../src/app/api/v1/me/notice-requests/[requestId]/withdrawal/route");
   resubmissionRoute = await import("../../src/app/api/v1/me/notice-requests/[requestId]/resubmission/route");
+  adminRequestsRoute = await import("../../src/app/api/v1/admin/notice-requests/route");
+  adminRequestRoute = await import("../../src/app/api/v1/admin/notice-requests/[requestId]/route");
+  decisionRoute = await import("../../src/app/api/v1/admin/notice-requests/[requestId]/decision/route");
+  managedNoticesRoute = await import("../../src/app/api/v1/admin/notices/route");
+  managedNoticeRoute = await import("../../src/app/api/v1/admin/notices/[noticeId]/route");
+  visibilityRoute = await import("../../src/app/api/v1/admin/notices/[noticeId]/visibility/route");
 });
 
 afterEach(async () => {
@@ -208,6 +220,213 @@ async function addNotice({
 const noticeContext = (noticeId: string) => ({ params: Promise.resolve({ noticeId }) });
 const requestContext = (requestId: string) => ({ params: Promise.resolve({ requestId }) });
 const titles = (body: Body) => (body.data?.items ?? []).map((item) => item.title);
+
+const adminRequestsPath = "/api/v1/admin/notice-requests";
+const managedNoticesPath = "/api/v1/admin/notices";
+
+function expectNoticeDenied(result: Awaited<ReturnType<typeof parse>>, status: number, code: string) {
+  expect(result.status).toBe(status);
+  expect(result.body.error?.code).toBe(code);
+  expect(result.body.data).toBeUndefined();
+  expect(result.text).not.toContain(marker);
+}
+
+it("Issue #14 AC-01・AC-02 審査一覧を受付順・種別で絞り、取り下げ済みを一覧と詳細から除外する", async () => {
+  const first = await addNotice({ pendingStatus: "pending", requestKind: "new", published: false });
+  const second = await addNotice({ pendingStatus: "pending", requestKind: "new", published: false });
+  const withdrawn = await addNotice({ pendingStatus: "withdrawn", requestKind: "new", published: false });
+  await target.client.query("UPDATE notice_requests SET submitted_at = '2000-01-01' WHERE id = $1", [first.requestId]);
+  await target.client.query("UPDATE notice_requests SET submitted_at = '2000-01-02' WHERE id = $1", [second.requestId]);
+  await target.client.query("UPDATE notice_requests SET submitted_at = '1999-12-31' WHERE id = $1", [withdrawn.requestId]);
+  const url = adminRequestsPath + "?status=pending&kind=new&limit=1";
+  const firstPage = await get(adminRequestsRoute, url, "poc_school", {});
+  expect(firstPage.body.data?.items).toEqual([expect.objectContaining({ id: first.requestId, canReview: true })]);
+  expect(firstPage.body.meta.page?.hasMore).toBe(true);
+  expect(firstPage.text).not.toContain(marker);
+  const secondPage = await get(adminRequestsRoute,
+    url + "&cursor=" + encodeURIComponent(firstPage.body.meta.page!.nextCursor!), "poc_school", {});
+  expect(secondPage.body.data?.items).toEqual([expect.objectContaining({ id: second.requestId })]);
+  for (const manager of ["poc_school", "poc_s_mgr"]) {
+    const path = `${adminRequestsPath}/${withdrawn.requestId}`;
+    expectNoticeDenied(await get(adminRequestRoute, path, manager, requestContext(withdrawn.requestId!)), 404, "NOT_FOUND");
+    expectNoticeDenied(await post(decisionRoute, path + "/decision", manager,
+      { expectedVersion: 1, decision: "approve" }, requestContext(withdrawn.requestId!)), 404, "NOT_FOUND");
+  }
+  expectNoticeDenied(await get(adminRequestsRoute, url, "poc_s001", {}), 403, "FORBIDDEN");
+});
+
+it("Issue #14 SEC-25 同時承認は一方のみ確定し、旧版拒否・再送と通知の一意性を保つ", async () => {
+  const { id: noticeId, requestId } = await addNotice({ pendingStatus: "pending", requestKind: "new", published: false });
+  const path = `${adminRequestsPath}/${requestId}/decision`;
+  const ctx = requestContext(requestId!);
+  const input = { expectedVersion: 1, decision: "approve" };
+  expectNoticeDenied(await post(decisionRoute, path, "poc_school", { ...input, expectedVersion: 2 }, ctx), 409, "VERSION_CONFLICT");
+  const managers = ["poc_school", "poc_s_mgr"];
+  const keys = managers.map(() => randomUUID());
+  const decisions = await Promise.all(managers.map((manager, index) => post(decisionRoute, path, manager, input, ctx, keys[index])));
+  const winner = decisions.findIndex((response) => response.status === 200);
+  expect(winner).toBeGreaterThanOrEqual(0);
+  expectNoticeDenied(decisions[1 - winner], 409, "VERSION_CONFLICT");
+  const receipt = decisions[winner].body.data;
+  expect(receipt).toMatchObject({ state: "approved", version: 2 });
+  const replay = await post(decisionRoute, path, managers[winner], input, ctx, keys[winner]);
+  expect(replay.body.data).toEqual(receipt);
+  expectNoticeDenied(await post(decisionRoute, path, managers[winner], { ...input, expectedVersion: 2 }, ctx), 409, "STATE_CONFLICT");
+
+  const { rows } = await target.client.query(`
+    SELECT n.public_revision_id = nr.revision_id AS revision_published, nr.status, nr.version, nr.reviewer_id,
+      n.first_published_at = nr.decided_at AS initially_published
+    FROM notices n JOIN notice_requests nr ON n.id = nr.notice_id WHERE n.id = $1
+  `, [noticeId]);
+  expect(rows).toEqual([{ revision_published: true, status: "approved", version: 2,
+    reviewer_id: id(managers[winner]), initially_published: true }]);
+  const notifications = await target.client.query(
+    "SELECT recipient_id, public_message FROM notifications WHERE notice_request_id = $1 AND kind = 'notice_review_decided'", [requestId]);
+  expect(notifications.rows).toEqual([{ recipient_id: id("poc_a001"), public_message: "お知らせの申請が承認されました。" }]);
+});
+
+it("Issue #14 SEC-08 卒業生兼アプリ管理者は自己審査を拒否され、自分の公開投稿を非表示・復元できる", async () => {
+  const { id: noticeId, requestId } = await addNotice({ author: "poc_a_mgr", pendingStatus: "pending" });
+  const manager = "poc_a_mgr";
+  const path = `${adminRequestsPath}/${requestId}`;
+  const ctx = requestContext(requestId!);
+  const listing = await get(adminRequestsRoute, adminRequestsPath + "?kind=edit&limit=50", manager, {});
+  expect(listing.body.data?.items).toContainEqual(expect.objectContaining({ id: requestId, canReview: false }));
+  const detail = await get(adminRequestRoute, path, manager, ctx);
+  expect(detail.body.data?.capabilities).toMatchObject({ canReview: false });
+  for (const decision of ["approve", "reject"]) {
+    expectNoticeDenied(await post(decisionRoute, path + "/decision", manager, { decision, expectedVersion: 1 }, ctx), 403, "FORBIDDEN");
+  }
+  const rejected = await post(decisionRoute, path + "/decision", "poc_s_mgr", { decision: "reject", expectedVersion: 1 }, ctx);
+  expect(rejected.body.data).toMatchObject({ state: "rejected" });
+  const ownerResult = await get(requestRoute, `/api/v1/me/notice-requests/${requestId}`, manager, ctx);
+  expect(ownerResult.body.data).toMatchObject({ status: "rejected", decisionReason: null });
+  const notices = await target.client.query("SELECT public_message FROM notifications WHERE notice_request_id = $1 AND kind = 'notice_review_decided'", [requestId]);
+  expect(notices.rows).toEqual([{ public_message: "お知らせの申請が却下されました。" }]);
+
+  const visibilityPath = `${managedNoticesPath}/${noticeId}/visibility`;
+  expect((await post(visibilityRoute, visibilityPath, manager,
+    { visibility: "hidden", expectedVersion: 2 }, noticeContext(noticeId))).body.data?.state).toBe("hidden");
+  expect((await post(visibilityRoute, visibilityPath, manager,
+    { visibility: "public", expectedVersion: 3 }, noticeContext(noticeId))).body.data?.state).toBe("public");
+});
+
+it("Issue #14 SEC-07 アプリ管理者は学校公式を非表示・復元できず、強制非表示の本体と件数を取得できない", async () => {
+  const { id: noticeId } = await addNotice({ author: "poc_staff" });
+  const path = `${managedNoticesPath}/${noticeId}`;
+  const ctx = noticeContext(noticeId);
+  const manager = "poc_s_mgr";
+  const publicDetail = await get(managedNoticeRoute, path, manager, ctx);
+  expect(publicDetail.body.data?.capabilities).toMatchObject({ canHide: false, canRestore: false });
+  const before = await get(managedNoticesRoute, managedNoticesPath + "?state=hidden", manager, {});
+  expectNoticeDenied(await post(visibilityRoute, path + "/visibility", manager,
+    { visibility: "hidden", expectedVersion: 1 }, ctx), 403, "FORBIDDEN");
+  expect((await post(visibilityRoute, path + "/visibility", "poc_school",
+    { visibility: "hidden", expectedVersion: 1 }, ctx)).body.data?.state).toBe("hidden");
+  expectNoticeDenied(await post(visibilityRoute, path + "/visibility", manager,
+    { visibility: "public", expectedVersion: 2 }, ctx), 403, "FORBIDDEN");
+  expectNoticeDenied(await get(managedNoticeRoute, path, manager, ctx), 404, "NOT_FOUND");
+  const after = await get(managedNoticesRoute, managedNoticesPath + "?state=hidden", manager, {});
+  expect(after.body.meta.page?.totalCount).toBe(before.body.meta.page?.totalCount);
+  expect(after.text).not.toContain(noticeId);
+  expect((await get(managedNoticeRoute, path, "poc_school", ctx)).body.data).toMatchObject({
+    publicationState: "hidden", capabilities: { canRestore: true },
+  });
+  expect((await post(visibilityRoute, path + "/visibility", "poc_school",
+    { visibility: "public", expectedVersion: 2 }, ctx)).body.data?.state).toBe("public");
+});
+
+it("Issue #14 SEC-23 空欄の非表示・復元を監査し、再送で重複記録や個別通知を作らない", async () => {
+  const { id: noticeId } = await addNotice();
+  const path = `${managedNoticesPath}/${noticeId}/visibility`;
+  const ctx = noticeContext(noticeId);
+  const manager = "poc_s_mgr";
+  const ownerNotifications = () => target.client.query("SELECT count(*) FROM notifications WHERE recipient_id = $1", [id("poc_a001")]);
+  const before = await ownerNotifications();
+  for (const [visibility, version] of [["hidden", 1], ["public", 2]] as const) {
+    const input = { visibility, expectedVersion: version, reason: "  " };
+    const key = randomUUID();
+    const first = await post(visibilityRoute, path, manager, input, ctx, key);
+    expect(first.body.data).toMatchObject({ state: visibility, version: version + 1 });
+    expect((await post(visibilityRoute, path, manager, input, ctx, key)).body.data).toEqual(first.body.data);
+    expectNoticeDenied(await post(visibilityRoute, path, manager,
+      { visibility, expectedVersion: version + 1 }, ctx), 409, "STATE_CONFLICT");
+  }
+  const { rows } = await target.client.query(`SELECT action_type, actor_id, target_type, public_reason, before_state, after_state
+    FROM audit_logs WHERE target_id = $1 ORDER BY (after_state->>'version')::int`, [noticeId]);
+  expect(rows).toEqual([
+    { action_type: "notice.hidden", actor_id: id(manager), target_type: "notice", public_reason: null,
+      before_state: { publicationState: "public", version: 1 }, after_state: { publicationState: "hidden", version: 2 } },
+    { action_type: "notice.restored", actor_id: id(manager), target_type: "notice", public_reason: null,
+      before_state: { publicationState: "hidden", version: 2 }, after_state: { publicationState: "public", version: 3 } },
+  ]);
+  expect((await ownerNotifications()).rows).toEqual(before.rows);
+});
+
+it("Issue #14 AC-02 編集承認では申請版だけを審査し、公開版を更新しても強制非表示と初回公開日時を保つ", async () => {
+  const { id: noticeId, requestId } = await addNotice({ hidden: true, pendingStatus: "pending" });
+  const path = `${adminRequestsPath}/${requestId}`;
+  const ctx = noticeContext(noticeId);
+  const { rows: [before] } = await target.client.query(
+    "SELECT first_published_at, forced_hidden_at FROM notices WHERE id = $1", [noticeId]);
+  const review = await get(adminRequestRoute, path, "poc_school", requestContext(requestId!));
+  expect(review.body.data?.content).toMatchObject({ body: `${marker} 申請本文` });
+  expect(review.text).not.toContain("公開本文");
+  expect((await post(decisionRoute, path + "/decision", "poc_school",
+    { expectedVersion: 1, decision: "approve" }, requestContext(requestId!))).body.data?.state).toBe("approved");
+  const { rows: [after] } = await target.client.query(
+    "SELECT first_published_at, forced_hidden_at FROM notices WHERE id = $1", [noticeId]);
+  expect(after).toEqual(before);
+  expect((await get(managedNoticeRoute, `${managedNoticesPath}/${noticeId}`, "poc_school", ctx)).body.data).toMatchObject({
+    publicationState: "hidden", publicContent: { body: `${marker} 申請本文` }, pendingRequest: null,
+  });
+  expectNoticeDenied(await get(noticeRoute, `/api/v1/notices/${noticeId}`, "poc_s001", ctx), 404, "NOT_FOUND");
+});
+
+it("Issue #14 AC-04 削除本体は保存期間中の学校管理者に限り閲覧でき、復元・期限後の申請取得を拒否する", async () => {
+  const retained = await addNotice({ deletedAt: new Date(Date.now() - 179 * day), pendingStatus: "rejected" });
+  const expired = await addNotice({ deletedAt: new Date(Date.now() - 180 * day), pendingStatus: "rejected", title: `${marker} 期限切れ` });
+  const path = `${managedNoticesPath}/${retained.id}`;
+  const ctx = noticeContext(retained.id);
+  const list = await get(managedNoticesRoute, managedNoticesPath + "?state=deleted", "poc_school", {});
+  expect(list.body.data?.items).toContainEqual(expect.objectContaining({ id: retained.id, publicationState: "deleted" }));
+  expect(list.text).not.toContain(expired.id);
+  expect((await get(managedNoticeRoute, path, "poc_school", ctx)).body.data).toMatchObject({
+    publicationState: "deleted", deletedContent: { body: `${marker} 公開本文` },
+    publicContent: null, capabilities: { canRestore: false },
+  });
+  expectNoticeDenied(await get(managedNoticeRoute, path, "poc_s_mgr", ctx), 404, "NOT_FOUND");
+  expectNoticeDenied(await get(managedNoticesRoute, managedNoticesPath + "?state=deleted", "poc_s_mgr", {}), 403, "FORBIDDEN");
+  expectNoticeDenied(await post(visibilityRoute, path + "/visibility", "poc_school",
+    { visibility: "public", expectedVersion: 1 }, ctx), 404, "NOT_FOUND");
+  expectNoticeDenied(await get(managedNoticeRoute, `${managedNoticesPath}/${expired.id}`, "poc_school", noticeContext(expired.id)), 404, "NOT_FOUND");
+  expectNoticeDenied(await get(adminRequestRoute, `${adminRequestsPath}/${expired.requestId}`, "poc_school",
+    requestContext(expired.requestId!)), 404, "NOT_FOUND");
+  expectNoticeDenied(await get(adminRequestRoute, `${adminRequestsPath}/${retained.requestId}`, "poc_s_mgr",
+    requestContext(retained.requestId!)), 404, "NOT_FOUND");
+});
+
+it("Issue #14 削除済みのお知らせの再送は保存期間内に閲覧できる学校管理者に限り、状態を変更しない", async () => {
+  const { id: noticeId } = await addNotice();
+  const path = `${managedNoticesPath}/${noticeId}/visibility`;
+  const ctx = noticeContext(noticeId);
+  const hide = { visibility: "hidden", expectedVersion: 1 };
+  const restore = { visibility: "public", expectedVersion: 2 };
+  const hideKey = randomUUID();
+  const restoreKey = randomUUID();
+  expect((await post(visibilityRoute, path, "poc_s_mgr", hide, ctx, hideKey)).status).toBe(200);
+  const restored = await post(visibilityRoute, path, "poc_school", restore, ctx, restoreKey);
+  expect(restored.status).toBe(200);
+  expect((await post(deletionRoute, `/api/v1/notices/${noticeId}/deletion`, "poc_a001",
+    { expectedVersion: 3, confirmed: true }, ctx)).status).toBe(200);
+  expectNoticeDenied(await post(visibilityRoute, path, "poc_s_mgr", hide, ctx, hideKey), 404, "NOT_FOUND");
+  const replay = await post(visibilityRoute, path, "poc_school", restore, ctx, restoreKey);
+  expect(replay.body.data).toEqual(restored.body.data);
+  const { rows } = await target.client.query("SELECT count(*)::int AS count FROM audit_logs WHERE target_id = $1", [noticeId]);
+  expect(rows).toEqual([{ count: 2 }]);
+  await target.client.query("UPDATE notices SET deleted_at = now() - interval '180 days' WHERE id = $1", [noticeId]);
+  expectNoticeDenied(await post(visibilityRoute, path, "poc_school", restore, ctx, restoreKey), 404, "NOT_FOUND");
+});
 
 it("SEC-01 未承認利用者はお知らせ一覧を拒否され、秘密情報を含む本文を受け取らない", async () => {
   const { id: noticeId } = await addNotice({ title: `${marker} 秘密題名`, body: `${marker} 秘密本文` });

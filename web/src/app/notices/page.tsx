@@ -59,6 +59,7 @@ export default async function NoticesPage({ searchParams }: { searchParams: Prom
           <h1 className={styles.title}>お知らせ</h1>
           {canCreate ? <Link className={styles.primaryButton} href="/notices/new">お知らせを作成</Link> : null}
         </header>
+        {shell.canAccessAdmin ? <Link href="/admin/notices">お知らせの審査・公開管理</Link> : null}
         <NoticeSearchForm key={firstPageHref} q={q}
           error={result.kind === "keyword" ? result.message : undefined} />
         {result.kind === "invalid" ? (

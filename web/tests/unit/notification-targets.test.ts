@@ -241,9 +241,9 @@ describe("遷移先の画面の実装状況", () => {
     }
   });
 
-  it("現時点で画面がない遷移先は、お知らせ・イベントの審査依頼とイベントの審査結果", () => {
+  it("現時点で画面がない遷移先は、イベントの審査依頼と審査結果", () => {
     expect(Object.keys(targetScreenRoutes).filter((kind) => !isTargetScreenImplemented(kind as keyof typeof targetScreenRoutes)).sort())
-      .toEqual(["event_review_decided", "event_review_requested", "notice_review_requested"]);
+      .toEqual(["event_review_decided", "event_review_requested"]);
   });
 
   it("遷移できない状態は、画面の実装状況にかかわらずそのまま返す", () => {
