@@ -93,7 +93,8 @@ test("管理者がモバイル幅で申請詳細を開き、キーボードで�
   const applicant = await browser.newContext({ baseURL });
   try {
     const applicantPage = await applicant.newPage();
-    await signIn(applicantPage, baseURL!, "poc_a001");
+    // notifications.spec.ts は poc_a001 宛ての未読件数を検証するため、審査結果は別の卒業生が受け取る。
+    await signIn(applicantPage, baseURL!, "poc_a_mgr");
     const response = await applicant.request.post("/api/v1/notices", {
       headers: { Origin: origin, "Idempotency-Key": randomUUID() },
       data: { title, body: "公開前のお知らせ本文。", categoryCode: "general" },
