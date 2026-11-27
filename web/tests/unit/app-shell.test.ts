@@ -32,7 +32,7 @@ import { EmptyState, ErrorState, LoadingState } from "@/components/feedback/Stat
 
 /** 共通ナビの導線のうち、実装済みの画面（`implementedScreenRoutes`）。ほかは「準備中」として押せない状態にする。 */
 const implementedNavHrefs = new Set([
-  "/", "/questions", "/notices", "/events", "/alumni", "/me/profile", "/me/notices", "/notifications",
+  "/", "/questions", "/notices", "/events", "/alumni", "/me/profile", "/me/questions", "/me/notices", "/notifications",
 ]);
 
 /** `viewerUnread` は `requireAppScreen` がサーバーで数えた件数、`unread` は開発用プレビューが渡す仮の件数。 */

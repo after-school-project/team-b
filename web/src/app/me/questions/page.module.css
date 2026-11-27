@@ -1,0 +1,64 @@
+/* GE-05 自分のQ&A投稿一覧。Q&A一覧（QA-01）の見た目を使う。docs/DESIGN.md §7・§8。 */
+
+.page {
+  composes: page from "../../questions/page.module.css";
+}
+
+.header {
+  composes: header from "../../questions/page.module.css";
+}
+
+.title {
+  composes: title from "../../questions/page.module.css";
+}
+
+.lead {
+  composes: lead from "../../questions/page.module.css";
+}
+
+.error {
+  composes: error from "../../questions/page.module.css";
+}
+
+/* 種類の絞り込み。狭い画面では折り返す。選択中の種類は aria-current で示す。 */
+.kinds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.kind {
+  display: inline-flex;
+  min-height: var(--control-min-size);
+  align-items: center;
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--color-control-border);
+  border-radius: var(--radius-control);
+  color: var(--color-heading);
+  background: var(--color-surface);
+  text-decoration: none;
+}
+
+.kind:hover {
+  background: var(--color-surface-subtle);
+}
+
+.kind[aria-current="page"] {
+  border-color: var(--color-primary);
+  color: var(--color-on-primary);
+  background: var(--color-primary);
+  font-weight: 600;
+}
+
+.excerpt {
+  margin: 0;
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+
+.badgeNeutral {
+  composes: badgeNeutral from "../../questions/[questionId]/page.module.css";
+}

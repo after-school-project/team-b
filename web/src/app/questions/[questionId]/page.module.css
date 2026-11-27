@@ -141,3 +141,35 @@
 .questionArea:focus-visible {
   outline-offset: 4px;
 }
+
+/* 解決状態の変更（QA-02）。質問者本人の操作として、編集・削除と並べる。 */
+.resolutionButton {
+  min-height: var(--control-min-size);
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--color-control-border);
+  border-radius: var(--radius-control);
+  color: var(--color-heading);
+  background: var(--color-surface);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.resolutionButton:hover {
+  background: var(--color-surface-subtle);
+}
+
+.resolutionButton[aria-disabled="true"] {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.ownerStatus {
+  color: var(--color-success);
+}
+
+.ownerError {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--color-danger);
+}

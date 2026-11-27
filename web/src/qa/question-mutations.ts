@@ -20,6 +20,8 @@ export const questionPatchSchema = questionCreateSchema.partial().extend({ expec
 );
 /** 質問・回答等の本人削除（API-QA-06・11）。表示した版番号と、最終確認の `confirmed: true` が必要。 */
 export const qaDeletionSchema = z.strictObject({ expectedVersion, confirmed });
+/** 解決状態の変更（API-QA-12）。切り替えではなく、設定する状態を送る（API設計書 §7）。 */
+export const questionResolutionSchema = z.strictObject({ expectedVersion, resolution: z.enum(["open", "resolved"]) });
 
 type Database = Parameters<typeof commitMutation>[0];
 
@@ -136,6 +138,41 @@ export function deleteQuestion(
       await tx.update(qaQuestions).set({ deletedAt: now, version, updatedAt: now }).where(eq(qaQuestions.id, questionId));
       await handoffCasesOfDeletedTarget({ tx, requireLockedUsers }, { target });
       return { status: 200, resource: { type: "question", id: questionId }, version, state: "deleted" };
+    },
+  });
+}
+
+/**
+ * 質問の解決状態の変更（API-QA-12、画面ID QA-02）。Issue #9 ⑥。
+ *
+ * - 質問者本人・プロフィール公開中・未削除の質問だけ。管理者でも他人の質問は変更できない（QA-10、AUTH-08）。
+ *   編集と同じく、強制非表示中の質問も本人は変更できる。
+ * - 未解決・解決済みは何度でも変更でき、解決済みの質問にも回答できる（QA-04）。今と同じ状態の指定は 409 STATE_CONFLICT。
+ * - 解決状態は通報証拠の項目（題名・本文・著者名）に含まれないため、証拠は保全しない。
+ * - 結果の `state` は変更後の解決状態（API設計書 §13）。
+ */
+export function updateQuestionResolution(
+  database: Database, actorId: string, request: MutationRequest, questionId: string,
+  body: z.infer<typeof questionResolutionSchema>,
+) {
+  return commitMutation(database, {
+    actorId, request, body,
+    authorizeEntry: authorizeActiveEntry(actorId, { profileWritable: true }),
+    targets: async () => questionLocks([questionId]),
+    async authorizeReplay({ tx }, { resource }) {
+      if (resource.type !== "question" || resource.id !== questionId) throw new ApiError("NOT_FOUND");
+      await requireEditableQuestion(tx, actorId, questionId);
+    },
+    async execute({ tx, now }) {
+      const question = await requireEditableQuestion(tx, actorId, questionId);
+      assertExpectedVersion(question.version, body.expectedVersion);
+      const [{ resolution }] = await tx.select({ resolution: qaQuestions.resolution }).from(qaQuestions)
+        .where(eq(qaQuestions.id, questionId));
+      if (resolution === body.resolution) throw new ApiError("STATE_CONFLICT");
+      const version = question.version + 1;
+      await tx.update(qaQuestions).set({ resolution: body.resolution, version, updatedAt: now })
+        .where(eq(qaQuestions.id, questionId));
+      return { status: 200, resource: { type: "question", id: questionId }, version, state: body.resolution };
     },
   });
 }
