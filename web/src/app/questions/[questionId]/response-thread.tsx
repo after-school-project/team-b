@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { noCapabilities } from "@/auth/capabilities";
 import { RestrictedMarkdown } from "@/components/markdown/RestrictedMarkdown";
 import type { ResponseKind, ResponseView } from "@/qa/responses";
 import { formatDateTime } from "../labels";
@@ -51,6 +52,8 @@ function childOf(parent: ResponseView): { kind: ResponseKind; label: string } {
  * 削除・非表示で版番号のない状態案内になった応答は、版番号で比べられないため、届いた内容を使う。
  */
 function newer(shown: ResponseView, incoming: ResponseView): ResponseView {
+  // 削除は元に戻せないため、削除済みと分かった投稿は、遅れて届いた削除前の応答で上書きしない。
+  if (shown.publicationState === "deleted") return shown;
   return shown.version !== null && incoming.version !== null && shown.version > incoming.version ? shown : incoming;
 }
 
@@ -358,9 +361,12 @@ export function ResponseThread({ questionId, initial, canAnswer, unavailableReas
       const page = views.map((view) => {
         const item = shown.get(view.id);
         if (!item) return view;
+        // 削除済みの投稿は、取得を始めた時点にかかわらず削除済みのままにする（`newer` と同じ）。
         // 両方に版番号があれば、届いた順にかかわらず新しい版を使う。版番号のない状態案内では比べられないため、
         // 取得を始めた後に画面で反映した内容を残す。
-        if (item.version !== null && view.version !== null) return newer(item, view);
+        if (item.publicationState === "deleted" || (item.version !== null && view.version !== null)) {
+          return newer(item, view);
+        }
         return (replacedAt.current.get(view.id) ?? 0) > startedAt ? item : view;
       });
       return {
@@ -386,12 +392,15 @@ export function ResponseThread({ questionId, initial, canAnswer, unavailableReas
    * 読み直せなかった場合も、削除は確定しているため、本文を消した状態案内を画面で作って表示する。
    */
   async function deleted(response: ResponseView) {
-    setOpen(null);
-    const view = await fetchResponse(response.id);
-    replace(view ?? {
+    // 削除した投稿に開いていたフォームだけを閉じる。ほかの投稿のフォームと下書きはそのまま残す。
+    setOpen((current) => (current?.id === response.id ? null : current));
+    // 削除は確定しているため、読み直しを待たずに状態案内へ差し替える。読み直した内容も削除済みなら、それで置き換える。
+    replace({
       ...response, publicationState: "deleted", content: null, author: null, version: null, createdAt: null,
-      updatedAt: null, capabilities: { ...response.capabilities, canEdit: false, canDelete: false, canRespond: false },
+      updatedAt: null, capabilities: { ...noCapabilities },
     });
+    const view = await fetchResponse(response.id);
+    if (view?.publicationState === "deleted") replace(view);
     setStatus(`${kindLabels[response.kind]}を削除しました。`);
     focusId.current = response.id;
   }

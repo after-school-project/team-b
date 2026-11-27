@@ -17,6 +17,9 @@ import styles from "./page.module.css";
 
 export const metadata: Metadata = { title: "質問" };
 
+/** 質問の本体の枠のID。質問を削除した後のフォーカス先。 */
+const questionAreaId = "question-area";
+
 /** 最初に表示する回答・コメント・返信の件数。続きは画面の「さらに表示」で読み込む。 */
 const firstPageLimit = 50;
 
@@ -53,12 +56,16 @@ export default async function QuestionPage({ params, searchParams }: {
     <AppShell viewer={shell}>
       <div className={styles.page}>
         <p className={styles.back}><Link href="/questions">Q&A一覧へ</Link></p>
-        <QuestionDetail question={question} />
+        {/* 質問を削除すると、この枠へフォーカスを移してから再取得する。枠は再取得の後も同じ要素として残る。 */}
+        <div id={questionAreaId} className={styles.questionArea} tabIndex={-1}>
+          <QuestionDetail question={question} />
+        </div>
         {question.content !== null && (question.capabilities.canEdit || question.capabilities.canDelete) ? (
           <div className={styles.ownerActions}>
             {question.capabilities.canEdit ? <Link href={`/questions/${question.id}/edit`}>質問を編集</Link> : null}
             {question.capabilities.canDelete && question.version !== null ? (
-              <QuestionDelete questionId={question.id} version={question.version} title={question.content.title} />
+              <QuestionDelete questionId={question.id} version={question.version} title={question.content.title}
+                focusTargetId={questionAreaId} />
             ) : null}
           </div>
         ) : null}

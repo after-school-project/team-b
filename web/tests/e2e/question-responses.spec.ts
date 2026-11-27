@@ -379,6 +379,11 @@ test("AC-09 モバイルでキーボードを使って、確認のうえ自分�
   await expect(answerDialog).toBeHidden();
   await expect(own).toContainText("削除する回答");
 
+  // 別の投稿に入力中のコメントは、回答を削除しても閉じず、下書きを残す。
+  await others.getByRole("button", { name: "コメントする" }).click();
+  const draft = others.getByRole("textbox", { name: "コメントの本文" });
+  await draft.fill("入力中のコメント");
+
   await deleteAnswer.click();
   await answerDialog.getByRole("button", { name: "キャンセル" }).press("Tab");
   await expect(answerDialog.getByRole("button", { name: "削除する" })).toBeFocused();
@@ -393,12 +398,18 @@ test("AC-09 モバイルでキーボードを使って、確認のうえ自分�
     has: page.getByRole("article", { name: "回答", exact: true }).filter({ hasText: "この回答は削除されました。" }),
   });
   await expect(deletedItem.getByRole("article", { name: "はるさんのコメント" })).toContainText("残るコメント");
+  await expect(draft).toHaveValue("入力中のコメント");
 
   await page.getByRole("button", { name: "質問を削除" }).click();
   const questionDialog = page.getByRole("dialog", { name: "質問を削除" });
   await expect(questionDialog).toContainText("削除する質問");
   await questionDialog.getByRole("button", { name: "削除する" }).click();
   await expect(page.getByText("この質問は削除されました。")).toBeVisible();
+  // 削除のボタンはなくなるため、削除の案内を含む質問の本体の枠へフォーカスを移す。
+  const questionArea = page.locator("#question-area");
+  await expect(questionArea).toBeFocused();
+  await expect(questionArea).toContainText("この質問は削除されました。");
+  await expect(draft).toHaveValue("入力中のコメント");
   await expect(page.getByRole("heading", { name: "削除する質問" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "質問を削除" })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "質問を編集" })).toHaveCount(0);
@@ -413,4 +424,55 @@ test("AC-09 モバイルでキーボードを使って、確認のうえ自分�
   await expect(page.getByText("削除する回答")).toHaveCount(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth))
     .toBeLessThanOrEqual(0);
+});
+
+test("削除した回答を、削除の前に取得を始めて遅れて届いた応答で再表示しない", async ({ page, baseURL }) => {
+  const [questionId] = await createQuestions(marker, [{ title: "遅れた応答の質問" }]);
+  const answerId = await createAnswer(questionId, "poc_s001", "削除前の回答");
+  await signIn(page, baseURL!, "poc_s001");
+  await allowMutations(page, baseURL!);
+  // 編集の保存を版の競合にして、「最新の内容を読み込む」を出す。
+  await page.route(`**/api/v1/responses/${answerId}`, async (route) => {
+    if (route.request().method() !== "PATCH") return route.fallback();
+    await route.fulfill({ status: 409, json: { error: { code: "VERSION_CONFLICT", message: "競合" }, meta: {} } });
+  });
+  // 最初の読み直しは、削除の前の内容を取得したまま、合図があるまで画面へ届けない。
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  let fetched!: () => void;
+  const fetchedBeforeDeletion = new Promise<void>((resolve) => { fetched = resolve; });
+  let reads = 0;
+  await page.route(`**/api/v1/responses/${answerId}`, async (route) => {
+    if (route.request().method() !== "GET" || ++reads > 1) return route.fallback();
+    const response = await route.fetch();
+    fetched();
+    await held;
+    await route.fulfill({ response });
+  });
+  await page.goto(`/questions/${questionId}`);
+
+  const answer = page.getByRole("article", { name: "e2eの回答者名さんの回答" });
+  await answer.getByRole("button", { name: "回答を編集" }).click();
+  await answer.getByRole("textbox", { name: "回答の本文" }).fill("保存できない編集");
+  await answer.getByRole("button", { name: "保存する" }).click();
+  await answer.getByRole("button", { name: "最新の内容を読み込む" }).click();
+  await fetchedBeforeDeletion;
+  await answer.getByRole("button", { name: "キャンセル" }).click();
+
+  await answer.getByRole("button", { name: "回答を削除" }).click();
+  await page.getByRole("dialog", { name: "回答を削除" }).getByRole("button", { name: "削除する" }).click();
+  const thread = page.getByRole("region", { name: "回答・コメント" });
+  await expect(thread.getByRole("status")).toHaveText("回答を削除しました。");
+  await expect(thread.getByText("この回答は削除されました。")).toBeVisible();
+
+  // 削除の前の内容が遅れて届いても、削除済みの表示を保つ。
+  const lateArrival = page.waitForResponse((response) => response.url().endsWith(`/api/v1/responses/${answerId}`)
+    && response.request().method() === "GET" && response.status() === 200);
+  release();
+  await lateArrival;
+  // 応答を受け取った画面が描画し終えるのを待ってから確かめる（すぐに確かめると、反映前の表示で通ってしまうため）。
+  await page.evaluate(() => new Promise((resolve) => setTimeout(() => requestAnimationFrame(resolve), 100)));
+  await expect(thread.getByText("この回答は削除されました。")).toBeVisible();
+  await expect(thread.getByText("削除前の回答")).toHaveCount(0);
+  await expect(thread.getByRole("button", { name: "回答を削除" })).toHaveCount(0);
 });

@@ -101,12 +101,20 @@ export function DeleteConfirm({ target, id, version, label, subject, description
   );
 }
 
-/** 質問の本人削除。削除後は画面を再取得し、削除の案内と残っている回答・コメントを表示する。 */
-export function QuestionDelete({ questionId, version, title }: { questionId: string; version: number; title: string }) {
+/**
+ * 質問の本人削除。削除後は画面を再取得し、削除の案内と残っている回答・コメントを表示する。
+ * 再取得でこのボタンはなくなるため、先に質問の本体の枠（`focusTargetId`、再取得の後も残る要素）へフォーカスを移す。
+ */
+export function QuestionDelete({ questionId, version, title, focusTargetId }: {
+  questionId: string; version: number; title: string; focusTargetId: string;
+}) {
   const router = useRouter();
   return (
     <DeleteConfirm target="question" id={questionId} version={version} label="質問を削除" subject={title}
       description="削除すると、質問のタイトルと本文は表示されなくなり、元に戻せません。回答・コメントは削除されず、そのまま表示されます。"
-      onDeleted={() => router.refresh()} />
+      onDeleted={() => {
+        document.getElementById(focusTargetId)?.focus();
+        router.refresh();
+      }} />
   );
 }
