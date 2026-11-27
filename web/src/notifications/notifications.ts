@@ -7,9 +7,13 @@ import { ApiError } from "@/api/response";
 import type { AccessReader, Viewer } from "@/auth/access";
 import { ownedBy } from "@/auth/ownership";
 import { notifications } from "@/db/moderation-schema";
+import {
+  resolveNotificationTarget, selectNotificationsWithTargets, stateOnlyMessages, withScreenAvailability,
+  type NavigationTarget, type NotificationTargetRow, type TargetState,
+} from "./targets";
 
 /**
- * 通知の一覧・未読件数・既読（API-NT-01〜03、画面ID GE-06）。Issue #17 ②。
+ * 通知の一覧・未読件数・既読・遷移先（API-NT-01〜04、画面ID GE-06）。Issue #17 ②③。
  *
  * - 一覧・件数・既読の対象は、受信者本人の通知だけ（`ownedBy`）。他人の通知は一覧・件数・カーソルに含まれず、
  *   既読の操作では存在しない通知と同じ 404 にする。停止中の利用者は、業務APIと画面の入口で拒否する。
@@ -17,17 +21,23 @@ import { notifications } from "@/db/moderation-schema";
  *   既読済みの通知を再度既読にしても、最初の既読時刻を変えない（API設計書 §3「版番号」、§10）。
  * - 通知に保存しているのは、種類ごとの定型文と本人向けの理由だけ（#47）。対象の題名・本文や操作者は返さない。
  *
- * 通知の対象の状態案内（`targetState`）と、対象への遷移（API-NT-04）は #17 ③ で追加する。
+ * - 対象の状態（`targetState`）と遷移先（API-NT-04）は、取得のたびに現在の権限で判定する（`./targets`）。
+ *   対象を見る資格がない・取り下げ済み・保存期限後の通知は、保存した文面の代わりに状態案内だけを返す。
  */
 
-/** API設計書 §5 NotificationView。`targetState` は #17 ③ で追加する。 */
+/** API設計書 §5 NotificationView。 */
 export type NotificationView = {
   id: string;
   kind: NotificationKind;
-  /** 種類ごとの定型文。本人向けの理由がある通知は、改行の後に理由が続く。 */
+  /**
+   * 種類ごとの定型文。本人向けの理由がある通知は、改行の後に理由が続く。
+   * `targetState` が not_available・withdrawn・expired の通知は、保存した文面の代わりに状態案内だけ（`stateOnlyMessages`）。
+   */
   message: string;
   createdAt: string;
   readAt: string | null;
+  /** 対象の現在の状態。遷移先のパスは API-NT-04 で取得する。 */
+  targetState: TargetState;
 };
 
 /** 通知一覧のクエリー（API設計書 §3）。state=all/unread、既定は all。 */
@@ -48,10 +58,31 @@ const cursorPosition = z.tuple([z.string(), z.string()]);
 const unread = () => isNull(notifications.readAt);
 
 /**
+ * 通知一覧の画面（GE-06）で使う通知。NotificationView に、サーバーが判定した画面向けの情報を加える。
+ * API（API-NT-01）の応答には含めない（`listNotifications` が取り除く）。
+ */
+export type NotificationListEntry = NotificationView & {
+  /** 閲覧者は対象へ遷移できるが、遷移先の画面がまだない（`withScreenAvailability`）。資格を失った通知では false。 */
+  screenPending: boolean;
+};
+
+/**
  * 通知一覧（API-NT-01）。受信者本人の通知を、作成日時の降順・IDの降順で返す。
  * カーソルは閲覧者・絞り込み・並び順にひも付けて署名する。
  */
 export async function listNotifications(reader: AccessReader, viewer: Viewer, query: NotificationQuery) {
+  const { data, page } = await listNotificationEntries(reader, viewer, query);
+  return { data: { items: data.items.map(toNotificationView) }, page };
+}
+
+/** 画面向けの情報を取り除き、API設計書の NotificationView の項目だけにする。 */
+function toNotificationView(entry: NotificationListEntry): NotificationView {
+  const { id, kind, message, createdAt, readAt, targetState } = entry;
+  return { id, kind, message, createdAt, readAt, targetState };
+}
+
+/** 通知一覧の画面（GE-06）向け。API-NT-01 と同じ条件・並び順で、各通知に `screenPending` を加えて返す。 */
+export async function listNotificationEntries(reader: AccessReader, viewer: Viewer, query: NotificationQuery) {
   const { state, limit, cursor } = query;
   const codec = createCursorCodec({
     actorId: viewer.userId,
@@ -68,27 +99,45 @@ export async function listNotifications(reader: AccessReader, viewer: Viewer, qu
       ? sql`(${notifications.createdAt}, ${notifications.id}) < (${last[0]}::timestamptz, ${last[1]}::uuid)`
       : undefined,
     limit,
-    rows: (where, take) => reader.select({
-      id: notifications.id,
-      kind: notifications.kind,
-      message: notifications.publicMessage,
-      createdAt: notifications.createdAt,
-      readAt: notifications.readAt,
-      cursorAt: cursorTimestamp(notifications.createdAt),
-    }).from(notifications).where(where).orderBy(desc(notifications.createdAt), desc(notifications.id)).limit(take),
+    rows: (where, take) => selectNotificationsWithTargets(reader, { cursorAt: cursorTimestamp(notifications.createdAt) })
+      .where(where).orderBy(desc(notifications.createdAt), desc(notifications.id)).limit(take),
     count: async (where) => {
       const [{ total }] = await reader.select({ total: count() }).from(notifications).where(where);
       return total;
     },
     cursorFor: (row) => codec.encode([row.cursorAt, row.id]),
-    toItem: (row): NotificationView => ({
-      id: row.id,
-      kind: row.kind,
-      message: row.message,
-      createdAt: row.createdAt.toISOString(),
-      readAt: row.readAt?.toISOString() ?? null,
-    }),
+    toItem: (row) => toNotificationEntry(viewer, row),
   });
+}
+
+type NotificationRow = NotificationTargetRow & { id: string; message: string; createdAt: Date; readAt: Date | null };
+
+function toNotificationEntry(viewer: Viewer, row: NotificationRow): NotificationListEntry {
+  const { target: { state }, screenPending } = withScreenAvailability(row.kind, resolveNotificationTarget(viewer, row));
+  return {
+    id: row.id,
+    kind: row.kind,
+    // 遷移先の画面がないだけの通知は、閲覧者に対象を見る資格があるため、保存した文面を残す。
+    message: screenPending ? row.message : stateOnlyMessages[state] ?? row.message,
+    createdAt: row.createdAt.toISOString(),
+    readAt: row.readAt?.toISOString() ?? null,
+    targetState: state,
+    screenPending,
+  };
+}
+
+/**
+ * 通知の対象の遷移先（API-NT-04）。受信者本人の通知だけを対象にし、存在しない通知と他人の通知はどちらも 404。
+ * 対象を見る資格・対象の状態は、取得のたびに現在の状態で判定する。取得しただけでは既読にしない。
+ * 遷移先の画面がまだない場合は、パスを返さず not_available にする（`withScreenAvailability`）。
+ */
+export async function loadNotificationTarget(
+  reader: AccessReader, viewer: Viewer, notificationId: string,
+): Promise<NavigationTarget> {
+  const [row] = await selectNotificationsWithTargets(reader, {})
+    .where(and(eq(notifications.id, notificationId), ownedBy(notifications.recipientId, viewer)));
+  if (!row) throw new ApiError("NOT_FOUND");
+  return withScreenAvailability(row.kind, resolveNotificationTarget(viewer, row)).target;
 }
 
 /** 未読件数（API-NT-02）。受信者本人の未読の通知を、一覧と同じ条件で数える。ヘッダーとホームで使う。 */

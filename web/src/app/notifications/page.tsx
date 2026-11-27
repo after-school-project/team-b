@@ -6,7 +6,7 @@ import { AppShell } from "@/components/app-shell/AppShell";
 import { requireAppScreen } from "@/components/app-shell/screen";
 import { EmptyState } from "@/components/feedback/StateMessage";
 import { readForScreen } from "@/db/screen-read";
-import { listNotifications, parseNotificationQuery, type NotificationView } from "@/notifications/notifications";
+import { listNotificationEntries, parseNotificationQuery, type NotificationListEntry } from "@/notifications/notifications";
 import { notificationStates, readNotificationParams } from "./notification-filters";
 import { NotificationList } from "./notification-list";
 import styles from "./page.module.css";
@@ -14,7 +14,7 @@ import styles from "./page.module.css";
 export const metadata: Metadata = { title: "通知" };
 
 type ListResult =
-  | { kind: "ok"; items: NotificationView[]; page: PageInfo }
+  | { kind: "ok"; items: NotificationListEntry[]; page: PageInfo }
   | { kind: "invalid"; message: string; cursorExpired?: true };
 
 const headingId = "notification-results";
@@ -35,7 +35,7 @@ export default async function NotificationsPage({ searchParams }: { searchParams
   } else {
     try {
       const { data, page } = await readForScreen(async (db) =>
-        listNotifications(db, viewer, parseNotificationQuery(new URL(`http://app/notifications?${query}`))));
+        listNotificationEntries(db, viewer, parseNotificationQuery(new URL(`http://app/notifications?${query}`))));
       result = { kind: "ok", items: data.items, page };
     } catch (error) {
       if (!(error instanceof ApiError)) throw error;

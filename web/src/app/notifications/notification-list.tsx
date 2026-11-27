@@ -4,14 +4,17 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { outcomeMessage } from "@/app/admin/submit-outcome";
 import { useSubmission } from "@/app/admin/use-submission";
-import type { NotificationView } from "@/notifications/notifications";
-import { formatDateTime, kindLabels, splitMessage } from "./labels";
+import type { NotificationListEntry } from "@/notifications/notifications";
+import type { TargetState } from "@/notifications/targets";
+import {
+  canOpenTarget, formatDateTime, isAppPath, kindLabels, listedTargetNote, splitMessage, targetStateNotes,
+} from "./labels";
 import styles from "./page.module.css";
 
 const readStates = ["read"] as const;
 
 type NotificationListProps = {
-  items: NotificationView[];
+  items: NotificationListEntry[];
   /** 既読にした後にフォーカスを移す、一覧の見出しのID。 */
   headingId: string;
 };
@@ -52,13 +55,14 @@ export function NotificationList({ items, headingId }: NotificationListProps) {
 }
 
 function NotificationItem({ notification, read, onRead, onStart }: {
-  notification: NotificationView;
+  notification: NotificationListEntry;
   read: boolean;
   onRead: () => void;
   onStart: () => void;
 }) {
   const { summary, detail } = splitMessage(notification.message);
   const messageId = `notification-${notification.id}`;
+  const openable = canOpenTarget(notification.kind, notification.targetState);
   return (
     <li className={read ? styles.item : styles.itemUnread}>
       <p className={styles.badges}>
@@ -70,11 +74,87 @@ function NotificationItem({ notification, read, onRead, onStart }: {
       <p className={styles.meta}>
         <time dateTime={notification.createdAt}>{formatDateTime(notification.createdAt)}</time>
       </p>
-      {read ? null : (
-        <ReadButton notificationId={notification.id} describedBy={messageId} onRead={onRead} onStart={onStart} />
-      )}
+      <TargetNote state={notification.targetState} screenPending={notification.screenPending} />
+      {openable || !read ? (
+        <div className={styles.itemActions}>
+          {openable ? (
+            <OpenTargetButton notificationId={notification.id} describedBy={messageId} onStart={onStart} />
+          ) : null}
+          {read ? null : (
+            <ReadButton notificationId={notification.id} describedBy={messageId} onRead={onRead} onStart={onStart} />
+          )}
+        </div>
+      ) : null}
     </li>
   );
+}
+
+function TargetNote({ state, screenPending }: { state: TargetState; screenPending: boolean }) {
+  const note = listedTargetNote(state, screenPending);
+  return note ? <p className={styles.targetNote}>{note}</p> : null;
+}
+
+type OpenError = { message: string; reload: boolean };
+
+/**
+ * 通知の対象を開く。押したときに API-NT-04 で現在の権限と対象の状態を確認し、遷移できる場合だけ移動する。
+ * 開いただけでは既読にしない。一覧の表示後に対象の状態が変わっていた場合は、状態案内を示して一覧を再取得する。
+ */
+function OpenTargetButton({ notificationId, describedBy, onStart }: {
+  notificationId: string;
+  describedBy: string;
+  onStart: () => void;
+}) {
+  const router = useRouter();
+  const [opening, setOpening] = useState(false);
+  const [error, setError] = useState<OpenError | null>(null);
+
+  async function open() {
+    if (opening) return;
+    setError(null);
+    onStart();
+    setOpening(true);
+    let failure: OpenError;
+    try {
+      const response = await fetch(`/api/v1/notifications/${encodeURIComponent(notificationId)}/target`, { cache: "no-store" });
+      const body = await response.json().catch(() => null) as { data?: { state?: unknown; path?: unknown } } | null;
+      if (response.ok && body?.data?.state === "available" && isAppPath(body.data.path)) {
+        router.push(body.data.path);
+        return;
+      }
+      failure = openFailure(response.status, body?.data?.state);
+    } catch {
+      failure = { message: "通知の対象を確認できませんでした。時間をおいてもう一度お試しください。", reload: false };
+    }
+    setOpening(false);
+    setError(failure);
+    if (failure.reload) router.refresh();
+  }
+
+  return (
+    <>
+      <button type="button" className={styles.secondaryButton} disabled={opening} aria-describedby={describedBy}
+        onClick={open}>
+        {opening ? "確認しています…" : "対象を表示する"}
+      </button>
+      {error ? (
+        <div className={styles.itemError} role="alert">
+          <p>{error.message}</p>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function openFailure(status: number, state: unknown): OpenError {
+  if (status >= 200 && status < 300 && typeof state === "string" && state in targetStateNotes) {
+    return { message: targetStateNotes[state as keyof typeof targetStateNotes], reload: true };
+  }
+  if (status === 401) return { message: "ログイン状態を確認できませんでした。再読み込みしてください。", reload: true };
+  if (status === 403 || status === 404) {
+    return { message: "この通知を表示できなくなりました。一覧を更新しました。", reload: true };
+  }
+  return { message: "通知の対象を確認できませんでした。時間をおいてもう一度お試しください。", reload: false };
 }
 
 function ReadButton({ notificationId, describedBy, onRead, onStart }: {
@@ -100,7 +180,7 @@ function ReadButton({ notificationId, describedBy, onRead, onStart }: {
   }
 
   return (
-    <div className={styles.itemActions}>
+    <>
       <button type="button" className={styles.secondaryButton} disabled={sending} aria-describedby={describedBy}
         onClick={markRead}>
         {sending ? "既読にしています…" : "既読にする"}
@@ -113,6 +193,6 @@ function ReadButton({ notificationId, describedBy, onRead, onStart }: {
           ) : null}
         </div>
       ) : null}
-    </div>
+    </>
   );
 }

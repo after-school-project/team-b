@@ -134,3 +134,15 @@ test("AC-04 停止中の利用者は通知一覧を開けず、通知の内容�
   const response = await page.request.get("/api/v1/notifications/unread-count");
   expect(response.status()).toBe(403);
 });
+
+test("AC-05 「対象を表示する」で、サーバーが確認した遷移先へ移動し、開いただけでは既読にしない", async ({ page, baseURL }) => {
+  await createNotifications(user, marker, [{ message: "プロフィールが管理者により非表示になりました。\n理由：確認のため" }]);
+  await signInWithCanonicalOrigin(page, baseURL!, user);
+  await page.goto("/notifications");
+  const button = list(page).getByRole("button", { name: "対象を表示する" });
+  await expect(button).toHaveAccessibleDescription("プロフィールが管理者により非表示になりました。");
+  await button.focus();
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL("/me/profile");
+  await expect(headerLink(page)).toHaveAccessibleName("通知 （未読1件）");
+});
