@@ -7,7 +7,7 @@ import { useSubmission } from "@/app/admin/use-submission";
 import type { NotificationView } from "@/notifications/notifications";
 import type { TargetState } from "@/notifications/targets";
 import {
-  canOpenTarget, formatDateTime, isAppPath, kindLabels, listedTargetNote, pendingScreenNote, splitMessage, targetStateNotes,
+  canOpenTarget, formatDateTime, isAppPath, kindLabels, listedTargetNote, splitMessage, targetStateNotes,
 } from "./labels";
 import styles from "./page.module.css";
 
@@ -74,10 +74,7 @@ function NotificationItem({ notification, read, onRead, onStart }: {
       <p className={styles.meta}>
         <time dateTime={notification.createdAt}>{formatDateTime(notification.createdAt)}</time>
       </p>
-      <TargetNote state={notification.targetState} />
-      {notification.targetState === "available" && !openable ? (
-        <p className={styles.targetNote}>{pendingScreenNote}</p>
-      ) : null}
+      <TargetNote kind={notification.kind} state={notification.targetState} />
       {openable || !read ? (
         <div className={styles.itemActions}>
           {openable ? (
@@ -92,8 +89,8 @@ function NotificationItem({ notification, read, onRead, onStart }: {
   );
 }
 
-function TargetNote({ state }: { state: TargetState }) {
-  const note = listedTargetNote(state);
+function TargetNote({ kind, state }: { kind: NotificationView["kind"]; state: TargetState }) {
+  const note = listedTargetNote(kind, state);
   return note ? <p className={styles.targetNote}>{note}</p> : null;
 }
 

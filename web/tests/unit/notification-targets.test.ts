@@ -5,7 +5,9 @@ import type { NotificationTargetRow } from "../../src/notifications/targets";
 vi.mock("server-only", () => ({}));
 vi.mock("../../src/auth/server", () => ({ getAuthSession: vi.fn() }));
 
-const { resolveNotificationTarget } = await import("../../src/notifications/targets");
+const { resolveNotificationTarget, withScreenAvailability } = await import("../../src/notifications/targets");
+const { isTargetScreenImplemented, targetScreenRoutes } = await import("../../src/notifications/target-screens");
+const { implementedScreenRoutes, matchesScreenRoute } = await import("../../src/auth/return-to");
 
 /** 通知の対象の状態と遷移先（#17 ③、API-NT-04・NotificationView.targetState）。DB を使わない判定の確認。 */
 
@@ -199,5 +201,57 @@ describe("参照先がない通知", () => {
   ] as const)("%s は not_available", (kind) => {
     expect(resolveNotificationTarget(viewer({ schoolManager: true }), { ...empty, kind }))
       .toEqual({ state: "not_available", path: null });
+  });
+});
+
+describe("遷移先の画面の実装状況", () => {
+  /** 種類ごとに、available になる行と閲覧者。 */
+  const availableCases = [
+    [viewer(), responseRow("qa_answer_created")],
+    [viewer(), responseRow("qa_comment_created")],
+    [viewer(), responseRow("qa_reply_created")],
+    [viewer(), { ...empty, kind: "qa_hidden" as const, questionId, questionAuthorId: me }],
+    [viewer(), responseRow("qa_hidden", { responseAuthorId: me })],
+    [viewer({ schoolManager: true }), noticeRow("notice_review_requested")],
+    [viewer(), noticeRow("notice_review_decided", { noticeAuthorId: me })],
+    [viewer({ schoolManager: true }), eventRow("event_review_requested")],
+    [viewer(), eventRow("event_review_decided", { eventAuthorId: me })],
+    [viewer(), { ...empty, kind: "profile_review_decided" as const, profileReviewUserId: me }],
+    [viewer(), { ...empty, kind: "profile_hidden" as const, profileUserId: me }],
+  ] as const;
+
+  it("すべての種類で、組み立てたパスが種類ごとの画面のルートに一致する", () => {
+    expect(new Set(availableCases.map(([, row]) => row.kind))).toEqual(new Set(Object.keys(targetScreenRoutes)));
+    for (const [subject, row] of availableCases) {
+      const { state, path } = resolveNotificationTarget(subject, row);
+      expect(state).toBe("available");
+      const pathname = new URL(path!, "https://app.invalid").pathname;
+      expect(matchesScreenRoute(pathname, [targetScreenRoutes[row.kind]]), `${row.kind}: ${path}`).toBe(true);
+    }
+  });
+
+  it("実装済みの画面の一覧にない遷移先は、パスを返さず not_available にし、資格の問題ではないことを示す", () => {
+    for (const [subject, row] of availableCases) {
+      const implemented = implementedScreenRoutes.includes(targetScreenRoutes[row.kind]);
+      expect(isTargetScreenImplemented(row.kind)).toBe(implemented);
+      const result = withScreenAvailability(row.kind, resolveNotificationTarget(subject, row));
+      expect(result).toEqual(implemented
+        ? { target: resolveNotificationTarget(subject, row), screenPending: false }
+        : { target: { state: "not_available", path: null }, screenPending: true });
+    }
+  });
+
+  it("現時点で画面がない遷移先は、お知らせ・イベントの審査依頼とイベントの審査結果", () => {
+    expect(Object.keys(targetScreenRoutes).filter((kind) => !isTargetScreenImplemented(kind as keyof typeof targetScreenRoutes)).sort())
+      .toEqual(["event_review_decided", "event_review_requested", "notice_review_requested"]);
+  });
+
+  it("遷移できない状態は、画面の実装状況にかかわらずそのまま返す", () => {
+    const withdrawn = resolveNotificationTarget(viewer({ schoolManager: true }),
+      noticeRow("notice_review_requested", { noticeRequestStatus: "withdrawn" }));
+    expect(withScreenAvailability("notice_review_requested", withdrawn))
+      .toEqual({ target: { state: "withdrawn", path: null }, screenPending: false });
+    const revoked = resolveNotificationTarget(viewer(), noticeRow("notice_review_requested"));
+    expect(withScreenAvailability("notice_review_requested", revoked).screenPending).toBe(false);
   });
 });

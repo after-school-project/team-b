@@ -1,4 +1,5 @@
 import type { NotificationKind } from "@/api/notifications";
+import { isTargetScreenImplemented } from "@/notifications/target-screens";
 import type { TargetState } from "@/notifications/targets";
 
 /** 通知の種類の表示ラベル。対象の機能ごとにまとめる。 */
@@ -33,27 +34,23 @@ export const targetStateNotes: Record<Exclude<TargetState, "available">, string>
  */
 const stateOnlyStates: ReadonlySet<TargetState> = new Set(["not_available", "withdrawn", "expired"]);
 
-/**
- * 遷移先の画面がまだない通知の種類。API-NT-04 は画面遷移設計書の URL を返すが、画面ができるまでは
- * 「対象を表示する」を出さずに準備中と案内する。各画面を実装する Issue で、その種類をここから外す。
- * - notice_review_requested：AD-05 `/admin/notices/[noticeId]`（#14）
- * - event_review_requested：AD-07 `/admin/events/[eventId]`（#12）
- * - event_review_decided：EV-05 `/me/events`（#11）
- */
-export const pendingScreenKinds: ReadonlySet<NotificationKind> = new Set([
-  "notice_review_requested", "event_review_requested", "event_review_decided",
-]);
-
-/** 遷移先の画面が準備中の通知に表示する案内。 */
+/** 遷移先の画面がまだない通知に表示する案内。 */
 export const pendingScreenNote = "この通知の遷移先の画面は準備中です。";
 
-/** 一覧の通知に「対象を表示する」を出すか。対象へ遷移でき、遷移先の画面があるものだけ。 */
+/**
+ * 一覧の通知に「対象を表示する」を出すか。対象へ遷移でき、遷移先の画面が実装済みのものだけ。
+ * 画面がない遷移先はサーバーが not_available にするが、画面でも同じ一覧（`implementedScreenRoutes`）で確かめる。
+ */
 export function canOpenTarget(kind: NotificationKind, state: TargetState): boolean {
-  return state === "available" && !pendingScreenKinds.has(kind);
+  return state === "available" && isTargetScreenImplemented(kind);
 }
 
-/** 一覧の通知に、文面とは別に表示する状態案内。表示しない場合は null。 */
-export function listedTargetNote(state: TargetState): string | null {
+/**
+ * 一覧の通知に、文面とは別に表示する状態案内。表示しない場合は null。
+ * 遷移先の画面がない種類の not_available は、準備中と案内する。画面ができれば、通知からも自動で遷移できるようになる。
+ */
+export function listedTargetNote(kind: NotificationKind, state: TargetState): string | null {
+  if (state === "not_available" && !isTargetScreenImplemented(kind)) return pendingScreenNote;
   if (state === "available" || stateOnlyStates.has(state)) return null;
   return targetStateNotes[state];
 }

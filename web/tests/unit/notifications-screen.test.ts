@@ -122,12 +122,21 @@ describe("通知の一覧", () => {
     });
 
   it.each(["notice_review_requested", "event_review_requested", "event_review_decided"] as const)(
-    "遷移先の画面が準備中の %s は、遷移できても「対象を表示する」を出さずに準備中と案内する", (kind) => {
-      const html = render([{ ...unread, kind, message: "定型文", targetState: "available" }]);
+    "遷移先の画面が未実装の %s は、保存した文面と準備中の案内を表示し、「対象を表示する」を出さない", (kind) => {
+      // サーバーは、資格のある閲覧者にも not_available を返し、保存した文面を残す。
+      const html = render([{ ...unread, kind, message: "定型文", targetState: "not_available" }]);
+      expect(html).toContain("定型文");
       expect(html).toContain(pendingScreenNote);
       expect(html).not.toContain("対象を表示する");
       expect(html).toContain("既読にする");
+      // サーバーが available を返した場合も、画面がなければ遷移させない。
+      expect(canOpenTarget(kind, "available")).toBe(false);
     });
+
+  it("遷移先の画面がある種類の not_available には、準備中の案内を出さない", () => {
+    const html = render([{ ...read, kind: "profile_hidden", message: targetStateNotes.not_available, targetState: "not_available" }]);
+    expect(html).not.toContain(pendingScreenNote);
+  });
 
   it.each([
     "qa_answer_created", "qa_comment_created", "qa_reply_created", "qa_hidden", "notice_review_decided",

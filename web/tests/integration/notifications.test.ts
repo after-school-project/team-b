@@ -547,10 +547,13 @@ describe("AC-05：閲覧資格を失った場合は本文やリンクを返さ�
       WHERE n.author_id = $1 AND nr.status = 'pending' LIMIT 1`, [id("poc_a001")]);
     const notificationId = await addTargetNotification("poc_s_mgr", "notice_review_requested", "notice_request_id", requestId);
     try {
-      expect((await navigationTarget("poc_s_mgr", notificationId)).body.data)
-        .toEqual({ state: "available", path: `/admin/notices/${noticeId}?request=${requestId}` });
+      // 遷移先の AD-05 はまだ実装済みの画面の一覧にないため、審査できる管理者にもパスを返さない（404 の画面へ送らない）。
+      // 資格はあるため、保存した文面はそのまま返す。
+      const pending = await navigationTarget("poc_s_mgr", notificationId);
+      expect(pending.body.data).toEqual({ state: "not_available", path: null });
+      expect(pending.text).not.toContain(noticeId);
       expect(await listedItem("poc_s_mgr", notificationId)).toMatchObject({
-        message: "定型文\n理由：本人向けの理由（秘密）", targetState: "available",
+        message: "定型文\n理由：本人向けの理由（秘密）", targetState: "not_available",
       });
 
       await target.client.query("UPDATE community_users SET app_manager = false WHERE user_id = $1", [id("poc_s_mgr")]);
@@ -580,8 +583,8 @@ describe("AC-05：閲覧資格を失った場合は本文やリンクを返さ�
     const noticeNotification = await addTargetNotification("poc_school", "notice_review_requested", "notice_request_id", noticeRequestId);
     const eventNotification = await addTargetNotification("poc_school", "event_review_requested", "event_request_id", eventRequestId);
     try {
-      expect((await navigationTarget("poc_school", eventNotification)).body.data?.path)
-        .toMatch(new RegExp(`^/admin/events/[0-9a-f-]{36}\\?request=${eventRequestId}$`));
+      // 遷移先の AD-07 は未実装のため、審査中の申請でもパスを返さない。
+      expect((await navigationTarget("poc_school", eventNotification)).body.data).toEqual({ state: "not_available", path: null });
       await target.client.query("UPDATE notice_requests SET status = 'withdrawn' WHERE id = $1", [noticeRequestId]);
       await target.client.query("UPDATE event_requests SET status = 'withdrawn' WHERE id = $1", [eventRequestId]);
       for (const notificationId of [noticeNotification, eventNotification]) {

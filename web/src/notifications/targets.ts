@@ -7,6 +7,7 @@ import { deletedNoticeRetentionDays } from "@/auth/visibility";
 import { eventRequests, events, noticeRequests, notices, qaQuestions, qaResponses } from "@/db/content-schema";
 import { notifications } from "@/db/moderation-schema";
 import { communityUsers, profileReviews } from "@/db/schema";
+import { isTargetScreenImplemented } from "./target-screens";
 
 /**
  * 通知の対象の状態と遷移先（API-NT-04、NotificationView.targetState）。Issue #17 ③。
@@ -204,6 +205,25 @@ export function resolveNotificationTarget(viewer: Viewer, row: NotificationTarge
     case "profile_hidden":
       return row.profileUserId === viewer.userId ? available("/me/profile") : notAvailable;
   }
+}
+
+/** 遷移先の画面の実装状況を反映した判定結果。 */
+export type ScreenAwareTarget = {
+  target: NavigationTarget;
+  /**
+   * 閲覧者は対象へ遷移できるが、遷移先の画面がまだない。`target` は not_available・パスなしにする。
+   * 資格の問題ではないため、保存した文面はそのまま返してよい。
+   */
+  screenPending: boolean;
+};
+
+/**
+ * `resolveNotificationTarget` の結果に、遷移先の画面が実装済みかを反映する（`./target-screens`）。
+ * 画面がまだない遷移先は、API-NT-04 でもパスを返さず not_available とし、404 の画面へ送らない。
+ */
+export function withScreenAvailability(kind: NotificationKind, target: NavigationTarget): ScreenAwareTarget {
+  if (target.state !== "available" || isTargetScreenImplemented(kind)) return { target, screenPending: false };
+  return { target: notAvailable, screenPending: true };
 }
 
 function responsePath(questionId: string, responseId: string): string {

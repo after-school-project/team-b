@@ -8,7 +8,7 @@ import type { AccessReader, Viewer } from "@/auth/access";
 import { ownedBy } from "@/auth/ownership";
 import { notifications } from "@/db/moderation-schema";
 import {
-  resolveNotificationTarget, selectNotificationsWithTargets, stateOnlyMessages,
+  resolveNotificationTarget, selectNotificationsWithTargets, stateOnlyMessages, withScreenAvailability,
   type NavigationTarget, type NotificationTargetRow, type TargetState,
 } from "./targets";
 
@@ -92,11 +92,12 @@ export async function listNotifications(reader: AccessReader, viewer: Viewer, qu
 type NotificationRow = NotificationTargetRow & { id: string; message: string; createdAt: Date; readAt: Date | null };
 
 function toNotificationView(viewer: Viewer, row: NotificationRow): NotificationView {
-  const { state } = resolveNotificationTarget(viewer, row);
+  const { target: { state }, screenPending } = withScreenAvailability(row.kind, resolveNotificationTarget(viewer, row));
   return {
     id: row.id,
     kind: row.kind,
-    message: stateOnlyMessages[state] ?? row.message,
+    // 遷移先の画面がないだけの通知は、閲覧者に対象を見る資格があるため、保存した文面を残す。
+    message: screenPending ? row.message : stateOnlyMessages[state] ?? row.message,
     createdAt: row.createdAt.toISOString(),
     readAt: row.readAt?.toISOString() ?? null,
     targetState: state,
@@ -106,6 +107,7 @@ function toNotificationView(viewer: Viewer, row: NotificationRow): NotificationV
 /**
  * 通知の対象の遷移先（API-NT-04）。受信者本人の通知だけを対象にし、存在しない通知と他人の通知はどちらも 404。
  * 対象を見る資格・対象の状態は、取得のたびに現在の状態で判定する。取得しただけでは既読にしない。
+ * 遷移先の画面がまだない場合は、パスを返さず not_available にする（`withScreenAvailability`）。
  */
 export async function loadNotificationTarget(
   reader: AccessReader, viewer: Viewer, notificationId: string,
@@ -113,7 +115,7 @@ export async function loadNotificationTarget(
   const [row] = await selectNotificationsWithTargets(reader, {})
     .where(and(eq(notifications.id, notificationId), ownedBy(notifications.recipientId, viewer)));
   if (!row) throw new ApiError("NOT_FOUND");
-  return resolveNotificationTarget(viewer, row);
+  return withScreenAvailability(row.kind, resolveNotificationTarget(viewer, row)).target;
 }
 
 /** 未読件数（API-NT-02）。受信者本人の未読の通知を、一覧と同じ条件で数える。ヘッダーとホームで使う。 */
