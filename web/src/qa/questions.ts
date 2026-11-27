@@ -205,6 +205,8 @@ export async function loadQuestion(reader: AccessReader, viewer: Viewer, questio
     capabilities: {
       ...noCapabilities,
       canEdit: own && canWriteContent(viewer),
+      // 本人削除は、プロフィール非表示中・強制非表示中もできる（API-QA-06）。
+      canDelete: own,
       // 回答・直接のコメントは、公開中の質問にだけ付けられる（API-QA-08）。
       canRespond: canWriteContent(viewer) && publicationState === "public",
     },

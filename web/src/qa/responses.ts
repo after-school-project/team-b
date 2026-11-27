@@ -95,6 +95,7 @@ function toResponseView(viewer: Viewer, row: ResponseRow): ResponseView {
     capabilities: {
       ...noCapabilities,
       canEdit: own && writable,
+      canDelete: own,
       canRespond: writable && publicationState === "public",
     },
   };

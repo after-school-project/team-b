@@ -5,15 +5,17 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { RestrictedMarkdown } from "@/components/markdown/RestrictedMarkdown";
 import type { ResponseKind, ResponseView } from "@/qa/responses";
 import { formatDateTime } from "../labels";
+import { DeleteConfirm } from "./delete-confirm";
 import pageStyles from "./page.module.css";
 import styles from "./response-thread.module.css";
 
 /**
- * 回答・コメント・返信のスレッドと投稿フォーム（QA-02、API-QA-07〜10）。
+ * 回答・コメント・返信のスレッドと投稿・削除の操作（QA-02、API-QA-07〜11）。
  *
  * - 一覧APIのフラットな配列を `parentResponseId` で木に組み立てる。親がまだ読み込まれていない投稿は先頭の階層に表示する。
  * - 操作の入口は、サーバーが返した `capabilities` で出し分ける。受付の可否は各APIで再認可する。
- * - 投稿・編集の後は、その投稿をAPI-QA-09で読み直して一覧へ反映する。読み込み済みの続きのページは保持する。
+ * - 投稿・編集・削除の後は、その投稿をAPI-QA-09で読み直して一覧へ反映する。読み込み済みの続きのページは保持する。
+ * - 削除しても子の投稿は残る（API-QA-11）。削除した投稿は状態案内に変わり、子はその下に表示したままにする。
  */
 
 const kindLabels: Record<ResponseKind, string> = { answer: "回答", comment: "コメント", reply: "返信" };
@@ -178,7 +180,14 @@ type FormControls = {
   closeForm: (token?: number) => void;
 };
 
-function ResponseItem({ response, childrenOf, depth, questionId, forms, onSaved, onReload }: {
+/** 削除の確認に示す本文の冒頭。改行をまとめ、長い本文は省略する。 */
+function excerpt(markdown: string): string {
+  const text = markdown.replace(/\s+/g, " ").trim();
+  const characters = [...text];
+  return characters.length > 60 ? `${characters.slice(0, 60).join("")}…` : text;
+}
+
+function ResponseItem({ response, childrenOf, depth, questionId, forms, onSaved, onReload, onDeleted }: {
   response: ResponseView;
   childrenOf: (id: string) => ResponseView[];
   depth: number;
@@ -186,6 +195,7 @@ function ResponseItem({ response, childrenOf, depth, questionId, forms, onSaved,
   forms: FormControls;
   onSaved: (view: ResponseView | null, responseId: string) => void;
   onReload: (responseId: string) => void;
+  onDeleted: (response: ResponseView) => void;
 }) {
   const { open, openForm, closeForm } = forms;
   const children = childrenOf(response.id);
@@ -230,7 +240,8 @@ function ResponseItem({ response, childrenOf, depth, questionId, forms, onSaved,
               label={`${kind}の本文`} onSaved={savedFrom(open.token)} onCancel={() => closeForm(open.token)}
               onReload={() => onReload(response.id)} />
           ) : <RestrictedMarkdown source={response.content.bodyMarkdown} headingLevel={3} />}
-          {!editing && (response.capabilities.canRespond || response.capabilities.canEdit) ? (
+          {!editing && (response.capabilities.canRespond || response.capabilities.canEdit
+            || response.capabilities.canDelete) ? (
             <div className={styles.actions}>
               {response.capabilities.canRespond ? (
                 <button className={styles.textButton} type="button" aria-expanded={responding}
@@ -242,6 +253,14 @@ function ResponseItem({ response, childrenOf, depth, questionId, forms, onSaved,
                 <button className={styles.textButton} type="button" onClick={() => openForm("edit", response.id)}>
                   {kind}を編集
                 </button>
+              ) : null}
+              {response.capabilities.canDelete && response.version !== null ? (
+                <DeleteConfirm target="response" id={response.id} version={response.version} label={`${kind}を削除`}
+                  subject={excerpt(response.content.bodyMarkdown)}
+                  description={`削除すると、この${kind}の本文は表示されなくなり、元に戻せません。${
+                    response.kind === "answer" ? "この回答へのコメント・返信" : `この${kind}への返信`
+                  }は削除されず、そのまま表示されます。`}
+                  onDeleted={() => onDeleted(response)} />
               ) : null}
             </div>
           ) : null}
@@ -256,7 +275,7 @@ function ResponseItem({ response, childrenOf, depth, questionId, forms, onSaved,
         <ol className={depth >= 3 ? `${styles.children} ${styles.flat}` : styles.children}>
           {children.map((item) => (
             <ResponseItem key={item.id} response={item} childrenOf={childrenOf} depth={depth + 1} questionId={questionId}
-              forms={forms} onSaved={onSaved} onReload={onReload} />
+              forms={forms} onSaved={onSaved} onReload={onReload} onDeleted={onDeleted} />
           ))}
         </ol>
       ) : null}
@@ -362,6 +381,21 @@ export function ResponseThread({ questionId, initial, canAnswer, unavailableReas
     }
   }
 
+  /**
+   * 削除した投稿を、API-QA-09 で読み直した状態案内に差し替える。子の投稿は残るため、スレッドの位置はそのまま。
+   * 読み直せなかった場合も、削除は確定しているため、本文を消した状態案内を画面で作って表示する。
+   */
+  async function deleted(response: ResponseView) {
+    setOpen(null);
+    const view = await fetchResponse(response.id);
+    replace(view ?? {
+      ...response, publicationState: "deleted", content: null, author: null, version: null, createdAt: null,
+      updatedAt: null, capabilities: { ...response.capabilities, canEdit: false, canDelete: false, canRespond: false },
+    });
+    setStatus(`${kindLabels[response.kind]}を削除しました。`);
+    focusId.current = response.id;
+  }
+
   async function reload(responseId: string) {
     const view = await fetchResponse(responseId);
     if (view) replace(view);
@@ -395,7 +429,7 @@ export function ResponseThread({ questionId, initial, canAnswer, unavailableReas
         <ol className={styles.list}>
           {roots.map((item) => (
             <ResponseItem key={item.id} response={item} childrenOf={childrenOf} depth={0} questionId={questionId}
-              forms={forms} onSaved={saved} onReload={reload} />
+              forms={forms} onSaved={saved} onReload={reload} onDeleted={deleted} />
           ))}
         </ol>
       ) : <p className={styles.empty}>まだ回答・コメントはありません。</p>}

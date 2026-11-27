@@ -3,13 +3,14 @@ import { z } from "zod";
 import { assertExpectedVersion, commitMutation } from "@/api/mutation";
 import { recordNotification, type NotificationSubject } from "@/api/notifications";
 import { preserveEvidence } from "@/api/report-evidence";
+import { handoffCasesOfDeletedTarget } from "@/api/report-handoff";
 import { expectedVersion, uuid, type MutationRequest } from "@/api/request";
 import { ApiError, type FieldError } from "@/api/response";
 import { authorizeActiveEntry, type AccessReader } from "@/auth/access";
 import { requireOwned } from "@/auth/ownership";
 import { qaQuestions, qaResponses } from "@/db/content-schema";
 import { longMarkdown } from "@/markdown/input";
-import { currentDisplayName } from "./question-mutations";
+import { currentDisplayName, type qaDeletionSchema } from "./question-mutations";
 import type { ResponseKind } from "./responses";
 
 /**
@@ -173,6 +174,44 @@ export function updateResponse(
         status: 200, resource: { type: "response", id: responseId }, version,
         state: response.forcedHiddenAt ? "hidden" : "public",
       };
+    },
+  });
+}
+
+/** 本人の回答等。削除済みも含む。再送の確認で使い、他人の投稿・存在しない投稿は 404。 */
+async function requireOwnResponse(reader: AccessReader, actorId: string, responseId: string) {
+  const [response] = await reader.select({ authorId: qaResponses.authorId }).from(qaResponses)
+    .where(eq(qaResponses.id, responseId));
+  return requireOwned(response, (row) => row.authorId, { userId: actorId });
+}
+
+/**
+ * 回答・コメント・返信の本人削除（API-QA-11、画面ID QA-02）。Issue #9 ⑤。
+ * 対象の投稿だけを論理削除し、子の返信・コメントを連鎖削除しない。プロフィール非表示中・強制非表示中も削除できる。
+ * 削除前の証拠保全と、アプリ管理者が担当する案件の引継ぎを同じトランザクションで行う（質問の削除と同じ）。
+ * 再送では削除をやり直さず、本人の投稿であることを確かめて最初の結果を返す。
+ */
+export function deleteResponse(
+  database: Database, actorId: string, request: MutationRequest, responseId: string,
+  body: z.infer<typeof qaDeletionSchema>,
+) {
+  return commitMutation(database, {
+    actorId, request, body,
+    authorizeEntry: authorizeActiveEntry(actorId),
+    targets: async () => [{ stage: "resource", table: qaResponses, idColumn: qaResponses.id, ids: [responseId] }],
+    async authorizeReplay({ tx }, { resource }) {
+      if (resource.type !== "response" || resource.id !== responseId) throw new ApiError("NOT_FOUND");
+      await requireOwnResponse(tx, actorId, responseId);
+    },
+    async execute({ tx, now, requireLockedUsers }) {
+      const response = await requireEditableResponse(tx, actorId, responseId);
+      assertExpectedVersion(response.version, body.expectedVersion);
+      const target = { kind: "response" as const, responseId };
+      await preserveEvidence(tx, { targets: [target] });
+      const version = response.version + 1;
+      await tx.update(qaResponses).set({ deletedAt: now, version, updatedAt: now }).where(eq(qaResponses.id, responseId));
+      await handoffCasesOfDeletedTarget({ tx, requireLockedUsers }, { target });
+      return { status: 200, resource: { type: "response", id: responseId }, version, state: "deleted" };
     },
   });
 }

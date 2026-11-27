@@ -4,7 +4,7 @@ import { createAnswer, createAnswers, createQuestions, removeQuestions } from ".
 import { canonicalOrigin, signIn } from "./session";
 
 /**
- * 回答・コメント・返信のスレッド表示と投稿・編集（QA-02、#9 ③④、API-QA-07〜10）を実セッションで確認する。
+ * 回答・コメント・返信のスレッド表示と投稿・編集・削除（QA-02、#9 ③④⑤、API-QA-06〜11）を実セッションで確認する。
  * 準備手順は docs/development/quality-and-poc.md の「ホストでのE2E」を参照する。seed のパスワードを記録に残さないため、
  * トレースなどを無効にする。
  *
@@ -21,7 +21,8 @@ test.afterEach(() => removeQuestions(marker));
 /** 更新の要求に、本番ビルドが受け付ける正規オリジンを付けて送る。 */
 async function allowMutations(page: Page, baseURL: string) {
   const origin = canonicalOrigin ?? new URL(baseURL).origin;
-  await page.context().route(/\/api\/v1\/(?:questions\/[^/?]+\/responses|responses\/[^/?]+)$/, async (route) => {
+  const mutations = /\/api\/v1\/(?:questions\/[^/?]+\/(?:responses|deletion)|responses\/[^/?]+(?:\/deletion)?)$/;
+  await page.context().route(mutations, async (route) => {
     if (route.request().method() === "GET") return route.continue();
     await route.fulfill({ response: await route.fetch({ headers: { ...await route.request().allHeaders(), origin } }) });
   });
@@ -344,4 +345,72 @@ test("個別取得の古い版を先に反映しても、後から届いた一�
   await own.getByRole("textbox", { name: "回答の本文" }).fill("版3の回答");
   await own.getByRole("button", { name: "保存する" }).click();
   await expect(own).toContainText("版3の回答");
+});
+
+test("AC-09 モバイルでキーボードを使って、確認のうえ自分の回答と質問を削除し、残存スレッドを表示する", async ({ page, baseURL }) => {
+  const [questionId] = await createQuestions(marker, [{ title: "削除する質問" }]);
+  // 通知の宛先を poc_a001 にしないよう、質問者・回答者を在校生にする。
+  await createAnswer(questionId, "poc_s001", "削除する回答");
+  await createAnswer(questionId, "poc_s002", "他人の回答");
+  await page.setViewportSize({ width: 375, height: 812 });
+  await signIn(page, baseURL!, "poc_s001");
+  await allowMutations(page, baseURL!);
+  await page.goto(`/questions/${questionId}`);
+
+  const own = page.getByRole("article", { name: "e2eの回答者名さんの回答" }).filter({ hasText: "削除する回答" });
+  const others = page.getByRole("article", { name: "e2eの回答者名さんの回答" }).filter({ hasText: "他人の回答" });
+  await expect(others.getByRole("button", { name: "回答を削除" })).toHaveCount(0);
+  await own.getByRole("button", { name: "コメントする" }).click();
+  await own.getByRole("textbox", { name: "コメントの本文" }).fill("残るコメント");
+  await own.getByRole("button", { name: "投稿する" }).click();
+  const comment = page.getByRole("article", { name: "はるさんのコメント" });
+  await expect(comment).toContainText("残るコメント");
+
+  // 削除の入口をキーボードで開き、取り消すと何も変えない。
+  const deleteAnswer = own.getByRole("button", { name: "回答を削除" });
+  await deleteAnswer.focus();
+  await page.keyboard.press("Enter");
+  const answerDialog = page.getByRole("dialog", { name: "回答を削除" });
+  await expect(answerDialog).toBeVisible();
+  await expect(answerDialog).toContainText("削除する回答");
+  await expect(answerDialog).toHaveAccessibleDescription(/この回答へのコメント・返信は削除されず/);
+  await expect(answerDialog.getByRole("button", { name: "キャンセル" })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(answerDialog).toBeHidden();
+  await expect(own).toContainText("削除する回答");
+
+  await deleteAnswer.click();
+  await answerDialog.getByRole("button", { name: "キャンセル" }).press("Tab");
+  await expect(answerDialog.getByRole("button", { name: "削除する" })).toBeFocused();
+  await page.keyboard.press("Enter");
+  const thread = page.getByRole("region", { name: "回答・コメント" });
+  await expect(thread.getByRole("status")).toHaveText("回答を削除しました。");
+  const deletedAnswer = thread.getByRole("article", { name: "回答" }).filter({ hasText: "この回答は削除されました。" });
+  await expect(deletedAnswer).toBeFocused();
+  await expect(thread.getByText("削除する回答")).toHaveCount(0);
+  // 子のコメントは、削除した回答の下に残る。`has` の内側は外側の要素からの相対的な指定にする。
+  const deletedItem = thread.getByRole("listitem").filter({
+    has: page.getByRole("article", { name: "回答", exact: true }).filter({ hasText: "この回答は削除されました。" }),
+  });
+  await expect(deletedItem.getByRole("article", { name: "はるさんのコメント" })).toContainText("残るコメント");
+
+  await page.getByRole("button", { name: "質問を削除" }).click();
+  const questionDialog = page.getByRole("dialog", { name: "質問を削除" });
+  await expect(questionDialog).toContainText("削除する質問");
+  await questionDialog.getByRole("button", { name: "削除する" }).click();
+  await expect(page.getByText("この質問は削除されました。")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "削除する質問" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "質問を削除" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "質問を編集" })).toHaveCount(0);
+  await expect(comment).toContainText("残るコメント");
+  await expect(others).toContainText("他人の回答");
+
+  // 再読込しても、削除した本文を出さずに残存スレッドを表示する。
+  await page.reload();
+  await expect(page.getByText("この質問は削除されました。")).toBeVisible();
+  await expect(page.getByText("この回答は削除されました。")).toBeVisible();
+  await expect(page.getByRole("article", { name: "はるさんのコメント" })).toContainText("残るコメント");
+  await expect(page.getByText("削除する回答")).toHaveCount(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth))
+    .toBeLessThanOrEqual(0);
 });
