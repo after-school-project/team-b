@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { outcomeMessage } from "@/app/admin/submit-outcome";
 import { useSubmission } from "@/app/admin/use-submission";
-import type { NotificationView } from "@/notifications/notifications";
+import type { NotificationListEntry } from "@/notifications/notifications";
 import type { TargetState } from "@/notifications/targets";
 import {
   canOpenTarget, formatDateTime, isAppPath, kindLabels, listedTargetNote, splitMessage, targetStateNotes,
@@ -14,7 +14,7 @@ import styles from "./page.module.css";
 const readStates = ["read"] as const;
 
 type NotificationListProps = {
-  items: NotificationView[];
+  items: NotificationListEntry[];
   /** 既読にした後にフォーカスを移す、一覧の見出しのID。 */
   headingId: string;
 };
@@ -55,7 +55,7 @@ export function NotificationList({ items, headingId }: NotificationListProps) {
 }
 
 function NotificationItem({ notification, read, onRead, onStart }: {
-  notification: NotificationView;
+  notification: NotificationListEntry;
   read: boolean;
   onRead: () => void;
   onStart: () => void;
@@ -74,7 +74,7 @@ function NotificationItem({ notification, read, onRead, onStart }: {
       <p className={styles.meta}>
         <time dateTime={notification.createdAt}>{formatDateTime(notification.createdAt)}</time>
       </p>
-      <TargetNote kind={notification.kind} state={notification.targetState} />
+      <TargetNote state={notification.targetState} screenPending={notification.screenPending} />
       {openable || !read ? (
         <div className={styles.itemActions}>
           {openable ? (
@@ -89,8 +89,8 @@ function NotificationItem({ notification, read, onRead, onStart }: {
   );
 }
 
-function TargetNote({ kind, state }: { kind: NotificationView["kind"]; state: TargetState }) {
-  const note = listedTargetNote(kind, state);
+function TargetNote({ state, screenPending }: { state: TargetState; screenPending: boolean }) {
+  const note = listedTargetNote(state, screenPending);
   return note ? <p className={styles.targetNote}>{note}</p> : null;
 }
 

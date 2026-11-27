@@ -58,10 +58,31 @@ const cursorPosition = z.tuple([z.string(), z.string()]);
 const unread = () => isNull(notifications.readAt);
 
 /**
+ * 通知一覧の画面（GE-06）で使う通知。NotificationView に、サーバーが判定した画面向けの情報を加える。
+ * API（API-NT-01）の応答には含めない（`listNotifications` が取り除く）。
+ */
+export type NotificationListEntry = NotificationView & {
+  /** 閲覧者は対象へ遷移できるが、遷移先の画面がまだない（`withScreenAvailability`）。資格を失った通知では false。 */
+  screenPending: boolean;
+};
+
+/**
  * 通知一覧（API-NT-01）。受信者本人の通知を、作成日時の降順・IDの降順で返す。
  * カーソルは閲覧者・絞り込み・並び順にひも付けて署名する。
  */
 export async function listNotifications(reader: AccessReader, viewer: Viewer, query: NotificationQuery) {
+  const { data, page } = await listNotificationEntries(reader, viewer, query);
+  return { data: { items: data.items.map(toNotificationView) }, page };
+}
+
+/** 画面向けの情報を取り除き、API設計書の NotificationView の項目だけにする。 */
+function toNotificationView(entry: NotificationListEntry): NotificationView {
+  const { id, kind, message, createdAt, readAt, targetState } = entry;
+  return { id, kind, message, createdAt, readAt, targetState };
+}
+
+/** 通知一覧の画面（GE-06）向け。API-NT-01 と同じ条件・並び順で、各通知に `screenPending` を加えて返す。 */
+export async function listNotificationEntries(reader: AccessReader, viewer: Viewer, query: NotificationQuery) {
   const { state, limit, cursor } = query;
   const codec = createCursorCodec({
     actorId: viewer.userId,
@@ -85,13 +106,13 @@ export async function listNotifications(reader: AccessReader, viewer: Viewer, qu
       return total;
     },
     cursorFor: (row) => codec.encode([row.cursorAt, row.id]),
-    toItem: (row) => toNotificationView(viewer, row),
+    toItem: (row) => toNotificationEntry(viewer, row),
   });
 }
 
 type NotificationRow = NotificationTargetRow & { id: string; message: string; createdAt: Date; readAt: Date | null };
 
-function toNotificationView(viewer: Viewer, row: NotificationRow): NotificationView {
+function toNotificationEntry(viewer: Viewer, row: NotificationRow): NotificationListEntry {
   const { target: { state }, screenPending } = withScreenAvailability(row.kind, resolveNotificationTarget(viewer, row));
   return {
     id: row.id,
@@ -101,6 +122,7 @@ function toNotificationView(viewer: Viewer, row: NotificationRow): NotificationV
     createdAt: row.createdAt.toISOString(),
     readAt: row.readAt?.toISOString() ?? null,
     targetState: state,
+    screenPending,
   };
 }
 

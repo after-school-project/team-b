@@ -47,10 +47,11 @@ export function canOpenTarget(kind: NotificationKind, state: TargetState): boole
 
 /**
  * 一覧の通知に、文面とは別に表示する状態案内。表示しない場合は null。
- * 遷移先の画面がない種類の not_available は、準備中と案内する。画面ができれば、通知からも自動で遷移できるようになる。
+ * 準備中の案内は、閲覧者に対象を見る資格があり、遷移先の画面だけがない通知（サーバーが判定した `screenPending`）に限る。
+ * 同じ種類でも、資格を失った通知には出さない。画面を公開すれば開けるように見せないため。
  */
-export function listedTargetNote(kind: NotificationKind, state: TargetState): string | null {
-  if (state === "not_available" && !isTargetScreenImplemented(kind)) return pendingScreenNote;
+export function listedTargetNote(state: TargetState, screenPending: boolean): string | null {
+  if (screenPending) return pendingScreenNote;
   if (state === "available" || stateOnlyStates.has(state)) return null;
   return targetStateNotes[state];
 }

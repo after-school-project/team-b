@@ -9,7 +9,7 @@ import {
 } from "@/app/notifications/labels";
 import { notificationStates, readNotificationParams } from "@/app/notifications/notification-filters";
 import { NotificationList } from "@/app/notifications/notification-list";
-import type { NotificationView } from "@/notifications/notifications";
+import type { NotificationListEntry } from "@/notifications/notifications";
 
 /** 通知一覧（GE-06）の表示（#17 ②）。 */
 describe("通知一覧の条件", () => {
@@ -67,17 +67,17 @@ describe("通知の遷移先", () => {
 });
 
 describe("通知の一覧", () => {
-  const unread: NotificationView = {
+  const unread: NotificationListEntry = {
     id: "00000000-0000-4000-8000-000000000001", kind: "qa_hidden",
     message: "投稿が管理者により非表示になりました。\n理由：<b>個人情報</b>を含むため",
-    createdAt: "2026-11-26T03:00:00.000Z", readAt: null, targetState: "available",
+    createdAt: "2026-11-26T03:00:00.000Z", readAt: null, targetState: "available", screenPending: false,
   };
-  const read: NotificationView = {
+  const read: NotificationListEntry = {
     id: "00000000-0000-4000-8000-000000000002", kind: "notice_review_requested",
     message: "お知らせの審査依頼が届きました。", createdAt: "2026-11-25T03:00:00.000Z", readAt: "2026-11-25T04:00:00.000Z",
-    targetState: "withdrawn",
+    targetState: "withdrawn", screenPending: false,
   };
-  const render = (items: NotificationView[]) =>
+  const render = (items: NotificationListEntry[]) =>
     renderToStaticMarkup(createElement(NotificationList, { items, headingId: "notification-results" }));
 
   it("未読は「未読」ラベルと太字の文面で示し、通知の文面を説明に持つ「既読にする」を表示する", () => {
@@ -123,14 +123,22 @@ describe("通知の一覧", () => {
 
   it.each(["notice_review_requested", "event_review_requested", "event_review_decided"] as const)(
     "遷移先の画面が未実装の %s は、保存した文面と準備中の案内を表示し、「対象を表示する」を出さない", (kind) => {
-      // サーバーは、資格のある閲覧者にも not_available を返し、保存した文面を残す。
-      const html = render([{ ...unread, kind, message: "定型文", targetState: "not_available" }]);
+      // 資格のある閲覧者：サーバーは not_available と screenPending を返し、保存した文面を残す。
+      const html = render([{ ...unread, kind, message: "定型文", targetState: "not_available", screenPending: true }]);
       expect(html).toContain("定型文");
       expect(html).toContain(pendingScreenNote);
       expect(html).not.toContain("対象を表示する");
       expect(html).toContain("既読にする");
       // サーバーが available を返した場合も、画面がなければ遷移させない。
       expect(canOpenTarget(kind, "available")).toBe(false);
+    });
+
+  it.each(["notice_review_requested", "event_review_requested", "event_review_decided"] as const)(
+    "同じ %s でも、資格を失った通知には汎用の案内文だけを表示し、準備中と案内しない", (kind) => {
+      const html = render([{ ...unread, kind, message: targetStateNotes.not_available, targetState: "not_available", screenPending: false }]);
+      expect(html).toContain(targetStateNotes.not_available);
+      expect(html).not.toContain(pendingScreenNote);
+      expect(html).not.toContain("対象を表示する");
     });
 
   it("遷移先の画面がある種類の not_available には、準備中の案内を出さない", () => {
