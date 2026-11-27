@@ -15,6 +15,18 @@ describe("本文の抜粋", () => {
     expect(markdownExcerpt("あ".repeat(130))).toBe(`${"あ".repeat(120)}…`);
     expect(markdownExcerpt("𠮷".repeat(121))).toBe(`${"𠮷".repeat(120)}…`);
   });
+
+  it("コードブロック・インラインコードの中身は、演算子や記号を消さずに残す", () => {
+    expect(markdownExcerpt("計算は `a * b + c ** 2` です")).toBe("計算は a * b + c ** 2 です");
+    expect(markdownExcerpt("```js\nconst x = a * b;\nconst y = ~~z;\n```\n本文")).toBe("const x = a * b; const y = ~~z; 本文");
+    expect(markdownExcerpt("~~~\n# コメントではない\n- 箇条書きでもない\n~~~")).toBe("# コメントではない - 箇条書きでもない");
+    expect(markdownExcerpt("``a `b` c``")).toBe("a `b` c");
+  });
+
+  it("対にならない記号は残し、対になった強調・取り消しだけを外す", () => {
+    expect(markdownExcerpt("3 * 4 = 12、*斜体*と**太字**と~~取り消し~~")).toBe("3 * 4 = 12、斜体と太字と取り消し");
+    expect(markdownExcerpt("snake_case と __強調__")).toBe("snake_case と 強調");
+  });
 });
 
 const page = { limit: 20, hasMore: false, nextCursor: null, totalCount: 0 };
