@@ -257,3 +257,45 @@ test("続きのページを読み込む前に投稿した投稿を編集して�
   expect(bodies.slice(-2).map((text) => text.match(/1件目を編集した回答|2件目の新しい回答/)?.[0]))
     .toEqual(["1件目を編集した回答", "2件目の新しい回答"]);
 });
+
+test("遅れて届いた個別取得の古い版で、表示中の新しい版を上書きしない", async ({ page, baseURL }) => {
+  const [questionId] = await createQuestions(marker, [{ title: "別の画面でも編集する質問" }]);
+  const answerId = await createAnswer(questionId, "poc_s002", "版1の回答");
+  await signIn(page, baseURL!, "poc_s002");
+  await allowMutations(page, baseURL!);
+  const origin = canonicalOrigin ?? new URL(baseURL!).origin;
+  // 別の画面からの編集。同じセッションで、画面を通さずに保存する。
+  const editElsewhere = async (expectedVersion: number, bodyMarkdown: string) => {
+    const response = await page.request.patch(`/api/v1/responses/${answerId}`, {
+      headers: { Origin: origin, "Idempotency-Key": randomUUID() }, data: { expectedVersion, bodyMarkdown },
+    });
+    expect(response.status()).toBe(200);
+  };
+  await page.goto(`/questions/${questionId}`);
+
+  const own = page.getByRole("article", { name: "e2eの回答者名さんの回答" });
+  await own.getByRole("button", { name: "回答を編集" }).click();
+  const body = own.getByRole("textbox", { name: "回答の本文" });
+  await body.fill("画面での入力");
+  await editElsewhere(1, "版2の回答");
+  await own.getByRole("button", { name: "保存する" }).click();
+  await expect(own.getByRole("alert")).toContainText("回答が更新されています");
+
+  // 版2を受け取った個別取得を止めている間に版3が保存され、次の読み込みで版3を表示する。
+  const stale = holdResponse(page, new RegExp(`/api/v1/responses/${answerId}$`), "GET");
+  const reload = own.getByRole("button", { name: "最新の内容を読み込む" });
+  await reload.click();
+  await stale.received;
+  await editElsewhere(2, "版3の回答");
+  await reload.click();
+  await expect(body).toHaveValue("版3の回答");
+
+  const delivered = page.waitForResponse((response) => response.url().endsWith(`/api/v1/responses/${answerId}`));
+  stale.release();
+  await delivered;
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await expect(body).toHaveValue("版3の回答");
+  await body.fill("最新の版からの編集");
+  await own.getByRole("button", { name: "保存する" }).click();
+  await expect(own).toContainText("最新の版からの編集");
+});

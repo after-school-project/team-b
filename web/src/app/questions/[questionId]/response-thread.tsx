@@ -44,7 +44,15 @@ function childOf(parent: ResponseView): { kind: ResponseKind; label: string } {
   return parent.kind === "answer" ? { kind: "comment", label: "コメントする" } : { kind: "reply", label: "返信する" };
 }
 
-type CreateTarget = { kind: ResponseKind; parentResponseId: string | null };
+/**
+ * 同じ投稿の2つの内容のうち、新しいほう。版番号は編集のたびに増えるため、両方に版番号があれば大きいほうを使う。
+ * 削除・非表示で版番号のない状態案内になった応答は、版番号で比べられないため、届いた内容を使う。
+ */
+function newer(shown: ResponseView, incoming: ResponseView): ResponseView {
+  return shown.version !== null && incoming.version !== null && shown.version > incoming.version ? shown : incoming;
+}
+
+type CreateTarget ={ kind: ResponseKind; parentResponseId: string | null };
 
 function ResponseForm({ questionId, create, edit, label, onSaved, onCancel, onReload }: {
   questionId: string;
@@ -306,11 +314,14 @@ export function ResponseThread({ questionId, initial, canAnswer, unavailableReas
   const childrenOf = (id: string) => byParent.get(id) ?? [];
   const roots = byParent.get(null) ?? [];
 
-  /** 1件の最新の内容を、表示中の位置のまま差し替える。表示していない投稿は、新しい投稿として末尾に加える。 */
+  /**
+   * 1件の最新の内容を、表示中の位置のまま差し替える。表示していない投稿は、新しい投稿として末尾に加える。
+   * 個別取得の応答は届く順が前後するため、表示中より古い版の応答では差し替えない。
+   */
   function replace(view: ResponseView) {
     replacedAt.current.set(view.id, ++sequence.current);
     setThread((current) => {
-      const swap = (items: ResponseView[]) => items.map((item) => (item.id === view.id ? view : item));
+      const swap = (items: ResponseView[]) => items.map((item) => (item.id === view.id ? newer(item, view) : item));
       if (current.pages.some(({ id }) => id === view.id)) return { ...current, pages: swap(current.pages) };
       if (current.added.some(({ id }) => id === view.id)) return { ...current, added: swap(current.added) };
       return { ...current, added: [...current.added, view] };
@@ -325,8 +336,11 @@ export function ResponseThread({ questionId, initial, canAnswer, unavailableReas
     setThread((current) => {
       const shown = new Map([...current.pages, ...current.added].map((item) => [item.id, item]));
       const ids = new Set(views.map(({ id }) => id));
-      const page = views.map((view) => ((replacedAt.current.get(view.id) ?? 0) > startedAt
-        ? shown.get(view.id) ?? view : view));
+      const page = views.map((view) => {
+        const item = shown.get(view.id);
+        if (!item) return view;
+        return (replacedAt.current.get(view.id) ?? 0) > startedAt ? item : newer(item, view);
+      });
       return {
         pages: [...current.pages.filter(({ id }) => !ids.has(id)), ...page],
         added: current.added.filter(({ id }) => !ids.has(id)),
