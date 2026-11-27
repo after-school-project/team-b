@@ -12,6 +12,7 @@ import { loadQuestion, type QuestionView } from "@/qa/questions";
 import { listResponses } from "@/qa/responses";
 import { QuestionDelete } from "./delete-confirm";
 import { QuestionDetail } from "./question-detail";
+import { ResolutionToggle } from "./resolution-toggle";
 import { ResponseThread } from "./response-thread";
 import styles from "./page.module.css";
 
@@ -25,7 +26,7 @@ const firstPageLimit = 50;
 
 /**
  * QA-02 Q&A詳細。質問の本体と、回答・コメント・返信のスレッド・投稿フォームを表示する。
- * 質問が削除・非表示でも、残存する回答等はそれぞれの状態で表示する。解決状態の切替は #9 の後続のPRで追加する。
+ * 質問が削除・非表示でも、残存する回答等はそれぞれの状態で表示する。質問者本人は、解決状態の変更・編集・削除ができる。
  */
 export default async function QuestionPage({ params, searchParams }: {
   params: Promise<{ questionId: string }>;
@@ -60,8 +61,12 @@ export default async function QuestionPage({ params, searchParams }: {
         <div id={questionAreaId} className={styles.questionArea} tabIndex={-1}>
           <QuestionDetail question={question} />
         </div>
-        {question.content !== null && (question.capabilities.canEdit || question.capabilities.canDelete) ? (
+        {question.content !== null && (question.capabilities.canEdit || question.capabilities.canDelete
+          || question.capabilities.canResolve) ? (
           <div className={styles.ownerActions}>
+            {question.capabilities.canResolve && question.version !== null ? (
+              <ResolutionToggle questionId={question.id} version={question.version} resolution={question.resolution} />
+            ) : null}
             {question.capabilities.canEdit ? <Link href={`/questions/${question.id}/edit`}>質問を編集</Link> : null}
             {question.capabilities.canDelete && question.version !== null ? (
               <QuestionDelete questionId={question.id} version={question.version} title={question.content.title}

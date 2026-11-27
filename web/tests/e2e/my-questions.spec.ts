@@ -1,0 +1,99 @@
+import { randomUUID } from "node:crypto";
+import { expect, test, type Page } from "@playwright/test";
+import { createAnswer, createQuestions, removeQuestions } from "./database";
+import { canonicalOrigin, signIn } from "./session";
+
+/**
+ * 解決状態の変更（QA-02、API-QA-12）と自分のQ&A投稿の一覧（GE-05、API-QA-13）を実セッションで確認する。#9 ⑥。
+ * 準備手順は docs/development/quality-and-poc.md の「ホストでのE2E」を参照する。seed のパスワードを記録に残さないため、
+ * トレースなどを無効にする。notifications.spec.ts が poc_a001 宛ての通知件数を数えるため、poc_a001 には通知を送らない。
+ */
+test.use({ trace: "off", screenshot: "off", video: "off" });
+
+let marker: string;
+test.beforeEach(() => {
+  marker = `e2e-my-questions-${randomUUID()}`;
+});
+test.afterEach(() => removeQuestions(marker));
+
+/** 更新の要求に、本番ビルドが受け付ける正規オリジンを付けて送る。 */
+async function allowMutations(page: Page, baseURL: string) {
+  const origin = canonicalOrigin ?? new URL(baseURL).origin;
+  await page.context().route(/\/api\/v1\/questions\/[^/?]+\/resolution$/, async (route) => {
+    await route.fulfill({ response: await route.fetch({ headers: { ...await route.request().allHeaders(), origin } }) });
+  });
+}
+
+const noHorizontalScroll = (page: Page) =>
+  page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+
+test("AC-11 モバイルでキーボードを使って、質問者本人が解決状態を何度でも切り替えられる", async ({ page, baseURL }) => {
+  const [questionId] = await createQuestions(marker, [{ title: "解決を切り替える質問" }]);
+  await page.setViewportSize({ width: 375, height: 812 });
+  await signIn(page, baseURL!, "poc_s001");
+  await allowMutations(page, baseURL!);
+  await page.goto(`/questions/${questionId}`);
+
+  const header = page.getByRole("article").filter({ has: page.getByRole("heading", { level: 1, name: "解決を切り替える質問" }) });
+  await expect(header.getByText("未解決", { exact: true })).toBeVisible();
+  const resolve = page.getByRole("button", { name: "解決済みにする" });
+  await resolve.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("status").filter({ hasText: "解決済みにしました。" })).toBeVisible();
+  await expect(header.getByText("解決済み", { exact: true })).toBeVisible();
+  const reopen = page.getByRole("button", { name: "未解決に戻す" });
+  await expect(reopen).toBeFocused();
+  // 解決済みの質問にも回答できる。
+  await expect(page.getByRole("textbox", { name: "回答の本文" })).toBeVisible();
+
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("status").filter({ hasText: "未解決に戻しました。" })).toBeVisible();
+  await expect(header.getByText("未解決", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "解決済みにする" })).toBeFocused();
+  await page.reload();
+  await expect(header.getByText("未解決", { exact: true })).toBeVisible();
+  expect(await noHorizontalScroll(page)).toBeLessThanOrEqual(0);
+});
+
+test("質問者以外には解決状態の変更を出さない", async ({ page, baseURL }) => {
+  const [questionId] = await createQuestions(marker, [{ title: "他人の質問" }]);
+  await signIn(page, baseURL!, "poc_s002");
+  await page.goto(`/questions/${questionId}`);
+  await expect(page.getByRole("heading", { level: 1, name: "他人の質問" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /解決済みにする|未解決に戻す/ })).toHaveCount(0);
+});
+
+test("AC-12 モバイルで自分の投稿を種類で絞り込み、残存する回答から QA-02 へ移動できる", async ({ page, baseURL }) => {
+  const [ownQuestion, deletedQuestion] = await createQuestions(marker, [
+    { title: `一覧に出る質問 ${marker}` },
+    { title: `削除した質問 ${marker}`, deleted: true },
+  ]);
+  const answerId = await createAnswer(deletedQuestion, "poc_s001", `残っている回答 ${marker}`);
+  await page.setViewportSize({ width: 375, height: 812 });
+  await signIn(page, baseURL!, "poc_s001");
+  await page.goto("/me/questions");
+
+  await expect(page.getByRole("heading", { level: 1, name: "自分のQ&A" })).toBeVisible();
+  const kinds = page.getByRole("navigation", { name: "投稿の種類" });
+  await expect(kinds.getByRole("link", { name: "すべて" })).toHaveAttribute("aria-current", "page");
+  await expect(page.getByRole("link", { name: `一覧に出る質問 ${marker}` })).toHaveAttribute("href", `/questions/${ownQuestion}`);
+  const remaining = page.getByRole("listitem").filter({ hasText: `残っている回答 ${marker}` });
+  await expect(remaining).toContainText("質問は削除済み");
+  await expect(remaining.getByRole("link", { name: "削除された質問への回答" })).toBeVisible();
+  await expect(page.getByText(`削除した質問 ${marker}`)).toHaveCount(0);
+
+  // 種類の絞り込みはキーボードで操作できる。
+  const answers = kinds.getByRole("link", { name: "回答", exact: true });
+  await answers.focus();
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(/\/me\/questions\?kind=answer$/);
+  await expect(kinds.getByRole("link", { name: "回答", exact: true })).toHaveAttribute("aria-current", "page");
+  await expect(page.getByRole("link", { name: `一覧に出る質問 ${marker}` })).toHaveCount(0);
+  expect(await noHorizontalScroll(page)).toBeLessThanOrEqual(0);
+
+  await page.getByRole("listitem").filter({ hasText: `残っている回答 ${marker}` })
+    .getByRole("link", { name: "削除された質問への回答" }).click();
+  await expect(page).toHaveURL(new RegExp(`/questions/${deletedQuestion}#response-${answerId}$`));
+  await expect(page.getByText("この質問は削除されました。")).toBeVisible();
+  await expect(page.locator(`#response-${answerId}`)).toContainText(`残っている回答 ${marker}`);
+});
