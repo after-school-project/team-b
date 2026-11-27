@@ -120,3 +120,24 @@
   color: var(--color-warning);
   background: var(--color-warning-bg);
 }
+
+/* 質問者本人の操作（編集・削除）。狭い画面では折り返す。 */
+.ownerActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-6);
+  font-size: 14px;
+}
+
+/* 質問の本体。削除後のフォーカス先にもなる。中の要素の間隔はページと同じにする。 */
+.questionArea {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  min-width: 0;
+}
+
+.questionArea:focus-visible {
+  outline-offset: 4px;
+}

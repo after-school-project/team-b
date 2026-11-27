@@ -84,6 +84,21 @@ describe("回答・コメント・返信のスレッド", () => {
     expect(html).not.toContain("コメントを編集");
   });
 
+  it("AC-09 削除の入口は canDelete の投稿だけに出し、確認ダイアログの中身は開くまで描画しない", () => {
+    const html = render([
+      shown("a", "answer", null, `長い回答${"あ".repeat(80)}`, { canDelete: true }),
+      shown("r", "reply", "a", "返信\n\n2段落目", { canDelete: true }),
+      shown("x", "comment", null, "他人のコメント", { canRespond: true }),
+    ]);
+    expect(html.match(/>回答を削除</g)).toHaveLength(1);
+    expect(html.match(/>返信を削除</g)).toHaveLength(1);
+    expect(html).not.toContain("コメントを削除");
+    expect(html.match(/<dialog/g)).toHaveLength(2);
+    // 閉じたダイアログに本文の冒頭を置くと、画面の本文と重複して検索・読み上げされるため、開くまで出さない。
+    expect(html).not.toContain(`長い回答${"あ".repeat(56)}…`);
+    expect(html).not.toContain(">削除する<");
+  });
+
   it("回答できる質問には回答フォームを、できない質問には理由を表示する", () => {
     const open = render([], { canAnswer: true });
     expect(open).toContain("まだ回答・コメントはありません。");
