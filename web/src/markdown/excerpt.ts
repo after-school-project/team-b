@@ -1,4 +1,4 @@
-import { parseWithinLimits, walkMarkdown, type MarkdownNode } from "./restricted-markdown";
+import { parseBlocksWithinLimits, parseWithinLimits, walkMarkdown, type MarkdownNode } from "./restricted-markdown";
 
 /**
  * 一覧に表示する本文の抜粋（API設計書 §5 MyQaItem.excerpt）。制限Markdownの記号を取り除いた平文の冒頭。
@@ -8,25 +8,20 @@ import { parseWithinLimits, walkMarkdown, type MarkdownNode } from "./restricted
  * コードブロック）だけを本文の順に集める。そのため、コードの中の `*` などは書かれたとおりに残り、強調・見出し・
  * 箇条書き・リンクの記号は、詳細の表示で記号として扱われるものだけが外れる。ブロックの間は空白1つで区切る。
  *
- * 一覧のたびに長い本文全体を同期的に解析しないよう、本文の冒頭だけを解析する（`leadingText`）。
- * - 解析する範囲は、約 `initialRange` 文字の後の段落の区切り（空行）までとする。近くに空行がなければ改行、改行もなければ
- *   文字の位置で切る。集めた文字が抜粋の2倍に満たなければ、範囲を2倍ずつ広げる（最大でも本文全体の約2倍の処理）。
- * - 抜粋に使う冒頭の文字は、切った位置から抜粋の長さ以上離れているため、本文全体を解析したときと同じになる。
- *   違いが出るのは、冒頭で始まった強調・コードが切った位置をまたぐほど長い場合だけ（記号が文字として残る）。
- * - 範囲の外にある参照リンクの定義（`[名前]: URL`）は、範囲の末尾に付け足して、リンクの文字を詳細の表示と同じにする。
- *   範囲の末尾がコードブロックの途中でも、付け足した行は切った位置より後ろに入るため、冒頭の文字は変わらない。
+ * 一覧のたびに長い本文全体を同期的に解析しないよう、冒頭のブロックだけを解析する（`leadingBlocksEnd`）。
+ * 切る位置は、トップレベルのブロックの境目に限る。文中の構文（強調・コード・リンク）はブロックをまたがないため、
+ * 切った範囲の文字は、本文全体を解析した場合と同じになる。参照リンクの定義を使う可能性がある本文と、冒頭に閉じたブロックが
+ * ない本文（長い1段落など）は、本文全体を解析する（`leadingText`）。段落の多い長文で、解析の量を減らせる。
  */
 export const excerptLength = 120;
 
-/** 最初に解析する文字数の目安（UTF-16 の長さ）。抜粋の120文字に対して、記号・URLの分を見込む。 */
+/** 最初にブロックの構造を調べる文字数の目安（UTF-16 の長さ）。抜粋の120文字に対して、記号・URLの分を見込む。 */
 const initialRange = 1_000;
 
 /** 前後を空白で区切る要素。 */
 const blocks = new Set(["paragraph", "heading", "blockquote", "list", "listItem", "code", "thematicBreak", "break"]);
 /** 本文の文字として集める要素。 */
 const texts = new Set(["text", "inlineCode", "code"]);
-/** 参照リンクの定義の行（`[名前]: URL`）。 */
-const definitionLine = /^ {0,3}\[[^\]]+\]:/;
 
 function textOf(root: MarkdownNode): string {
   const parts: string[] = [];
@@ -38,34 +33,51 @@ function textOf(root: MarkdownNode): string {
 }
 
 /**
- * 解析する範囲の終わり。`range` 文字目から `range` 文字以内の最初の空行、なければ改行、どちらもなければ `range` 文字目。
- * 文字の途中（サロゲートペアの間）では切らない。
+ * 本文全体を解析した場合と同じブロックだけを含む、冒頭の範囲の終わり。範囲に収まるブロックがなければ null。
+ *
+ * ブロックの構造は前の行から順に決まり、後ろの行で閉じられる。冒頭の `range` 文字の後の最初の改行までをブロックだけで
+ * 解析し、最後のブロック（後ろの行で続く可能性がある）の手前までを使う。それより前のブロックは範囲内の行で閉じられて
+ * いるため、本文全体を解析した場合と同じになる。
  */
-function cutPoint(markdown: string, range: number): number {
-  if (range >= markdown.length) return markdown.length;
-  const window = markdown.slice(0, Math.min(markdown.length, range * 2));
-  const blank = /\n[ \t]*(?:\r?\n|$)/g;
-  blank.lastIndex = range;
-  const paragraph = blank.exec(window)?.index;
-  if (paragraph !== undefined) return paragraph;
-  const line = window.indexOf("\n", range);
-  if (line >= 0) return line;
-  const code = markdown.charCodeAt(range - 1);
-  return code >= 0xd800 && code <= 0xdbff ? range + 1 : range;
+function leadingBlocksEnd(markdown: string, range: number): number | null {
+  const lineEnd = markdown.indexOf("\n", range);
+  if (lineEnd < 0) return null;
+  const root = parseBlocksWithinLimits(markdown.slice(0, lineEnd));
+  const children = root?.children ?? [];
+  const last = children.at(-1)?.position?.start.offset;
+  return children.length > 1 && last !== undefined && last > 0 ? last : null;
 }
 
-/** 抜粋の元になる冒頭の平文。解析できない本文は null。 */
+/**
+ * 後ろの参照リンクの定義を、前の `[` が参照する可能性があるか。定義の文脈（コードブロックの中か、URL が次の行か）は
+ * 本文全体を解析しないと判定できないため、`]:` の前に `[` があれば可能性があるとみなす。
+ */
+function mayUseDefinition(markdown: string): boolean {
+  const definition = markdown.lastIndexOf("]:");
+  return definition >= 0 && markdown.indexOf("[") < definition;
+}
+
+/**
+ * 抜粋の元になる冒頭の平文。解析できない本文は null。
+ * 冒頭の範囲に閉じたブロックがない本文（長い1段落・1行・1つのコードブロックなど）は、範囲を広げても文中の構文が
+ * 決まらないため、すぐに本文全体を解析する。参照リンクの定義を使う可能性がある本文も、本文全体を解析する。
+ */
 function leadingText(markdown: string, length: number): string | null {
-  for (let range = initialRange; ; range *= 2) {
-    const end = cutPoint(markdown, range);
-    const whole = end >= markdown.length;
-    const definitions = whole ? [] : markdown.slice(end).split(/\r\n|\r|\n/).filter((line) => definitionLine.test(line));
-    const root = parseWithinLimits(whole ? markdown : [markdown.slice(0, end), "", ...definitions].join("\n"));
-    if (!root) return null;
-    const text = textOf(root);
-    // 切った位置の近くの文字は、範囲の外の文字とのつながりで変わり得るため、抜粋の2倍の文字が集まるまで広げる。
-    if (whole || [...text].length > length * 2) return text;
+  if (!mayUseDefinition(markdown)) {
+    let previous = 0;
+    for (let range = initialRange; range < markdown.length; range *= 2) {
+      const end = leadingBlocksEnd(markdown, range);
+      // 範囲を広げても閉じたブロックが増えない（後ろが1つの長いブロック）なら、広げ続けずに本文全体を解析する。
+      if (end === null || end <= previous) break;
+      previous = end;
+      const root = parseWithinLimits(markdown.slice(0, end));
+      if (!root) break;
+      const text = textOf(root);
+      if ([...text].length > length) return text;
+    }
   }
+  const root = parseWithinLimits(markdown);
+  return root ? textOf(root) : null;
 }
 
 export function markdownExcerpt(markdown: string, length = excerptLength): string {

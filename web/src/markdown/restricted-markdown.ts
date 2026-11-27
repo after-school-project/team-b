@@ -18,6 +18,8 @@ export type MarkdownNode = {
   depth?: number;
   identifier?: string;
   data?: { hProperties?: { href: string } };
+  /** 元の本文での範囲（UTF-16 の位置）。 */
+  position?: { start: { offset?: number }; end: { offset?: number } };
   children?: MarkdownNode[];
 };
 
@@ -105,21 +107,40 @@ function paragraphMarkers(paragraph: MarkdownNode): number {
   return count;
 }
 
+/**
+ * 文中の構文を解析しない、ブロックだけの構文木。本解析（文中の構文の解析と描画）をしてはいけない量なら null。
+ * 各要素の `position` で、元の本文の範囲が分かる。一覧の抜粋（`markdownExcerpt`）で、ブロックの境目を求めるのにも使う。
+ */
+function blockTree(value: string): MarkdownNode | null {
+  // 1文字は最大2つのUTF-16コードユニットになる。文字を数える前に、明らかに長い値を除く。
+  if (value.length > markdownLimits.characters * 2 || [...value].length > markdownLimits.characters) return null;
+  const lines = value.split(/\r\n?|\n/).filter((line) => line.trim() !== "");
+  if (lines.length > markdownLimits.lines) return null;
+  if (lines.some((line) => leadingMarkers(line) > markdownLimits.markersPerLine)) return null;
+  const root = parse(value, blockOnly);
+  let nodes = 0;
+  for (const { node } of walkMarkdown(root)) {
+    nodes += 1;
+    if (nodes > markdownLimits.nodes) return null;
+    if ((node.type === "paragraph" || node.type === "heading") &&
+      paragraphMarkers(node) > markdownLimits.markersPerParagraph) return null;
+  }
+  return root;
+}
+
 /** 本解析（文中の構文の解析と描画）をしてはいけない量かを判定する。 */
 export function exceedsParseLimits(value: string): boolean {
-  // 1文字は最大2つのUTF-16コードユニットになる。文字を数える前に、明らかに長い値を除く。
-  if (value.length > markdownLimits.characters * 2 || [...value].length > markdownLimits.characters) return true;
-  const lines = value.split(/\r\n?|\n/).filter((line) => line.trim() !== "");
-  if (lines.length > markdownLimits.lines) return true;
-  if (lines.some((line) => leadingMarkers(line) > markdownLimits.markersPerLine)) return true;
-  let nodes = 0;
-  for (const { node } of walkMarkdown(parse(value, blockOnly))) {
-    nodes += 1;
-    if (nodes > markdownLimits.nodes) return true;
-    if ((node.type === "paragraph" || node.type === "heading") &&
-      paragraphMarkers(node) > markdownLimits.markersPerParagraph) return true;
+  return blockTree(value) === null;
+}
+
+/** 上限に収まる本文の、ブロックだけの構文木。収まらない本文と、解析器がスタックを使い切った本文では null。 */
+export function parseBlocksWithinLimits(value: string): MarkdownNode | null {
+  try {
+    return blockTree(value);
+  } catch (error) {
+    if (error instanceof RangeError) return null;
+    throw error;
   }
-  return false;
 }
 
 /** 解析した構文木が、描画してはいけない要素数・深さ・展開量かを判定する。 */

@@ -3,9 +3,22 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { MyPostsResults } from "@/app/me/questions/my-posts-results";
 import { markdownExcerpt } from "@/markdown/excerpt";
+import { markdownProblems, parseWithinLimits, walkMarkdown } from "@/markdown/restricted-markdown";
 import type { MyQaItem } from "@/qa/my-posts";
 
 /** 自分のQ&A投稿の一覧（GE-05、#9 ⑥）。抜粋と、各投稿の見出し・QA-02 への導線。 */
+
+/** 比較用に、本文全体を解析して作った抜粋。`markdownExcerpt` と同じ規則で文字を集める。 */
+function fullExcerpt(markdown: string): string {
+  const blocks = new Set(["paragraph", "heading", "blockquote", "list", "listItem", "code", "thematicBreak", "break"]);
+  const parts: string[] = [];
+  for (const { node } of walkMarkdown(parseWithinLimits(markdown)!)) {
+    if (blocks.has(node.type)) parts.push(" ");
+    if (["text", "inlineCode", "code"].includes(node.type)) parts.push(node.value ?? "");
+  }
+  const characters = [...parts.join("").replace(/\s+/g, " ").trim()];
+  return characters.length > 120 ? `${characters.slice(0, 120).join("")}…` : characters.join("");
+}
 
 describe("本文の抜粋", () => {
   it("制限Markdownの記号を除いた平文にし、長い本文は120文字で省略する", () => {
@@ -29,23 +42,32 @@ describe("本文の抜粋", () => {
     expect(markdownExcerpt("snake_case と __強調__ と _斜体_")).toBe("snake_case と 強調 と 斜体");
   });
 
-  it("長い本文は冒頭だけを解析し、段落・行・コードブロックの途中で切っても冒頭の文字は全体の解析と同じにする", () => {
+  it("長い本文は冒頭のブロックだけを解析し、本文全体を解析した場合と同じ抜粋にする", () => {
     const paragraph = "これは**強調**と`code * 2`と[リンク](https://example.com)を含む段落です。".repeat(3);
-    let body = "";
-    while ([...body].length < 9_000) body += `${paragraph}\n\n- 箇条書き\n\n`;
-    const expected = markdownExcerpt(paragraph.repeat(1));
-    expect(markdownExcerpt(body).startsWith(expected.slice(0, 60))).toBe(true);
-    expect(markdownExcerpt(body.replaceAll("\n\n", "\n"))).toBe(markdownExcerpt(`${paragraph}\n- 箇条書き\n${paragraph}`));
-    expect(markdownExcerpt("長い一行の本文です。".repeat(900))).toBe(`${"長い一行の本文です。".repeat(12)}…`);
-    const code = "```\n" + "x * y = z の計算\n".repeat(700) + "```\n後ろ";
-    expect(markdownExcerpt(code)).toBe(`${"x * y = z の計算 ".repeat(9)}x * y = z の計`.slice(0, 120) + "…");
-  });
-
-  it("範囲の外にある参照リンクの定義も使い、リンクの文字を詳細の表示と同じにする", () => {
-    const body = `[参照先][ref]を読んでください。\n\n${"段落の本文です。\n\n".repeat(300)}[ref]: https://example.com/ref\n`;
-    expect(markdownExcerpt(body).startsWith("参照先を読んでください。 段落の本文です。")).toBe(true);
-    // 定義がなければ、詳細の表示と同じく記号のまま残る。
-    expect(markdownExcerpt("[参照先][ref]だけ")).toBe("[参照先][ref]だけ");
+    let paragraphs = "";
+    while ([...paragraphs].length < 9_000) paragraphs += `${paragraph}\n\n- 箇条書き\n\n`;
+    const longUrl = `https://example.com/${"a".repeat(1_700)}`;
+    const bodies = {
+      段落が多い本文: paragraphs,
+      空行のない長い段落: paragraphs.replaceAll("\n\n", "\n"),
+      "1行の長文": "長い一行の本文です。".repeat(900),
+      長いコードブロック: "```\n" + "x * y = z の計算\n".repeat(700) + "```\n後ろ",
+      // 以下はレビューで指摘された、詳細と抜粋が食い違っていた本文。
+      後半のコード例にある定義らしい行: `[資料][ref]を読む。\n\n${"段落の本文です。\n\n".repeat(150)}\`\`\`\n[ref]: https://example.com/\n\`\`\`\n`,
+      URLを次の行に書いた定義: `[資料][ref]を読む。\n\n${"段落の本文です。\n\n".repeat(150)}[ref]:\n  https://example.com/\n`,
+      // 1,000文字目より後のコードブロック内の空行で切れる本文。後ろに参照リンクの定義が多くある。
+      コードブロックの途中に長い空白: `\`\`\`\n短い出力\n${" ".repeat(1_100)}\n\n \n\`\`\`\n\n本来の続きです。\n\n${"段落。\n\n".repeat(100)}${
+        Array.from({ length: 10 }, (_, index) => `[ref${index}]: https://example.com/${"x".repeat(40)}${index}\n`).join("")}`,
+      長いURLのインラインリンクで始まる1行: `[資料](${longUrl})を確認。${"続きの本文です。".repeat(100)}`,
+    };
+    for (const [label, body] of Object.entries(bodies)) {
+      expect(markdownProblems(body), label).toEqual([]);
+      expect(markdownExcerpt(body), label).toBe(fullExcerpt(body));
+    }
+    expect(markdownExcerpt(bodies["後半のコード例にある定義らしい行"]).startsWith("[資料][ref]を読む。")).toBe(true);
+    expect(markdownExcerpt(bodies["URLを次の行に書いた定義"]).startsWith("資料を読む。")).toBe(true);
+    expect(markdownExcerpt(bodies["コードブロックの途中に長い空白"]).startsWith("短い出力 本来の続きです。")).toBe(true);
+    expect(markdownExcerpt(bodies["長いURLのインラインリンクで始まる1行"]).startsWith("資料を確認。")).toBe(true);
   });
 
   it("バッククォート3つ以上で囲んだ1行のインラインコードも、中身を残す", () => {
