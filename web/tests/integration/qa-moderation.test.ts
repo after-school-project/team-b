@@ -312,3 +312,34 @@ it("AC-03 通知の記録に失敗すると投稿更新・証拠・案件履歴�
   }
   expect((await change(school, post, input, key)).body.data).toMatchObject({ version: 2, state: "hidden" });
 });
+
+it("AC-05 対応済み案件での新規操作は拒否し、確定済みの操作の再送には元の結果だけを返す", async () => {
+  const post = { type: "question" as const, id: await addQuestion() };
+  const sourceCaseId = await addCase(post);
+  const hide = { expectedVersion: 1, visibility: "hidden", reason, sourceCaseId };
+  const key = randomUUID();
+  const original = await change(manager, post, hide, key);
+  expect(original.status).toBe(200);
+  expect(original.body.data).toMatchObject({ resource: post, version: 2, state: "hidden" });
+
+  await target.client.query(`
+    UPDATE report_cases SET status = 'closed', closed_at = now(), updated_at = now(), version = version + 1
+    WHERE id = $1
+  `, [sourceCaseId]);
+  const rejected = await change(manager, post, { expectedVersion: 2, visibility: "public", sourceCaseId });
+  expect(rejected.status).toBe(409);
+  expect(rejected.body.error?.code).toBe("CASE_CLOSED");
+
+  const replay = await change(manager, post, hide, key);
+  expect(replay.status).toBe(200);
+  expect(replay.body.meta?.replayed).toBe(true);
+  expect(replay.body.data).toEqual(original.body.data);
+  const { rows: [saved] } = await target.client.query(`
+    SELECT c.version,
+      (SELECT count(*)::int FROM report_actions a WHERE a.case_id = c.id) AS actions,
+      (SELECT count(*)::int FROM notifications n WHERE n.qa_question_id = $2::uuid) AS notifications,
+      (SELECT count(*)::int FROM audit_logs l WHERE l.target_id = $2::text) AS audits
+    FROM report_cases c WHERE c.id = $1
+  `, [sourceCaseId, post.id]);
+  expect(saved).toEqual({ version: 3, actions: 1, notifications: 1, audits: 1 });
+});

@@ -209,7 +209,7 @@ export async function authorizeProfileReview(context: LockedContext, actorId: st
   const [review] = await context.tx.select().from(profileReviews).where(eq(profileReviews.id, reviewId));
   if (!review) throw new ApiError("NOT_FOUND");
   try {
-    const { schoolManager } = await requireAdminForLockedTarget(context, actorId, review.userId);
+    const { target: { schoolManager } } = await requireAdminForLockedTarget(context, actorId, review.userId);
     if (schoolManager) throw new ApiError("NOT_FOUND");
   } catch (error) {
     if (error instanceof ApiError && error.code === "FORBIDDEN") throw new ApiError("NOT_FOUND");

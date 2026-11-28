@@ -39,7 +39,7 @@ type LockedContext = { tx: CaseWriter; now: Date; requireLockedUsers: (...ids: s
 async function authorizeProfileHiding(
   context: LockedContext, actorId: string, userId: string,
 ): Promise<{ appManager: boolean }> {
-  const roles = await requireAdminForLockedTarget(context, actorId, userId);
+  const { target: roles } = await requireAdminForLockedTarget(context, actorId, userId);
   const [target] = await context.tx.select({ userId: communityUsers.userId }).from(communityUsers).where(and(
     eq(communityUsers.userId, userId),
     eq(communityUsers.provisioningStatus, "ready"), eq(communityUsers.eligibilityStatus, "verified"),

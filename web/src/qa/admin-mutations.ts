@@ -7,7 +7,7 @@ import { preserveEvidence } from "@/api/report-evidence";
 import { recordCaseMeasure, requireQaMeasureCase } from "@/api/report-measures";
 import { expectedVersion, optionalReason, uuid, type MutationRequest } from "@/api/request";
 import { ApiError } from "@/api/response";
-import { loadAccessState, requireActive, type AccessReader } from "@/auth/access";
+import type { AccessReader } from "@/auth/access";
 import { authorizeAdminEntry, requireAdminForLockedTarget } from "@/auth/admin";
 import { qaQuestions, qaResponses } from "@/db/content-schema";
 import { reportCases } from "@/db/moderation-schema";
@@ -47,10 +47,10 @@ export function changeQaVisibility(
     const { tx, now } = context;
     const [post] = await readPost(tx, target);
     if (!post || post.deletedAt) throw new ApiError("NOT_FOUND");
-    await requireAdminForLockedTarget(context, actorId, post.authorId);
+    const { actor } = await requireAdminForLockedTarget(context, actorId, post.authorId);
     if (sourceCaseId !== undefined) {
       await requireQaMeasureCase(tx, {
-        actor: requireActive(await loadAccessState(tx, actorId)), caseId: sourceCaseId, target, now, replay,
+        actor, caseId: sourceCaseId, target, now, replay,
       });
     }
     return post;
@@ -80,7 +80,8 @@ export function changeQaVisibility(
       const previous = post.forcedHiddenAt ? "hidden" : "public";
       if (previous === state) throw new ApiError("STATE_CONFLICT");
 
-      // 起点を指定した場合、その案件が対象投稿に対する唯一の未終了案件であることを確認済み。
+      // report_cases_one_active により、未終了案件は対象投稿ごとに最大1件。
+      // 起点を指定した場合、証拠保全でも同じ案件のロックを使う。
       if (state === "hidden") await preserveEvidence(tx, { targets: [evidenceTarget] });
       const version = post.version + 1;
       await tx.update(table).set({ forcedHiddenAt: state === "hidden" ? now : null, updatedAt: now, version })
