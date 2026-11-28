@@ -76,6 +76,7 @@ test("Issue #15 モバイル幅で通報の最終確認から案件対応・証�
     await admin.goto("/");
     await admin.getByRole("button", { name: "メニュー", exact: true }).click();
     await admin.getByRole("link", { name: "管理エリアへ" }).click();
+    await admin.getByRole("link", { name: "未対応の通報" }).click();
     await expect(admin.getByRole("heading", { name: "通報案件", exact: true })).toBeVisible();
     const status = admin.getByRole("combobox", { name: "対応状態" });
     await expect(status).toHaveValue("unhandled");

@@ -439,7 +439,7 @@ test("ログイン中に保護画面がキャッシュから復元されても�
 test("学校管理者には実装済みの管理画面への導線を表示する", async ({ page, baseURL }) => {
   await signIn(page, baseURL!, "poc_school");
   await page.goto("/");
-  await expect(page.getByRole("link", { name: "管理エリアへ" })).toHaveAttribute("href", "/admin/reports");
+  await expect(page.getByRole("link", { name: "管理エリアへ" })).toHaveAttribute("href", "/admin");
 });
 
 test("モバイル幅でもキーボードだけでメニューを開閉し、主要導線と管理導線を使える", async ({ page, baseURL }) => {

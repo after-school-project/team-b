@@ -12,7 +12,6 @@ import type { RecordWriter } from "./notifications";
  * コピーしない（DB・ER設計書 §5、API設計書 §14）。
  *
  * 各機能の監査対象操作を許可リストに定める。
- * 監査ログの閲覧（API-LOG-01・02）は #16 で実装する。
  */
 
 const profileState = z.enum(["public", "hidden"]);
@@ -21,9 +20,18 @@ const version = z.number().int().positive();
 const visibilityFields = { publicationState: z.enum(["public", "hidden"]), version };
 const graduationRole = z.enum(["student", "alumni"]);
 const graduationFields = { baseRole: graduationRole, isGraduating: z.boolean(), version, batchId: z.uuid() };
+const accountFields = { accountStatus: z.enum(["active", "suspended"]), version };
+const appManagerFields = { appManager: z.boolean(), version };
+const caseStatus = z.enum(["unhandled", "in_progress", "closed"]);
 
 /** 操作ごとの対象の種類と、before/after に入れてよい項目とその値。 */
 export const auditOperations = {
+  "account.issued": { targetType: "user", fields: {} },
+  "account.password_reset": { targetType: "user", fields: {} },
+  "account.suspended": { targetType: "user", fields: accountFields },
+  "account.resumed": { targetType: "user", fields: accountFields },
+  "app_manager.assigned": { targetType: "user", fields: appManagerFields },
+  "app_manager.revoked": { targetType: "user", fields: appManagerFields },
   /** プロフィールの非表示（API-US-05）。対象は利用者。publicReason に本人向け理由を記録する。 */
   "profile.hidden": { targetType: "user", fields: { profileState } },
   /** 再公開審査の承認（API-PR-03）。対象は審査。 */
@@ -44,9 +52,10 @@ export const auditOperations = {
   "graduation.corrected": { targetType: "user", fields: graduationFields },
   /** 対応済みにした案件。内部メモや通報本文は履歴へ分ける。 */
   "report_case.closed": { targetType: "report_case", fields: {
-    status: z.enum(["unhandled", "in_progress", "closed"]), priority: z.enum(["unset", "normal", "high"]),
+    status: caseStatus, priority: z.enum(["unset", "normal", "high"]),
     assigneeId: z.string().min(1).max(128).nullable(), handoffPending: z.boolean(), version,
   } },
+  "report_case.status_changed": { targetType: "report_case", fields: { status: caseStatus } },
 } as const satisfies Record<string, { targetType: string; fields: Record<string, z.ZodType> }>;
 
 export type AuditAction = keyof typeof auditOperations;
@@ -77,6 +86,13 @@ function allowedState(action: AuditAction, side: "before" | "after", state: unkn
     throw new Error(`監査ログ ${action} の ${side} に許可されていない項目または値があります：${fields.join(", ")}`);
   }
   return result.data;
+}
+
+/** 旧形式の記録も、現在の操作別の許可項目と値に絞って返す。 */
+export function projectAuditState(action: string, state: unknown): Record<string, unknown> | null {
+  if (!Object.hasOwn(auditOperations, action)) return null;
+  const result = z.object(auditOperations[action as AuditAction].fields).partial().safeParse(state);
+  return result.success ? result.data : null;
 }
 
 function auditLogValues<A extends AuditAction>(input: AuditLogInput<A>): Omit<typeof auditLogs.$inferInsert, "createdAt"> & { createdAt: Date | SQL } {

@@ -577,14 +577,16 @@ describe("AD-11 利用者の基本情報", () => {
     roles: { schoolManager, appManager: !schoolManager },
   });
 
-  it("公開中は公開表示名を返し、本人確認情報・停止理由を返さない", async () => {
-    const { loadAdminUser } = await import("../../src/admin/users");
+  it("公開中は公開表示名を返し、対象者に対する非表示操作の可否を判定する", async () => {
+    const { loadAdminUser, profileHidingFor } = await import("../../src/admin/users");
     const user = await loadAdminUser(db, viewerOf("poc_s_mgr", false), id("poc_suspended"));
-    expect(user).toEqual({
+    expect(user).toMatchObject({
       userId: id("poc_suspended"), displayName: "りく", baseRole: "student", isGraduating: false, accountStatus: "suspended",
       profileState: "public", roles: { schoolManager: false, appManager: false },
-      version: (await userRow("poc_suspended")).version, profileHiding: "available",
+      version: (await userRow("poc_suspended")).version,
     });
+    expect(profileHidingFor(user)).toBe("available");
+    expect(user).not.toHaveProperty("privateRealName");
     await expect(loadAdminUser(db, viewerOf("poc_school", true), "no-such-user")).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 

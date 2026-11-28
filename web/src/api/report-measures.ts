@@ -13,6 +13,8 @@ import { ApiError } from "./response";
 /** 案件の対応履歴に残す措置と、変更前後に記録する項目。 */
 export type CaseMeasure =
   | { actionType: "profile_hidden"; before: { profileState: "public" }; after: { profileState: "hidden" } }
+  | { actionType: "account_suspended"; before: { accountStatus: "active" }; after: { accountStatus: "suspended" } }
+  | { actionType: "account_resumed"; before: { accountStatus: "suspended" }; after: { accountStatus: "active" } }
   | { actionType: "qa_hidden"; before: { publicationState: "public" }; after: { publicationState: "hidden" } }
   | { actionType: "qa_restored"; before: { publicationState: "hidden" }; after: { publicationState: "public" } };
 

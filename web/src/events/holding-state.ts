@@ -1,4 +1,4 @@
-import { sql } from "drizzle-orm";
+import { sql, type SQLWrapper } from "drizzle-orm";
 import { cursorTimestamp } from "@/api/pagination";
 import { eventRevisions, events } from "@/db/content-schema";
 
@@ -36,14 +36,20 @@ export function resolveEventHoldingState(
   return { holdingState, effectiveEndsAt: new Date(effectiveEndTime) };
 }
 
+/** 終了日時の指定がなければ、開始日の翌日午前0時（JST）を使う。 */
+export function eventEffectiveEndSql(
+  { startsAt, endsAt }: { startsAt: SQLWrapper; endsAt: SQLWrapper } = eventRevisions,
+) {
+  const jst = sql`make_interval(hours => ${jstOffsetHours})`;
+  return sql`coalesce(${endsAt},
+    (date_trunc('day', ${startsAt} AT TIME ZONE ${jst}) + interval '1 day') AT TIME ZONE ${jst})`;
+}
+
 /** 公開版への JOIN 後に使用する、同じ UTC+09:00 の計算と開催状態判定。 */
 export function eventHoldingStateSql(referenceTime: Date) {
-  const jst = sql`make_interval(hours => ${jstOffsetHours})`;
-  const effectiveEnd = sql`coalesce(${eventRevisions.endsAt},
-    (date_trunc('day', ${eventRevisions.startsAt} AT TIME ZONE ${jst}) + interval '1 day') AT TIME ZONE ${jst})`;
   return sql<HoldingState>`CASE
     WHEN ${events.cancelledAt} IS NOT NULL THEN 'cancelled'
-    WHEN ${referenceTime.toISOString()}::timestamptz >= ${effectiveEnd} THEN 'ended'
+    WHEN ${referenceTime.toISOString()}::timestamptz >= ${eventEffectiveEndSql()} THEN 'ended'
     ELSE 'scheduled'
   END`;
 }

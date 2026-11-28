@@ -28,6 +28,7 @@ const actionLabels: Record<string, string> = {
   case_closed: "案件を完了", case_updated: "状態・優先度を変更", assignee_changed: "担当者を変更", note_added: "メモを追加",
   handoff_started: "引継ぎ待ちに移行", handoff_resolved: "担当者を再割当", school_only_applied: "学校専用に変更",
   profile_hidden: "プロフィールを非表示", qa_hidden: "投稿を非表示", qa_restored: "投稿を復元",
+  account_suspended: "アカウントを停止", account_resumed: "アカウントの停止を解除",
 };
 const handoffLabels = {
   manager_profile_hidden: "担当者のプロフィールが非表示", manager_suspended: "担当者が停止中", manager_role_revoked: "担当者の管理権限を解除",
@@ -185,6 +186,11 @@ export default async function ReportCasePage({ params, searchParams }: {
           </dl>
           <div className={styles.actions}>
             {targetPath && target.sourceState !== "deleted" ? <Link className={styles.itemLink} href={targetPath}>対象を開く</Link> : null}
+            {reportCase.capabilities.canUpdate ? (
+              <Link className={styles.itemLink} href={`/admin/users/${encodeURIComponent(target.subjectUserId)}?sourceCaseId=${caseId}`}>
+                対象者の管理を開く
+              </Link>
+            ) : null}
             {canUseMeasure && post.version !== null && (target.type === "question" || target.type === "response") ? (
               <VisibilityAction target={target.type} id={target.id} kind={target.type === "question" ? "質問" : "投稿"}
                 version={post.version} visibility={post.capabilities.canHide ? "hidden" : "public"} sourceCaseId={caseId} />

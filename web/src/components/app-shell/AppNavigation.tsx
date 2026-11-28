@@ -16,7 +16,6 @@ import { requestSignOut, signOutError } from "@/auth/sign-out";
 import {
   ACCOUNT_NAV_ITEMS,
   ADMIN_NAV_ITEM,
-  ADMIN_REPORTS_NAV_ITEM,
   NOTIFICATION_NAV_ITEM,
   PRIMARY_NAV_ITEMS,
   formatUnreadCount,
@@ -80,7 +79,7 @@ function clearSignOutFailure() {
 
 export function AppNavigation({ viewer, unreadNotificationCount }: AppNavigationProps) {
   const pathname = usePathname() ?? "/";
-  const adminNavItem = isNavItemAvailable(ADMIN_NAV_ITEM) ? ADMIN_NAV_ITEM : ADMIN_REPORTS_NAV_ITEM;
+  const adminNavItem = ADMIN_NAV_ITEM;
   const idPrefix = useId();
   const menuId = `${idPrefix}-menu`;
   const accountMenuId = `${idPrefix}-account`;

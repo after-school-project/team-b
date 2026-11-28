@@ -154,8 +154,8 @@ it("停止中の管理者は、管理画面でも拒否表示ではなく停止�
   expect(await redirectOf(() => requireAdminScreen("any", "/admin"))).toBe("/login");
 });
 
-it("未認証は、管理画面の判定より先にログイン画面へ移動する", async () => {
-  expect(await redirectOf(() => requireAdminScreen("any", "/admin"))).toBe("/login");
+it("未認証は、管理画面の判定より先に管理ホームへの戻り先を付けてログイン画面へ移動する", async () => {
+  expect(await redirectOf(() => requireAdminScreen("any", "/admin"))).toBe("/login?returnTo=%2Fadmin");
 });
 
 it.each([

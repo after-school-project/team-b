@@ -2,6 +2,7 @@ import "server-only";
 import { eq } from "drizzle-orm";
 import { ApiError } from "@/api/response";
 import { communityUsers } from "@/db/schema";
+import type { db } from "@/db/client";
 import {
   canEnterAdmin,
   loadAccessState,
@@ -65,6 +66,17 @@ export async function requireAdminViewer(headers: Headers, scope: AdminScope, re
   const viewer = await requireActiveViewer(headers, reader);
   requireAdmin(viewer, scope);
   return viewer;
+}
+
+/** 現在の管理資格と取得対象を同じDBスナップショットで確認する。 */
+export function readAdmin<T>(database: Pick<typeof db, "transaction">, actorId: string,
+  read: (reader: AccessReader, viewer: Viewer) => Promise<T>, scope: AdminScope = "any",
+): Promise<T> {
+  return database.transaction(async (tx) => {
+    const viewer = requireActive(await loadAccessState(tx, actorId));
+    requireAdmin(viewer, scope);
+    return read(tx, viewer);
+  }, { isolationLevel: "repeatable read", accessMode: "read only" });
 }
 
 /**
