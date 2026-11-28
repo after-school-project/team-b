@@ -17,7 +17,10 @@ import { ApiError } from "./response";
 const closedCaseRetentionYears = 1;
 
 /** 案件の対応履歴に残す措置と、変更前後に記録する項目。 */
-export type CaseMeasure = { actionType: "profile_hidden"; before: { profileState: "public" }; after: { profileState: "hidden" } };
+export type CaseMeasure =
+  | { actionType: "profile_hidden"; before: { profileState: "public" }; after: { profileState: "hidden" } }
+  | { actionType: "qa_hidden"; before: { publicationState: "public" }; after: { publicationState: "hidden" } }
+  | { actionType: "qa_restored"; before: { publicationState: "hidden" }; after: { publicationState: "public" } };
 
 /**
  * 利用者のプロフィールを非表示にするときにロックする未終了案件のID。対象者への通報案件（証拠の保全）と、対象者が
@@ -52,6 +55,8 @@ export async function requireViewableMeasureCase(tx: CaseWriter, input: CaseAcce
     handoffPending: reportCases.handoffPending,
     closedAt: reportCases.closedAt,
     subjectUserId: reportTargets.subjectUserId,
+    questionId: reportTargets.questionId,
+    responseId: reportTargets.responseId,
     questionAuthorId: qaQuestions.authorId,
     responseAuthorId: qaResponses.authorId,
   }).from(reportCases)
@@ -73,7 +78,20 @@ export async function requireViewableMeasureCase(tx: CaseWriter, input: CaseAcce
       .from(communityUsers).where(eq(communityUsers.userId, subjectUserId));
     if (subject?.appManager) throw new ApiError("NOT_FOUND");
   }
-  return { id: row.id, status: row.status, subjectUserId };
+  return { id: row.id, status: row.status, subjectUserId, questionId: row.questionId, responseId: row.responseId };
+}
+
+/** Q&Aの措置は、同じ投稿者の別の投稿ではなく、案件の対象投稿だけに記録する。 */
+export async function requireQaMeasureCase(
+  tx: CaseWriter,
+  input: CaseAccess & { target: { type: "question" | "response"; id: string }; replay: boolean },
+): Promise<void> {
+  const row = await requireViewableMeasureCase(tx, input);
+  const targetId = input.target.type === "question" ? row.questionId : row.responseId;
+  if (targetId !== input.target.id) throw new ApiError("VALIDATION_FAILED", {
+    fields: [{ path: "sourceCaseId", code: "case_target_mismatch", message: "この案件の対象投稿ではありません。" }],
+  });
+  if (!input.replay && row.status === "closed") throw new ApiError("CASE_CLOSED");
 }
 
 /**

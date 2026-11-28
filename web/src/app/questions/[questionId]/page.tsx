@@ -14,6 +14,7 @@ import { QuestionDelete } from "./delete-confirm";
 import { QuestionDetail } from "./question-detail";
 import { ResolutionToggle } from "./resolution-toggle";
 import { ResponseThread } from "./response-thread";
+import { VisibilityAction } from "./visibility-action";
 import styles from "./page.module.css";
 
 export const metadata: Metadata = { title: "質問" };
@@ -62,7 +63,7 @@ export default async function QuestionPage({ params, searchParams }: {
           <QuestionDetail question={question} />
         </div>
         {question.content !== null && (question.capabilities.canEdit || question.capabilities.canDelete
-          || question.capabilities.canResolve) ? (
+          || question.capabilities.canResolve || question.capabilities.canHide || question.capabilities.canRestore) ? (
           <div className={styles.ownerActions}>
             {question.capabilities.canResolve && question.version !== null ? (
               <ResolutionToggle questionId={question.id} version={question.version} resolution={question.resolution} />
@@ -71,6 +72,10 @@ export default async function QuestionPage({ params, searchParams }: {
             {question.capabilities.canDelete && question.version !== null ? (
               <QuestionDelete questionId={question.id} version={question.version} title={question.content.title}
                 focusTargetId={questionAreaId} />
+            ) : null}
+            {question.capabilities.canHide || question.capabilities.canRestore ? (
+              <VisibilityAction target="question" id={question.id} kind="質問" version={question.version}
+                visibility={question.capabilities.canHide ? "hidden" : "public"} />
             ) : null}
           </div>
         ) : null}

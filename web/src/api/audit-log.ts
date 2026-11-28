@@ -17,7 +17,7 @@ import type { RecordWriter } from "./notifications";
 const profileState = z.enum(["public", "hidden"]);
 const reviewStatus = z.enum(["pending", "approved", "rejected"]);
 const version = z.number().int().positive();
-const noticeVisibilityFields = { publicationState: z.enum(["public", "hidden"]), version };
+const visibilityFields = { publicationState: z.enum(["public", "hidden"]), version };
 const graduationRole = z.enum(["student", "alumni"]);
 const graduationFields = { baseRole: graduationRole, isGraduating: z.boolean(), version, batchId: z.uuid() };
 
@@ -30,8 +30,13 @@ export const auditOperations = {
   /** 再公開審査の却下（API-PR-03）。対象は審査。publicReason に却下理由を記録する。 */
   "profile_review.rejected": { targetType: "profile_review", fields: { status: reviewStatus, profileState, version } },
   /** お知らせの強制非表示・復元（API-AN-06）。 */
-  "notice.hidden": { targetType: "notice", fields: noticeVisibilityFields },
-  "notice.restored": { targetType: "notice", fields: noticeVisibilityFields },
+  "notice.hidden": { targetType: "notice", fields: visibilityFields },
+  "notice.restored": { targetType: "notice", fields: visibilityFields },
+  /** Q&Aの強制非表示・復元（API-AQ-01・02）。 */
+  "question.hidden": { targetType: "question", fields: visibilityFields },
+  "question.restored": { targetType: "question", fields: visibilityFields },
+  "response.hidden": { targetType: "response", fields: visibilityFields },
+  "response.restored": { targetType: "response", fields: visibilityFields },
   /** 卒業区分の一括変更（API-GR-02）。対象者ごとに1件記録する。 */
   "graduation.graduated": { targetType: "user", fields: graduationFields },
   /** 卒業区分の誤変更修正（API-GR-03）。 */
