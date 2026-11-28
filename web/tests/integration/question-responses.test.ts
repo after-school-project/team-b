@@ -262,7 +262,7 @@ describe("API-QA-08 回答・コメント・返信の作成（AC-07）と通知"
         id: answerId, questionId, parentResponseId: null, kind: "answer", publicationState: "public",
         content: { bodyMarkdown: "回答の **本文**\n2行目" }, author: { userId: id("poc_a001"), displayName: "あおい" },
         version: 1, createdAt: expect.stringMatching(/Z$/), updatedAt: expect.stringMatching(/Z$/),
-        capabilities: { ...noCapabilities, canRespond: true },
+        capabilities: { ...noCapabilities, canRespond: true, canReport: true },
       },
       expect.objectContaining({ id: commentId, parentResponseId: answerId, kind: "comment", author: { userId: id("poc_s002"), displayName: "みなと" } }),
       expect.objectContaining({ id: replyId, parentResponseId: commentId, kind: "reply" }),
@@ -450,7 +450,7 @@ describe("API-QA-07・09 回答・コメント・返信の取得（AC-05・AC-06
       expect(text).not.toContain(id("poc_a001"));
     }
     // 返信先が削除済みでも、残存する子の投稿にはそれぞれの状態で返信できる。
-    expect((await list("poc_s001", questionId)).body.data!.items![2].capabilities).toEqual({ ...noCapabilities, canRespond: true });
+    expect((await list("poc_s001", questionId)).body.data!.items![2].capabilities).toEqual({ ...noCapabilities, canRespond: true, canReport: true });
     // 本人と、管理できる管理者には内容を返す。返信はできない。
     for (const viewer of ["poc_a001", "poc_school", "poc_s_mgr"]) {
       expect((await getOne(viewer, hiddenId)).body.data, viewer).toMatchObject({

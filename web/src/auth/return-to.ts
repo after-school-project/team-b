@@ -33,6 +33,7 @@ export const implementedScreenRoutes: readonly string[] = [
   "/events",
   "/notices", "/notices/[noticeId]", "/notices/new", "/me/notices", "/me/notices/[noticeId]/edit",
   "/admin/users/[userId]", "/admin/profile-reviews", "/admin/graduation", "/admin/notices", "/admin/notices/[noticeId]",
+  "/admin/reports", "/admin/reports/[caseId]",
   "/notifications",
 ];
 

@@ -5,6 +5,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { noCapabilities } from "@/auth/capabilities";
 import { VisibilityAction } from "./visibility-action";
 import { RestrictedMarkdown } from "@/components/markdown/RestrictedMarkdown";
+import { ReportButton } from "@/components/report/ReportButton";
 import type { ResponseKind, ResponseView } from "@/qa/responses";
 import { formatDateTime } from "../labels";
 import { DeleteConfirm } from "./delete-confirm";
@@ -246,7 +247,7 @@ function ResponseItem({ response, childrenOf, depth, questionId, forms, onSaved,
               onReload={() => onReload(response.id)} />
           ) : <RestrictedMarkdown source={response.content.bodyMarkdown} headingLevel={3} />}
           {!editing && (response.capabilities.canRespond || response.capabilities.canEdit
-            || response.capabilities.canDelete || response.capabilities.canHide || response.capabilities.canRestore) ? (
+            || response.capabilities.canDelete || response.capabilities.canHide || response.capabilities.canRestore || response.capabilities.canReport) ? (
             <div className={styles.actions}>
               {response.capabilities.canRespond ? (
                 <button className={styles.textButton} type="button" aria-expanded={responding}
@@ -271,6 +272,10 @@ function ResponseItem({ response, childrenOf, depth, questionId, forms, onSaved,
                 <VisibilityAction target="response" id={response.id} kind={kind} version={response.version}
                   visibility={response.capabilities.canHide ? "hidden" : "public"}
                   onChanged={() => onReload(response.id)} />
+              ) : null}
+              {response.capabilities.canReport ? (
+                <ReportButton type="response" id={response.id} kind={kind}
+                  label={`${response.author.displayName}：${excerpt(response.content.bodyMarkdown)}`} />
               ) : null}
             </div>
           ) : null}

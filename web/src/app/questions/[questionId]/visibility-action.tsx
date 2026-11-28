@@ -11,12 +11,13 @@ type Reply = {
   error?: { code: string; fields?: { path: string }[] };
 };
 
-export function VisibilityAction({ target, id, kind, version, visibility, onChanged }: {
+export function VisibilityAction({ target, id, kind, version, visibility, sourceCaseId, onChanged }: {
   target: "question" | "response";
   id: string;
   kind: string;
   version: number;
   visibility: Visibility;
+  sourceCaseId?: string;
   onChanged?: () => Promise<boolean>;
 }) {
   const router = useRouter();
@@ -61,7 +62,7 @@ export function VisibilityAction({ target, id, kind, version, visibility, onChan
     inFlight.current = true;
     setSending(true);
     setError("");
-    const body = JSON.stringify({ expectedVersion: version, visibility, reason: reason.trim() });
+    const body = JSON.stringify({ expectedVersion: version, visibility, reason: reason.trim(), sourceCaseId });
     const key = pending.current?.body === body ? pending.current.key : crypto.randomUUID();
     pending.current = { body, key };
     try {
@@ -92,7 +93,7 @@ export function VisibilityAction({ target, id, kind, version, visibility, onChan
       pending.current = null;
       if (result.error.fields?.some(({ path }) => path === "reason")) {
         setInputError(`${reasonLabel}を確認してください。`);
-      } else if (["VERSION_CONFLICT", "STATE_CONFLICT"].includes(result.error.code)) {
+      } else if (["VERSION_CONFLICT", "STATE_CONFLICT", "CASE_CLOSED"].includes(result.error.code)) {
         setError("投稿が更新されています。画面を再読込して、最新の状態を確認してください。");
       } else if ([401, 403, 404].includes(response.status)) {
         setError("現在この投稿の公開状態を変更できません。");

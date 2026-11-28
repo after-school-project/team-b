@@ -7,6 +7,7 @@ import { canWriteContent } from "@/auth/access";
 import type { ScreenSearchParams } from "@/auth/screen";
 import { AppShell } from "@/components/app-shell/AppShell";
 import { requireAppScreen } from "@/components/app-shell/screen";
+import { ReportButton } from "@/components/report/ReportButton";
 import { readForScreen } from "@/db/screen-read";
 import { loadQuestion, type QuestionView } from "@/qa/questions";
 import { listResponses } from "@/qa/responses";
@@ -63,7 +64,7 @@ export default async function QuestionPage({ params, searchParams }: {
           <QuestionDetail question={question} />
         </div>
         {question.content !== null && (question.capabilities.canEdit || question.capabilities.canDelete
-          || question.capabilities.canResolve || question.capabilities.canHide || question.capabilities.canRestore) ? (
+          || question.capabilities.canResolve || question.capabilities.canHide || question.capabilities.canRestore || question.capabilities.canReport) ? (
           <div className={styles.ownerActions}>
             {question.capabilities.canResolve && question.version !== null ? (
               <ResolutionToggle questionId={question.id} version={question.version} resolution={question.resolution} />
@@ -77,6 +78,7 @@ export default async function QuestionPage({ params, searchParams }: {
               <VisibilityAction target="question" id={question.id} kind="質問" version={question.version}
                 visibility={question.capabilities.canHide ? "hidden" : "public"} />
             ) : null}
+            {question.capabilities.canReport ? <ReportButton type="question" id={question.id} label={question.content.title} /> : null}
           </div>
         ) : null}
         <section className={styles.responses} aria-labelledby="question-responses">

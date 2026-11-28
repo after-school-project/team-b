@@ -6,8 +6,10 @@ import { ApiError } from "@/api/response";
 import type { ScreenSearchParams } from "@/auth/screen";
 import { AppShell } from "@/components/app-shell/AppShell";
 import { requireAppScreen } from "@/components/app-shell/screen";
+import { ReportButton } from "@/components/report/ReportButton";
 import { readForScreen } from "@/db/screen-read";
 import { loadUserProfile, type HiddenProfile, type PublicProfile } from "@/profile/public-profile";
+import { findReportableUser } from "@/reports/target-access";
 import styles from "./page.module.css";
 
 export const metadata: Metadata = { title: "プロフィール" };
@@ -26,8 +28,14 @@ export default async function UserProfilePage({ params, searchParams }: {
   if (!userIdSchema.safeParse(userId).success) notFound();
 
   let profile: PublicProfile | HiddenProfile;
+  let canReportAccount: boolean;
   try {
-    profile = await readForScreen((db) => loadUserProfile(db, viewer, userId));
+    ({ profile, canReportAccount } = await readForScreen(async (db) => {
+      const profile = await loadUserProfile(db, viewer, userId);
+      const canReportAccount = profile.state === "public" ? profile.capabilities.canReport
+        : Boolean(await findReportableUser(db, viewer.userId, userId, false));
+      return { profile, canReportAccount };
+    }));
   } catch (error) {
     if (error instanceof ApiError && error.code === "NOT_FOUND") notFound();
     throw error;
@@ -89,6 +97,13 @@ export default async function UserProfilePage({ params, searchParams }: {
           </>
         )}
 
+        {canReportAccount ? (
+          <div className={styles.reportActions}>
+            {profile.state === "public" ? <ReportButton type="profile" id={profile.userId} label={profile.fields.displayName} /> : null}
+            <ReportButton type="account" id={profile.userId}
+              label={profile.state === "public" ? profile.fields.displayName : profile.userId} />
+          </div>
+        ) : null}
         {own ? (
           <section className={styles.ownNotice}>
             <p>

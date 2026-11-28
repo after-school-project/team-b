@@ -11,6 +11,7 @@ import { isOwner } from "@/auth/ownership";
 import { visibleQuestion, visibleResponse } from "@/auth/visibility";
 import { qaQuestions, qaResponses } from "@/db/content-schema";
 import { communityUsers, qaCategories } from "@/db/schema";
+import { canReportOther } from "@/reports/target-access";
 
 /**
  * Q&Aのカテゴリー・質問の一覧・検索・詳細（API-QA-01・02・04、画面ID QA-01・QA-02）。Issue #9 ①③。
@@ -47,7 +48,7 @@ export type QuestionListItem = {
 /** API設計書 §5 QuestionView。閲覧できない内容は null。 */
 export type QuestionView = {
   id: string;
-  capabilities: CapabilitySet;
+  capabilities: CapabilitySet & { canReport?: true };
 } & ({
   publicationState: "public" | "hidden";
   content: { title: string; bodyMarkdown: string; category: Category };
@@ -213,6 +214,8 @@ export async function loadQuestion(reader: AccessReader, viewer: Viewer, questio
       canResolve: own && canWriteContent(viewer),
       canHide: manageable && publicationState === "public",
       canRestore: manageable && publicationState === "hidden",
+      ...(publicationState === "public" && canReportOther(viewer.userId, row.authorId, row.authorSchoolManager)
+        ? { canReport: true as const } : {}),
     },
   };
 }

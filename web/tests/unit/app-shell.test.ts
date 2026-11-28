@@ -22,6 +22,7 @@ import { AppShell, type AppShellProps } from "@/components/app-shell/AppShell";
 import {
   ACCOUNT_NAV_ITEMS,
   ADMIN_NAV_ITEM,
+  ADMIN_REPORTS_NAV_ITEM,
   NOTIFICATION_NAV_ITEM,
   PRIMARY_NAV_ITEMS,
   formatUnreadCount,
@@ -105,6 +106,7 @@ describe("導線の実装状況", () => {
     for (const item of [...PRIMARY_NAV_ITEMS, ...ACCOUNT_NAV_ITEMS, NOTIFICATION_NAV_ITEM, ADMIN_NAV_ITEM]) {
       expect(actual.isNavItemAvailable(item), item.href).toBe(implementedNavHrefs.has(item.href));
     }
+    expect(actual.isNavItemAvailable(ADMIN_REPORTS_NAV_ITEM)).toBe(true);
   });
 });
 
@@ -126,10 +128,11 @@ describe("AppShell（未実装の画面がある状態）", () => {
     expect(html).toContain("（</span>準備中<span");
   });
 
-  it("管理エリアが未実装でも、有効な管理者には導線を「準備中」として表示する", () => {
+  it("管理ホームが未実装の間は、有効な管理者を通報案件へ案内する", () => {
     const admin = renderShell({ canAccessAdmin: true });
     expect(admin).toContain(ADMIN_NAV_ITEM.label);
     expect(admin).not.toContain('href="/admin"');
+    expect(admin).toContain('href="/admin/reports"');
 
     expect(renderShell({ canAccessAdmin: false })).not.toContain(ADMIN_NAV_ITEM.label);
   });

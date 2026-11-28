@@ -1,20 +1,14 @@
 import { and, eq, inArray, or } from "drizzle-orm";
 import type { AccessReader, Viewer } from "@/auth/access";
-import { qaQuestions, qaResponses } from "@/db/content-schema";
 import { reportActions, reportCases, reportTargets } from "@/db/moderation-schema";
-import { communityUsers } from "@/db/schema";
+import { requireViewableCase } from "@/reports/case-access";
 import { lockedCaseTime, type CaseWriter } from "./report-evidence";
 import { ApiError } from "./response";
 
 /**
  * 通報案件を起点にした措置（`sourceCaseId`。API設計書 §11・§12）。案件の閲覧権限・未終了・対象の一致を確認し、
  * 措置を案件の対応履歴に同じトランザクションで記録する。
- *
- * 案件の一覧・詳細・状態変更などは #15 で実装する。ここでは措置を案件に記録するために必要な判定だけを行う。
  */
-
-/** 案件の閲覧期限（終了からの年数）。API設計書 §13。 */
-const closedCaseRetentionYears = 1;
 
 /** 案件の対応履歴に残す措置と、変更前後に記録する項目。 */
 export type CaseMeasure =
@@ -48,37 +42,7 @@ type CaseAccess = { actor: Pick<Viewer, "roles">; caseId: string; now: Date };
  * 再送（`authorizeReplay`）でも使う。確定済みの操作の結果を返すため、対応済みかどうかはここでは判定しない。
  */
 export async function requireViewableMeasureCase(tx: CaseWriter, input: CaseAccess) {
-  const [row] = await tx.select({
-    id: reportCases.id,
-    status: reportCases.status,
-    schoolOnly: reportCases.schoolOnly,
-    handoffPending: reportCases.handoffPending,
-    closedAt: reportCases.closedAt,
-    subjectUserId: reportTargets.subjectUserId,
-    questionId: reportTargets.questionId,
-    responseId: reportTargets.responseId,
-    questionAuthorId: qaQuestions.authorId,
-    responseAuthorId: qaResponses.authorId,
-  }).from(reportCases)
-    .innerJoin(reportTargets, eq(reportTargets.id, reportCases.targetId))
-    .leftJoin(qaQuestions, eq(qaQuestions.id, reportTargets.questionId))
-    .leftJoin(qaResponses, eq(qaResponses.id, reportTargets.responseId))
-    .where(eq(reportCases.id, input.caseId));
-  if (!row) throw new ApiError("NOT_FOUND");
-  const subjectUserId = row.subjectUserId ?? row.questionAuthorId ?? row.responseAuthorId;
-
-  if (row.closedAt) {
-    const expiresAt = new Date(row.closedAt);
-    expiresAt.setUTCFullYear(expiresAt.getUTCFullYear() + closedCaseRetentionYears);
-    if (expiresAt <= input.now) throw new ApiError("NOT_FOUND");
-  }
-  if (!input.actor.roles.schoolManager) {
-    if (row.schoolOnly || row.handoffPending) throw new ApiError("NOT_FOUND");
-    const [subject] = subjectUserId === null ? [] : await tx.select({ appManager: communityUsers.appManager })
-      .from(communityUsers).where(eq(communityUsers.userId, subjectUserId));
-    if (subject?.appManager) throw new ApiError("NOT_FOUND");
-  }
-  return { id: row.id, status: row.status, subjectUserId, questionId: row.questionId, responseId: row.responseId };
+  return requireViewableCase(tx, input.actor, input.caseId, input.now);
 }
 
 /** Q&Aの措置は、同じ投稿者の別の投稿ではなく、案件の対象投稿だけに記録する。 */
