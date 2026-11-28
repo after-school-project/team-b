@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { expect, test, type Page } from "@playwright/test";
-import { createAnswer, createQuestions, removeQuestionReports, removeQuestions, userIdOf } from "./database";
+import {
+  createAnswer, createProfileReportCase, createQuestions, removeProfileReportCase, removeQuestionReports, removeQuestions, userIdOf,
+} from "./database";
 import { canonicalOrigin, signIn } from "./session";
 
 test.use({ trace: "off", screenshot: "off", video: "off" });
@@ -76,6 +78,7 @@ test("Issue #15 モバイル幅で通報の最終確認から案件対応・証�
     await admin.goto("/");
     await admin.getByRole("button", { name: "メニュー", exact: true }).click();
     await admin.getByRole("link", { name: "管理エリアへ" }).click();
+    await admin.getByRole("link", { name: "未対応の通報" }).click();
     await expect(admin.getByRole("heading", { name: "通報案件", exact: true })).toBeVisible();
     const status = admin.getByRole("combobox", { name: "対応状態" });
     await expect(status).toHaveValue("unhandled");
@@ -114,6 +117,37 @@ test("Issue #15 モバイル幅で通報の最終確認から案件対応・証�
     await admin.close();
     await removeQuestionReports(questionId);
     await removeQuestions(marker);
+  }
+});
+
+test("Issue #16 通報案件からプロフィールを非表示にすると、案件の対応履歴と版番号が更新される", async ({ page, baseURL }) => {
+  const userId = `e2e-report-profile-${randomUUID()}`;
+  const caseId = await createProfileReportCase(userId);
+  const caseApi = `/api/v1/admin/report-cases/${caseId}`;
+  try {
+    await page.setViewportSize({ width: 375, height: 812 });
+    await signIn(page, baseURL!, "poc_school");
+    await useCanonicalOrigin(page, baseURL!, "**/api/v1/admin/users/*/profile-hiding");
+    const before = await page.request.get(caseApi);
+    expect(before.ok()).toBe(true);
+    const { data: { version } } = await before.json();
+
+    await page.goto(`/admin/reports/${caseId}`);
+    await page.getByRole("link", { name: "対象者の管理を開く" }).press("Enter");
+    await page.getByRole("textbox", { name: /非表示の理由/ }).fill("プロフィールへの通報を確認しました。");
+    await page.getByRole("button", { name: "プロフィールを非表示にする" }).press("Enter");
+    const dialog = page.getByRole("dialog", { name: "プロフィールを非表示にしますか？" });
+    await dialog.getByRole("button", { name: "非表示にする" }).press("Enter");
+    await expect(page.getByRole("status").filter({ hasText: "プロフィールを非表示にしました。" })).toBeFocused();
+    await page.getByRole("link", { name: "通報案件へ" }).press("Enter");
+    const history = page.getByRole("region", { name: /^対応履歴/ });
+    await expect(history.getByText("プロフィールを非表示", { exact: true })).toHaveCount(1);
+
+    const after = await page.request.get(caseApi);
+    expect(after.ok()).toBe(true);
+    expect(await after.json()).toMatchObject({ data: { version: version + 1 } });
+  } finally {
+    await removeProfileReportCase(userId);
   }
 });
 

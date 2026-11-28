@@ -182,18 +182,60 @@ export async function removeQuestions(marker: string, username?: string) {
   });
 }
 
+/** テスト対象に紐づく案件と証拠を、呼び出し元のトランザクションで片付ける。 */
+async function removeReports(client: Client, column: "question_id" | "subject_user_id", id: string) {
+  const targets = `SELECT id FROM report_targets WHERE ${column} = $1`;
+  const cases = `SELECT id FROM report_cases WHERE target_id IN (${targets})`;
+  for (const table of ["report_case_evidence", "report_actions", "reports"]) {
+    await client.query(`DELETE FROM ${table} WHERE case_id IN (${cases})`, [id]);
+  }
+  await client.query(`DELETE FROM report_cases WHERE target_id IN (${targets})`, [id]);
+  await client.query(`DELETE FROM evidence_snapshots WHERE target_id IN (${targets})`, [id]);
+  await client.query(`DELETE FROM report_targets WHERE ${column} = $1`, [id]);
+}
+
 /** テストで作った質問への通報と証拠を片付ける。監査ログはアプリ用ロールでは消去できない。 */
 export async function removeQuestionReports(questionId: string) {
-  const targets = "SELECT id FROM report_targets WHERE question_id = $1";
-  const cases = `SELECT id FROM report_cases WHERE target_id IN (${targets})`;
   await withDatabase(async (client) => {
     await client.query("BEGIN");
-    for (const table of ["report_case_evidence", "report_actions", "reports"]) {
-      await client.query(`DELETE FROM ${table} WHERE case_id IN (${cases})`, [questionId]);
-    }
-    await client.query(`DELETE FROM report_cases WHERE target_id IN (${targets})`, [questionId]);
-    await client.query(`DELETE FROM evidence_snapshots WHERE target_id IN (${targets})`, [questionId]);
-    await client.query("DELETE FROM report_targets WHERE question_id = $1", [questionId]);
+    await removeReports(client, "question_id", questionId);
+    await client.query("COMMIT");
+  });
+}
+
+/** 非表示操作を確認するために独立したプロフィールと通報案件を作る。 */
+export async function createProfileReportCase(userId: string) {
+  return withDatabase(async (client) => {
+    await client.query("BEGIN");
+    await client.query('INSERT INTO "user" (id, name, email) VALUES ($1, $2, $3)',
+      [userId, "通報案件の検証用利用者", `${userId}@example.invalid`]);
+    await client.query(`INSERT INTO community_users (user_id, base_role, eligibility_status, provisioning_status)
+      VALUES ($1, 'student', 'verified', 'ready')`, [userId]);
+    await client.query(`WITH revision AS (
+      INSERT INTO profile_revisions (user_id, revision_no, display_name) VALUES ($1, 1, $2) RETURNING id
+    ) INSERT INTO profiles (user_id, current_revision_id) SELECT $1, id FROM revision`, [userId, "通報案件の検証用利用者"]);
+    const { rows: [report] } = await client.query<{ case_id: string }>(`WITH target AS (
+      INSERT INTO report_targets (kind, subject_user_id) VALUES ('profile', $1) RETURNING id
+    ), created AS (
+      INSERT INTO report_cases (target_id, assignee_id)
+      SELECT target.id, "user".id FROM target CROSS JOIN "user" WHERE username = 'poc_school' RETURNING id
+    ) INSERT INTO reports (case_id, reporter_id, reason_code)
+      SELECT created.id, "user".id, 'personal_information' FROM created CROSS JOIN "user"
+      WHERE username = 'poc_s002' RETURNING case_id`, [userId]);
+    await client.query("COMMIT");
+    return report.case_id;
+  });
+}
+
+export async function removeProfileReportCase(userId: string) {
+  await withDatabase(async (client) => {
+    await client.query("BEGIN");
+    await removeReports(client, "subject_user_id", userId);
+    await client.query("DELETE FROM notifications WHERE recipient_id = $1", [userId]);
+    await client.query("DELETE FROM profiles WHERE user_id = $1", [userId]);
+    await client.query("DELETE FROM profile_revisions WHERE user_id = $1", [userId]);
+    await client.query("DELETE FROM community_users WHERE user_id = $1", [userId]);
+    await client.query('DELETE FROM "user" WHERE id = $1', [userId]);
     await client.query("COMMIT");
   });
 }

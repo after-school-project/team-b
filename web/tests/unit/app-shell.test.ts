@@ -22,7 +22,6 @@ import { AppShell, type AppShellProps } from "@/components/app-shell/AppShell";
 import {
   ACCOUNT_NAV_ITEMS,
   ADMIN_NAV_ITEM,
-  ADMIN_REPORTS_NAV_ITEM,
   NOTIFICATION_NAV_ITEM,
   PRIMARY_NAV_ITEMS,
   formatUnreadCount,
@@ -33,7 +32,7 @@ import { EmptyState, ErrorState, LoadingState } from "@/components/feedback/Stat
 
 /** 共通ナビの導線のうち、実装済みの画面（`implementedScreenRoutes`）。ほかは「準備中」として押せない状態にする。 */
 const implementedNavHrefs = new Set([
-  "/", "/questions", "/notices", "/events", "/alumni", "/me/profile", "/me/questions", "/me/notices", "/notifications",
+  "/", "/questions", "/notices", "/events", "/alumni", "/me/profile", "/me/questions", "/me/notices", "/notifications", "/admin",
 ]);
 
 /** `viewerUnread` は `requireAppScreen` がサーバーで数えた件数、`unread` は開発用プレビューが渡す仮の件数。 */
@@ -106,7 +105,6 @@ describe("導線の実装状況", () => {
     for (const item of [...PRIMARY_NAV_ITEMS, ...ACCOUNT_NAV_ITEMS, NOTIFICATION_NAV_ITEM, ADMIN_NAV_ITEM]) {
       expect(actual.isNavItemAvailable(item), item.href).toBe(implementedNavHrefs.has(item.href));
     }
-    expect(actual.isNavItemAvailable(ADMIN_REPORTS_NAV_ITEM)).toBe(true);
   });
 });
 
@@ -118,7 +116,9 @@ describe("AppShell（未実装の画面がある状態）", () => {
 
   it("実装済みの画面だけをリンクにし、未実装の画面は押せない「準備中」として表示する", () => {
     const html = renderShell({ canAccessAdmin: false });
-    for (const href of implementedNavHrefs) expect(html).toContain(`href="${href}"`);
+    for (const href of implementedNavHrefs) {
+      if (href !== ADMIN_NAV_ITEM.href) expect(html).toContain(`href="${href}"`);
+    }
     for (const item of [...PRIMARY_NAV_ITEMS, ...ACCOUNT_NAV_ITEMS, NOTIFICATION_NAV_ITEM]) {
       if (implementedNavHrefs.has(item.href)) continue;
       expect(html).not.toContain(`href="${item.href}"`);
@@ -128,11 +128,10 @@ describe("AppShell（未実装の画面がある状態）", () => {
     expect(html).toContain("（</span>準備中<span");
   });
 
-  it("管理ホームが未実装の間は、有効な管理者を通報案件へ案内する", () => {
+  it("有効な管理者に管理ホームの導線を表示する", () => {
     const admin = renderShell({ canAccessAdmin: true });
     expect(admin).toContain(ADMIN_NAV_ITEM.label);
-    expect(admin).not.toContain('href="/admin"');
-    expect(admin).toContain('href="/admin/reports"');
+    expect(admin).toContain('href="/admin"');
 
     expect(renderShell({ canAccessAdmin: false })).not.toContain(ADMIN_NAV_ITEM.label);
   });

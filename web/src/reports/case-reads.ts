@@ -4,9 +4,8 @@ import { z } from "zod";
 import { createCursorCodec, cursorTimestamp, parseListQuery, queryListPage } from "@/api/pagination";
 import { userId, uuid } from "@/api/request";
 import { ApiError } from "@/api/response";
-import { loadAccessState, requireActive, type AccessReader, type Viewer } from "@/auth/access";
+import type { AccessReader, Viewer } from "@/auth/access";
 import { requireAdmin } from "@/auth/admin";
-import type { db } from "@/db/client";
 import { evidenceSnapshots, reportActions, reportCaseEvidence, reportCases, reports, reportTargets } from "@/db/moderation-schema";
 import { communityUsers, profileRevisions, profiles } from "@/db/schema";
 import {
@@ -14,17 +13,7 @@ import {
 } from "./case-access";
 import { casePriorities, caseStatuses, reportTargetTypes } from "./labels";
 
-/** 案件の認可・証拠の削除状態・一覧の件数を、同じDBスナップショットで確認する。 */
-export function readCases<T>(database: Pick<typeof db, "transaction">, actorId: string,
-  read: (reader: AccessReader, viewer: Viewer) => Promise<T>,
-  scope: "any" | "school" = "any",
-): Promise<T> {
-  return database.transaction(async (tx) => {
-    const viewer = requireActive(await loadAccessState(tx, actorId));
-    requireAdmin(viewer, scope);
-    return read(tx, viewer);
-  }, { isolationLevel: "repeatable read", accessMode: "read only" });
-}
+export { readAdmin as readCases } from "@/auth/admin";
 
 export function parseCaseList(url: URL, handoffs = false) {
   return parseListQuery(url, {
@@ -103,6 +92,7 @@ const actionState = z.object({
   status: z.enum(caseStatuses), priority: z.enum(casePriorities), assigneeId: userId.nullable(), handoffPending: z.boolean(),
   trigger: z.enum(["manager_profile_hidden", "manager_suspended", "manager_role_revoked", "target_deleted", "subject_became_app_manager"]),
   profileState: z.enum(["public", "hidden"]), publicationState: z.enum(["public", "hidden"]), schoolOnly: z.boolean(),
+  accountStatus: z.enum(["active", "suspended"]),
 }).partial();
 
 function projectActionState(value: unknown) {

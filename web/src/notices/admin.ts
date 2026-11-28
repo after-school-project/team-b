@@ -43,6 +43,17 @@ function canReview(viewer: Viewer, row: {
   return row.request.status === "pending" && row.deletedAt === null && viewer.userId !== row.authorId;
 }
 
+export async function countPendingNoticeReviews(reader: AccessReader, viewer: Viewer) {
+  const [row] = await reader.select({ total: count() }).from(noticeRequests)
+    .innerJoin(notices, eq(notices.id, noticeRequests.noticeId))
+    .where(and(eq(notices.originKind, "alumni"), eq(noticeRequests.status, "pending"),
+      isNull(notices.deletedAt), ne(notices.authorId, viewer.userId), or(
+        and(eq(noticeRequests.requestKind, "new"), isNull(notices.publicRevisionId)),
+        and(eq(noticeRequests.requestKind, "edit"), isNotNull(notices.publicRevisionId)),
+      )));
+  return row.total;
+}
+
 export async function listAdminNoticeRequests(
   reader: AccessReader,
   viewer: Viewer,
