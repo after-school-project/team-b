@@ -94,16 +94,17 @@ type LockedContext = { tx: AccessReader; requireLockedUsers: (...ids: string[]) 
  * - 対象者がアプリ管理者なら学校管理者のみ。足りなければ 403 FORBIDDEN。
  * - 実行者の権限は、入口通過前の Viewer ではなく、ロック後に読み直した最新状態で判定する。
  *
- * 操作ごとの条件（学校管理者を対象にできない、自己操作の禁止など）に使えるよう、対象者の管理権限を返す。
+ * 操作ごとの追加条件に使えるよう、認可に使った実行者の Viewer と対象者の管理権限を返す。
  */
 export async function requireAdminForLockedTarget(
   { tx, requireLockedUsers }: LockedContext,
   actorId: string,
   targetUserId: string,
-): Promise<TargetRoles> {
+): Promise<{ actor: Viewer; target: TargetRoles }> {
   requireLockedUsers(targetUserId);
   const target = await loadTargetRoles(tx, targetUserId);
   if (!target) throw new ApiError("NOT_FOUND");
-  requireAdmin(requireActive(await loadAccessState(tx, actorId)), scopeForTarget(target));
-  return target;
+  const actor = requireActive(await loadAccessState(tx, actorId));
+  requireAdmin(actor, scopeForTarget(target));
+  return { actor, target };
 }

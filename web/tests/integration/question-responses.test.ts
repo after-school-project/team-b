@@ -455,7 +455,10 @@ describe("API-QA-07・09 回答・コメント・返信の取得（AC-05・AC-06
     for (const viewer of ["poc_a001", "poc_school", "poc_s_mgr"]) {
       expect((await getOne(viewer, hiddenId)).body.data, viewer).toMatchObject({
         publicationState: "hidden", content: { bodyMarkdown: "秘密の本文" }, version: 1,
-        capabilities: { ...noCapabilities, canEdit: viewer === "poc_a001", canDelete: viewer === "poc_a001" },
+        capabilities: {
+          ...noCapabilities, canEdit: viewer === "poc_a001", canDelete: viewer === "poc_a001",
+          canRestore: viewer !== "poc_a001",
+        },
       });
     }
     // アプリ管理者の投稿は、本人と学校管理者だけ。

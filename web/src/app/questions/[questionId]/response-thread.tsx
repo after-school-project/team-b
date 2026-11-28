@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { noCapabilities } from "@/auth/capabilities";
+import { VisibilityAction } from "./visibility-action";
 import { RestrictedMarkdown } from "@/components/markdown/RestrictedMarkdown";
 import type { ResponseKind, ResponseView } from "@/qa/responses";
 import { formatDateTime } from "../labels";
@@ -198,7 +199,7 @@ function ResponseItem({ response, childrenOf, depth, questionId, forms, onSaved,
   questionId: string;
   forms: FormControls;
   onSaved: (view: ResponseView | null, responseId: string) => void;
-  onReload: (responseId: string) => void;
+  onReload: (responseId: string) => Promise<boolean>;
   onDeleted: (response: ResponseView) => void;
 }) {
   const { open, openForm, closeForm } = forms;
@@ -245,7 +246,7 @@ function ResponseItem({ response, childrenOf, depth, questionId, forms, onSaved,
               onReload={() => onReload(response.id)} />
           ) : <RestrictedMarkdown source={response.content.bodyMarkdown} headingLevel={3} />}
           {!editing && (response.capabilities.canRespond || response.capabilities.canEdit
-            || response.capabilities.canDelete) ? (
+            || response.capabilities.canDelete || response.capabilities.canHide || response.capabilities.canRestore) ? (
             <div className={styles.actions}>
               {response.capabilities.canRespond ? (
                 <button className={styles.textButton} type="button" aria-expanded={responding}
@@ -266,9 +267,14 @@ function ResponseItem({ response, childrenOf, depth, questionId, forms, onSaved,
                   }は削除されず、そのまま表示されます。`}
                   onDeleted={() => onDeleted(response)} />
               ) : null}
+              {response.capabilities.canHide || response.capabilities.canRestore ? (
+                <VisibilityAction target="response" id={response.id} kind={kind} version={response.version}
+                  visibility={response.capabilities.canHide ? "hidden" : "public"}
+                  onChanged={() => onReload(response.id)} />
+              ) : null}
             </div>
           ) : null}
-          {responding ? (
+          {responding && response.capabilities.canRespond ? (
             <ResponseForm key={open.token} questionId={questionId}
               create={{ kind: child.kind, parentResponseId: response.id }} label={`${kindLabels[child.kind]}の本文`}
               onSaved={savedFrom(open.token)} onCancel={() => closeForm(open.token)} />
@@ -424,8 +430,15 @@ export function ResponseThread({ questionId, initial, canAnswer, unavailableReas
 
   async function reload(responseId: string) {
     const view = await fetchResponse(responseId);
-    if (view) replace(view);
-    else setLoadError("読み込めませんでした。もう一度お試しください。");
+    if (!view) {
+      setLoadError("読み込めませんでした。もう一度お試しください。");
+      return false;
+    }
+    if (!view.capabilities.canRespond) {
+      setOpen((current) => current?.mode === "respond" && current.id === responseId ? null : current);
+    }
+    replace(view);
+    return true;
   }
 
   async function loadMore() {

@@ -168,7 +168,7 @@ export async function createAnswers(questionId: string, username: string, bodies
   });
 }
 
-/** 目印の付いた質問を消す。質問に付いた回答・コメント・返信と、それらの通知も先に消す。 */
+/** 目印の付いた質問を消す。回答等と、質問・回答等への通知も先に消す。 */
 export async function removeQuestions(marker: string, username?: string) {
   const questions = `SELECT id FROM qa_questions WHERE right(body_markdown, length($1)) = $1
       AND (($2::text IS NULL AND author_label = 'e2eの投稿者名')
@@ -176,7 +176,7 @@ export async function removeQuestions(marker: string, username?: string) {
   const responses = `SELECT id FROM qa_responses WHERE question_id IN (${questions})`;
   await withDatabase(async (client) => {
     const values = [marker, username ?? null];
-    await client.query(`DELETE FROM notifications WHERE qa_response_id IN (${responses})`, values);
+    await client.query(`DELETE FROM notifications WHERE qa_question_id IN (${questions}) OR qa_response_id IN (${responses})`, values);
     await client.query(`DELETE FROM qa_responses WHERE id IN (${responses})`, values);
     await client.query(`DELETE FROM qa_questions WHERE id IN (${questions})`, values);
   });

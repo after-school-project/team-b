@@ -211,6 +211,8 @@ export async function loadQuestion(reader: AccessReader, viewer: Viewer, questio
       canRespond: canWriteContent(viewer) && publicationState === "public",
       // 解決状態の変更は、質問者本人かつプロフィール公開中（API-QA-12）。強制非表示中も変更できる。
       canResolve: own && canWriteContent(viewer),
+      canHide: manageable && publicationState === "public",
+      canRestore: manageable && publicationState === "hidden",
     },
   };
 }

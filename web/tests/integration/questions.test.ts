@@ -461,7 +461,7 @@ describe("API-QA-04 質問の詳細", () => {
     content: null, author: null, resolution: null, version: null, createdAt: null, updatedAt: null, capabilities: noCapabilities,
   };
 
-  it("AC-05 公開中の質問の内容を返す。編集・削除・解決状態の変更は本人だけに示し、ほかの操作は本人・管理者にも示さない", async () => {
+  it("AC-05 公開中の質問の内容を返す。編集・削除・解決状態の変更は本人だけ、非表示は管理者だけに示す", async () => {
     const questionId = await addQuestion({ title: "題名B", body: "# 見出し", category: "chat" });
     const view = async (viewer: string) => (await getQuestion(viewer, questionId)).body.data!;
     const respondable = { ...noCapabilities, canRespond: true };
@@ -474,7 +474,7 @@ describe("API-QA-04 質問の詳細", () => {
     });
     expect((await view("poc_s001")).capabilities).toEqual({ ...respondable, canEdit: true, canDelete: true, canResolve: true });
     for (const viewer of ["poc_school", "poc_s_mgr"]) {
-      expect((await view(viewer)).capabilities, viewer).toEqual(respondable);
+      expect((await view(viewer)).capabilities, viewer).toEqual({ ...respondable, canHide: true });
     }
     // プロフィール非表示中は回答・コメントできない（AC-08）。
     expect((await view("poc_hidden")).capabilities).toEqual(noCapabilities);
@@ -516,7 +516,7 @@ describe("API-QA-04 質問の詳細", () => {
     });
     for (const viewer of ["poc_school", "poc_s_mgr", "poc_staff_mgr"]) {
       expect((await getQuestion(viewer, questionId)).body.data).toMatchObject({
-        publicationState: "hidden", content, capabilities: noCapabilities,
+        publicationState: "hidden", content, capabilities: { ...noCapabilities, canRestore: true },
       });
     }
   });

@@ -97,6 +97,8 @@ function toResponseView(viewer: Viewer, row: ResponseRow): ResponseView {
       canEdit: own && writable,
       canDelete: own,
       canRespond: writable && publicationState === "public",
+      canHide: manageable && publicationState === "public",
+      canRestore: manageable && publicationState === "hidden",
     },
   };
 }
