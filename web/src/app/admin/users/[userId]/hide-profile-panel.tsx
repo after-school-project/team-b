@@ -17,7 +17,7 @@ const unavailableMessages: Record<Exclude<ProfileHidingAvailability, "available"
 };
 
 /** AD-11 のプロフィール非表示の操作。許可される場合だけ入力欄とボタンを表示する。 */
-export function HideProfilePanel({ userId, displayName, version, appManager, availability }: {
+export function HideProfilePanel({ userId, displayName, version, appManager, availability, sourceCaseId }: {
   userId: string;
   /** 公開表示名。非表示中は null（非表示にできる場合は必ずある）。 */
   displayName: string | null;
@@ -25,6 +25,7 @@ export function HideProfilePanel({ userId, displayName, version, appManager, ava
   version: number;
   appManager: boolean;
   availability: ProfileHidingAvailability;
+  sourceCaseId?: string;
 }) {
   const router = useRouter();
   const id = useId();
@@ -60,7 +61,7 @@ export function HideProfilePanel({ userId, displayName, version, appManager, ava
 
   async function onConfirm() {
     setConfirming(false);
-    const outcome = await submit({ expectedVersion: version, reason });
+    const outcome = await submit({ expectedVersion: version, reason, sourceCaseId });
     if (!outcome) return;
     if (outcome.kind === "done") {
       setHiddenFrom(version);

@@ -117,6 +117,7 @@ export default async function AdminUserPage({ params, searchParams }: {
           version={user.version}
           appManager={user.roles.appManager}
           availability={profileHidingFor(user)}
+          sourceCaseId={source.data}
         />
       </div>
     </AppShell>
