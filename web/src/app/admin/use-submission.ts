@@ -6,7 +6,7 @@ import { submitOutcome, type SubmitOutcome } from "./submit-outcome";
 /**
  * 管理操作の送信。送信中の二重送信を防ぎ、確定したか確認できない間は、同じ内容なら同じ再送キーで送り直す。
  */
-export function useSubmission<State extends string>(url: string, states: readonly State[]) {
+export function useSubmission<State extends string>(url: string, states: readonly State[], method: "POST" | "PATCH" = "POST") {
   const [sending, setSending] = useState(false);
   const sendingRef = useRef(false);
   const pending = useRef<{ body: string; key: string } | null>(null);
@@ -23,7 +23,7 @@ export function useSubmission<State extends string>(url: string, states: readonl
       let outcome: SubmitOutcome<State>;
       try {
         const response = await fetch(url, {
-          method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": key }, body,
+          method, headers: { "Content-Type": "application/json", "Idempotency-Key": key }, body,
         });
         outcome = submitOutcome(response.status, await response.json().catch(() => null), states);
       } catch {

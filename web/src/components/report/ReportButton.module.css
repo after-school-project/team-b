@@ -1,0 +1,108 @@
+.dialog {
+  width: min(100% - 2 * var(--space-4), 32rem);
+  max-height: 90dvh;
+  padding: var(--space-5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  color: var(--color-text);
+  background: var(--color-surface);
+  overflow-wrap: anywhere;
+}
+
+.dialog::backdrop {
+  background: rgb(0 0 0 / 50%);
+}
+
+.content,
+.field,
+.summary {
+  display: grid;
+  gap: var(--space-4);
+  margin: 0;
+}
+
+.field,
+.summary {
+  gap: var(--space-2);
+}
+
+.field label,
+.summary dt {
+  font-weight: 600;
+}
+
+.summary dd {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.heading,
+.text,
+.help,
+.error {
+  margin: 0;
+}
+
+.heading {
+  font-size: 1.25rem;
+}
+
+.help,
+.error {
+  font-size: 0.875rem;
+}
+
+.help {
+  color: var(--color-text-muted);
+}
+
+.error {
+  color: var(--color-danger);
+}
+
+.input {
+  width: 100%;
+  min-height: var(--control-min-size);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-control-border);
+  border-radius: var(--radius-control);
+  color: var(--color-text);
+  background: var(--color-surface);
+  font: inherit;
+}
+
+textarea.input {
+  resize: vertical;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.primary,
+.secondary {
+  min-height: var(--control-min-size);
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--color-control-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface);
+  color: var(--color-primary);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.primary {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-on-primary);
+}
+
+.primary:disabled,
+.secondary:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}

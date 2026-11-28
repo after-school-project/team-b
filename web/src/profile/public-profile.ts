@@ -9,6 +9,7 @@ import {
   type OptionalProfileField, type OptionalProfileFieldView,
 } from "@/auth/visibility";
 import { communityUsers, profileRevisions, profiles } from "@/db/schema";
+import { canReportOther } from "@/reports/target-access";
 
 /**
  * 他の利用者の公開プロフィール（GE-03、API-PRO-03）と卒業生検索（GE-04、API-PRO-04）。Issue #8 ③④。
@@ -70,14 +71,6 @@ function profileSource(reader: AccessReader) {
 
 type ProfileRow = Awaited<ReturnType<ReturnType<typeof profileSource>["execute"]>>[number];
 
-/**
- * 通報の入口を出せるか（MD-01）。本人と学校管理者は通報の対象外（共通認可条件表 §4）。
- * 通報の受付そのものの判定は #15 で行う。
- */
-function canReport(viewer: Viewer, row: Pick<ProfileRow, "userId" | "schoolManager">): boolean {
-  return viewer.userId !== row.userId && !row.schoolManager;
-}
-
 function toPublicProfile(viewer: Viewer, row: ProfileRow): PublicProfile {
   return {
     userId: row.userId,
@@ -92,7 +85,7 @@ function toPublicProfile(viewer: Viewer, row: ProfileRow): PublicProfile {
       // 本人を含め、他人向けの表示では公開を許可した項目だけを返す。
       optionalFields: projectOptionalProfileFields(row, "member"),
     },
-    capabilities: { canReport: canReport(viewer, row) },
+    capabilities: { canReport: canReportOther(viewer, row.userId, row.schoolManager) },
   };
 }
 

@@ -13,6 +13,7 @@ export type SubmitOutcome<State extends string> =
   | { kind: "unconfirmed" }
   /** 対象が更新されたか、処理済み。 */
   | { kind: "conflict" }
+  | { kind: "assignee-ineligible" }
   | { kind: "invalid" }
   | { kind: "unauthenticated" }
   /** 権限がないか、対象を閲覧できない。 */
@@ -31,7 +32,10 @@ export function submitOutcome<State extends string>(
     return { kind: "done", state, resourceId: typeof resourceId === "string" ? resourceId : null };
   }
   if (status >= 500) return { kind: "unconfirmed" };
-  if (status === 409) return { kind: "conflict" };
+  if (status === 409) {
+    const code = (body as { error?: { code?: unknown } } | null)?.error?.code;
+    return { kind: code === "ASSIGNEE_INELIGIBLE" ? "assignee-ineligible" : "conflict" };
+  }
   if (status === 422) return { kind: "invalid" };
   if (status === 401) return { kind: "unauthenticated" };
   if (status === 403 || status === 404) return { kind: "denied" };
@@ -50,6 +54,8 @@ export function outcomeMessage(
       };
     case "conflict":
       return { message: "内容が更新されています。最新の内容を確認してください。", reload: true };
+    case "assignee-ineligible":
+      return { message: "この利用者には担当を割り当てられません。最新の候補を確認してください。", reload: true };
     case "invalid":
       return { message: "入力内容を確認してください。", reload: false };
     case "unauthenticated":

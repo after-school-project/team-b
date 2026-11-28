@@ -1,3 +1,4 @@
+import type { SQL } from "drizzle-orm";
 import { z } from "zod";
 import { auditLogs } from "../db/moderation-schema";
 import type { RecordWriter } from "./notifications";
@@ -41,6 +42,11 @@ export const auditOperations = {
   "graduation.graduated": { targetType: "user", fields: graduationFields },
   /** 卒業区分の誤変更修正（API-GR-03）。 */
   "graduation.corrected": { targetType: "user", fields: graduationFields },
+  /** 対応済みにした案件。内部メモや通報本文は履歴へ分ける。 */
+  "report_case.closed": { targetType: "report_case", fields: {
+    status: z.enum(["unhandled", "in_progress", "closed"]), priority: z.enum(["unset", "normal", "high"]),
+    assigneeId: z.string().min(1).max(128).nullable(), handoffPending: z.boolean(), version,
+  } },
 } as const satisfies Record<string, { targetType: string; fields: Record<string, z.ZodType> }>;
 
 export type AuditAction = keyof typeof auditOperations;
@@ -56,8 +62,8 @@ export type AuditLogInput<A extends AuditAction> = {
   after?: AuditState<A>;
   /** 本人向けに示す理由。内部メモは記録しない。省略・null は理由なし（未入力の理由は null に正規化される）。 */
   publicReason?: string | null;
-  /** 記録時刻。`commitMutation` の `now` を渡す。 */
-  at: Date;
+  /** 記録時刻。`commitMutation` の `now` またはロック後のDB時刻を渡す。 */
+  at: Date | SQL;
 };
 
 function allowedState(action: AuditAction, side: "before" | "after", state: unknown): Record<string, unknown> | null {
@@ -73,7 +79,7 @@ function allowedState(action: AuditAction, side: "before" | "after", state: unkn
   return result.data;
 }
 
-function auditLogValues<A extends AuditAction>(input: AuditLogInput<A>): typeof auditLogs.$inferInsert {
+function auditLogValues<A extends AuditAction>(input: AuditLogInput<A>): Omit<typeof auditLogs.$inferInsert, "createdAt"> & { createdAt: Date | SQL } {
   const reason = input.publicReason?.trim();
   if (typeof input.publicReason === "string" && !reason) {
     throw new Error("監査ログの理由が空です。理由がない場合は省略するか null を渡してください。");

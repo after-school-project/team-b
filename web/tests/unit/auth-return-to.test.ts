@@ -64,6 +64,7 @@ describe("可変パスを含む画面のルート", () => {
       "/events",
       "/notices", "/notices/[noticeId]", "/notices/new", "/me/notices", "/me/notices/[noticeId]/edit",
       "/admin/users/[userId]", "/admin/profile-reviews", "/admin/graduation", "/admin/notices", "/admin/notices/[noticeId]",
+      "/admin/reports", "/admin/reports/[caseId]",
       "/notifications",
     ]);
     expect(resolveReturnTo(`/events/${questionId}`)).toBe("/");
@@ -87,6 +88,8 @@ describe("可変パスを含む画面のルート", () => {
       .toBe("/admin/profile-reviews?status=all&review=" + questionId);
     expect(resolveReturnTo("/admin/graduation?mode=history")).toBe("/admin/graduation?mode=history");
     expect(resolveReturnTo("/admin/notices?view=publication")).toBe("/admin/notices?view=publication");
+    expect(resolveReturnTo("/admin/reports?tab=handoff")).toBe("/admin/reports?tab=handoff");
+    expect(resolveReturnTo(`/admin/reports/${questionId}`)).toBe(`/admin/reports/${questionId}`);
     const noticeReview = `/admin/notices/${questionId}?request=${questionId}`;
     expect(resolveReturnTo(noticeReview)).toBe(noticeReview);
     for (const path of ["/admin", "/admin/users", "/admin/users/a/b", "/admin/profile-reviews/" + questionId]) {

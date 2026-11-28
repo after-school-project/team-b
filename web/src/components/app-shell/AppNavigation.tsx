@@ -16,6 +16,7 @@ import { requestSignOut, signOutError } from "@/auth/sign-out";
 import {
   ACCOUNT_NAV_ITEMS,
   ADMIN_NAV_ITEM,
+  ADMIN_REPORTS_NAV_ITEM,
   NOTIFICATION_NAV_ITEM,
   PRIMARY_NAV_ITEMS,
   formatUnreadCount,
@@ -79,6 +80,7 @@ function clearSignOutFailure() {
 
 export function AppNavigation({ viewer, unreadNotificationCount }: AppNavigationProps) {
   const pathname = usePathname() ?? "/";
+  const adminNavItem = isNavItemAvailable(ADMIN_NAV_ITEM) ? ADMIN_NAV_ITEM : ADMIN_REPORTS_NAV_ITEM;
   const idPrefix = useId();
   const menuId = `${idPrefix}-menu`;
   const accountMenuId = `${idPrefix}-account`;
@@ -253,17 +255,17 @@ export function AppNavigation({ viewer, unreadNotificationCount }: AppNavigation
           />
         </nav>
 
-        {!viewer.canAccessAdmin ? null : isNavItemAvailable(ADMIN_NAV_ITEM) ? (
+        {!viewer.canAccessAdmin ? null : isNavItemAvailable(adminNavItem) ? (
           <Link
             className={styles.adminLink}
-            href={ADMIN_NAV_ITEM.href}
-            aria-current={getAriaCurrent(pathname, ADMIN_NAV_ITEM.href)}
+            href={adminNavItem.href}
+            aria-current={getAriaCurrent(pathname, adminNavItem.href)}
             onClick={closeAll}
           >
-            {ADMIN_NAV_ITEM.label}
+            {adminNavItem.label}
           </Link>
         ) : (
-          <UnavailableItem className={styles.adminUnavailable} label={ADMIN_NAV_ITEM.label} />
+          <UnavailableItem className={styles.adminUnavailable} label={adminNavItem.label} />
         )}
       </div>
     </>

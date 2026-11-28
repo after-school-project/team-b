@@ -9,6 +9,7 @@ import { noCapabilities, type CapabilitySet } from "@/auth/capabilities";
 import { isOwner } from "@/auth/ownership";
 import { qaQuestions, qaResponses } from "@/db/content-schema";
 import { communityUsers } from "@/db/schema";
+import { canReportOther } from "@/reports/target-access";
 import type { PublicAuthor } from "./questions";
 
 /**
@@ -28,7 +29,7 @@ export type ResponseView = {
   questionId: string;
   parentResponseId: string | null;
   kind: ResponseKind;
-  capabilities: CapabilitySet;
+  capabilities: CapabilitySet & { canReport?: true };
 } & ({
   publicationState: "public" | "hidden";
   content: { bodyMarkdown: string };
@@ -99,6 +100,8 @@ function toResponseView(viewer: Viewer, row: ResponseRow): ResponseView {
       canRespond: writable && publicationState === "public",
       canHide: manageable && publicationState === "public",
       canRestore: manageable && publicationState === "hidden",
+      ...(publicationState === "public" && canReportOther(viewer, row.authorId, row.authorSchoolManager)
+        ? { canReport: true as const } : {}),
     },
   };
 }

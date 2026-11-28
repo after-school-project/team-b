@@ -182,6 +182,22 @@ export async function removeQuestions(marker: string, username?: string) {
   });
 }
 
+/** テストで作った質問への通報と証拠を片付ける。監査ログはアプリ用ロールでは消去できない。 */
+export async function removeQuestionReports(questionId: string) {
+  const targets = "SELECT id FROM report_targets WHERE question_id = $1";
+  const cases = `SELECT id FROM report_cases WHERE target_id IN (${targets})`;
+  await withDatabase(async (client) => {
+    await client.query("BEGIN");
+    for (const table of ["report_case_evidence", "report_actions", "reports"]) {
+      await client.query(`DELETE FROM ${table} WHERE case_id IN (${cases})`, [questionId]);
+    }
+    await client.query(`DELETE FROM report_cases WHERE target_id IN (${targets})`, [questionId]);
+    await client.query(`DELETE FROM evidence_snapshots WHERE target_id IN (${targets})`, [questionId]);
+    await client.query("DELETE FROM report_targets WHERE question_id = $1", [questionId]);
+    await client.query("COMMIT");
+  });
+}
+
 type NewNotification = { message: string; read?: boolean; minutesAgo?: number };
 
 /**

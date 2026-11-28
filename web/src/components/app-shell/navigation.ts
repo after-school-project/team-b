@@ -43,6 +43,9 @@ export const ADMIN_NAV_ITEM: NavItem = {
   href: "/admin",
 };
 
+/** 管理ホームが準備中の間は、実装済みの通報案件へ案内する。 */
+export const ADMIN_REPORTS_NAV_ITEM: NavItem = { screenId: "AD-08", label: "管理エリアへ", href: "/admin/reports" };
+
 /** 共通レイアウトに渡す、サーバーで判定済みの閲覧者情報。 */
 export type AppShellViewer = {
   /** 公開表示名。 */

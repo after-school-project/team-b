@@ -470,14 +470,14 @@ describe("API-QA-04 質問の詳細", () => {
       content: { title: "題名B", bodyMarkdown: `# 見出し ${marker}`, category: { code: "chat", name: "雑談" } },
       author: { userId: id("poc_s001"), displayName: "投稿時の表示名" }, resolution: "open", version: 7,
       createdAt: expect.stringMatching(/Z$/), updatedAt: expect.stringMatching(/Z$/),
-      capabilities: respondable,
+      capabilities: { ...respondable, canReport: true },
     });
     expect((await view("poc_s001")).capabilities).toEqual({ ...respondable, canEdit: true, canDelete: true, canResolve: true });
     for (const viewer of ["poc_school", "poc_s_mgr"]) {
-      expect((await view(viewer)).capabilities, viewer).toEqual({ ...respondable, canHide: true });
+      expect((await view(viewer)).capabilities, viewer).toEqual({ ...respondable, canHide: true, canReport: true });
     }
     // プロフィール非表示中は回答・コメントできない（AC-08）。
-    expect((await view("poc_hidden")).capabilities).toEqual(noCapabilities);
+    expect((await view("poc_hidden")).capabilities).toEqual({ ...noCapabilities, canReport: true });
   });
 
   it("プロフィール非表示中のアプリ管理者には、強制非表示の質問の内容を返さない", async () => {
