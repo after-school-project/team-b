@@ -40,7 +40,13 @@ export async function receiveReport(
   const targetCondition = type === "question" ? eq(reportTargets.questionId, id)
     : type === "response" ? eq(reportTargets.responseId, id)
       : and(eq(reportTargets.kind, type), eq(reportTargets.subjectUserId, id));
-  let schoolAssignee: string | undefined;
+
+  async function findSchoolAssignee(reader: AccessReader, subject?: string) {
+    const [candidate] = await reader.select({ id: communityUsers.userId }).from(communityUsers)
+      .where(and(eligibleManager(true), ne(communityUsers.userId, actorId), subject ? ne(communityUsers.userId, subject) : undefined))
+      .orderBy(communityUsers.userId).limit(1);
+    return candidate;
+  }
 
   async function subjectId(reader: AccessReader, publiclyVisible: boolean) {
     if (!postTable) return id;
@@ -56,7 +62,7 @@ export async function receiveReport(
     requireLockedUsers(subject);
     const user = await findReportableUser(tx, actorId, subject, type === "profile");
     if (!user) throw new ApiError("NOT_FOUND");
-    return user;
+    return { ...user, subject };
   }
 
   const result = await commitMutation(database, {
@@ -64,18 +70,15 @@ export async function receiveReport(
     async authorizeEntry(tx) { requireActive(await loadAccessState(tx, actorId)); },
     async resolveUserIds(tx) {
       const subject = await subjectId(tx, false);
-      const [candidate] = await tx.select({ id: communityUsers.userId }).from(communityUsers)
-        .where(and(eligibleManager(true), ne(communityUsers.userId, subject ?? actorId)))
-        .orderBy(communityUsers.userId).limit(1);
-      schoolAssignee = candidate?.id;
-      return [subject, schoolAssignee].filter((user): user is string => user !== undefined);
+      const candidate = await findSchoolAssignee(tx, subject);
+      return [subject, candidate?.id].filter((user): user is string => user !== undefined);
     },
     async targets() {
       return postTable ? [{ stage: "resource", table: postTable, idColumn: postTable.id, ids: [id] }] : [];
     },
     async authorizeReplay(context) { await authorize(context); },
     async execute(context) {
-      const { tx, now } = context;
+      const { tx, now, requireLockedUsers } = context;
       const user = await authorize(context);
       const reference = target.kind === "question" ? { questionId: target.questionId }
         : target.kind === "response" ? { responseId: target.responseId } : { subjectUserId: target.userId };
@@ -90,8 +93,9 @@ export async function receiveReport(
         await tx.update(reportCases).set({ version: sql`${reportCases.version} + 1`, updatedAt: await lockedCaseTime(tx) })
           .where(eq(reportCases.id, caseId));
       } else {
-        const [assignee] = schoolAssignee ? await tx.select({ id: communityUsers.userId }).from(communityUsers)
-          .where(and(eq(communityUsers.userId, schoolAssignee), eligibleManager(true))) : [];
+        const assignee = await findSchoolAssignee(tx, user.subject);
+        // 候補が変わったら、利用者行のロック順を保つため共通処理で受付をやり直す。
+        if (assignee) requireLockedUsers(assignee.id);
         const [created] = await tx.insert(reportCases).values({
           targetId: registered.id, assigneeId: assignee?.id, schoolOnly: user.appManager || !assignee,
           handoffPending: !assignee, createdAt: now, updatedAt: now,

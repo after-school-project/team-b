@@ -56,7 +56,14 @@ export function CaseOperations({ reportCase, candidates }: { reportCase: Case; c
   function saveCase(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    void apply(patch, { status: data.get("status"), priority: data.get("priority") }, "対応状態と優先度を保存しました。");
+    const status = data.get("status");
+    const priority = data.get("priority");
+    if (status === reportCase.status && priority === reportCase.priority) {
+      setError(null);
+      setFeedback("変更はありません。");
+      return;
+    }
+    void apply(patch, { status, priority }, "対応状態と優先度を保存しました。");
   }
 
   function saveNote(event: FormEvent<HTMLFormElement>) {

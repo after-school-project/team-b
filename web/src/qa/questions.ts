@@ -214,7 +214,7 @@ export async function loadQuestion(reader: AccessReader, viewer: Viewer, questio
       canResolve: own && canWriteContent(viewer),
       canHide: manageable && publicationState === "public",
       canRestore: manageable && publicationState === "hidden",
-      ...(publicationState === "public" && canReportOther(viewer.userId, row.authorId, row.authorSchoolManager)
+      ...(publicationState === "public" && canReportOther(viewer, row.authorId, row.authorSchoolManager)
         ? { canReport: true as const } : {}),
     },
   };

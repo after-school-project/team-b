@@ -2,6 +2,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
@@ -33,6 +34,8 @@ const otherReporter = "poc_hidden";
 const manager = "poc_s_mgr";
 const otherManager = "poc_a_mgr";
 const school = "poc_school";
+const staff = "poc_staff";
+const suspended = "poc_suspended";
 const intake = "/api/v1/reports";
 const cases = "/api/v1/admin/report-cases";
 const reportReason = "通報の検証用詳細";
@@ -58,7 +61,7 @@ beforeAll(async () => {
   await seedDevelopmentData(drizzle(database.client), seedDir);
   const credentials: Record<string, string> = JSON.parse(await readFile(join(seedDir, "accounts.json"), "utf8"));
   const { POST: signIn } = await import("../../src/app/api/auth/[...auth]/route");
-  for (const [index, username] of [author, reporter, otherReporter, manager, otherManager, school].entries()) {
+  for (const [index, username] of [author, reporter, otherReporter, manager, otherManager, school, staff, suspended].entries()) {
     const { rows: [account] } = await database.client.query<{ id: string }>('SELECT id FROM "user" WHERE username = $1', [username]);
     ids.set(username, account.id);
     const response = await signIn(new Request(`${origin}/api/auth/sign-in/username`, {
@@ -184,6 +187,10 @@ it("AC-01 / SEC-24 対象・理由・文字数・最終確認を検証し、通�
   }
   const key = randomUUID();
   const valid = { reason: "other", detail: "😀".repeat(500) };
+  const rejected = await post(suspended, "question", questionId, valid);
+  expect(rejected.status).toBe(403);
+  expect(rejected.body.error?.code).toBe("ACCOUNT_SUSPENDED");
+  expect(rejected.text).not.toContain(postBody);
   const first = await post(otherReporter, "question", questionId, valid, key);
   expect(first.status).toBe(201);
   expect(first.body.data).toEqual({ received: true, receivedAt: expect.stringMatching(/Z$/) });
@@ -247,6 +254,60 @@ it("AC-02 初期担当を割り当てられない通報も、学校専用の引�
   expect((await patch(school, await getCase(questionId), { status: "closed" })).status).toBe(200);
 });
 
+it("学校管理者の通報は別の有資格者を初期担当にし、該当者がいなければ引継ぎ待ちにする", async () => {
+  const noCandidate = await addQuestion();
+  expect((await post(school, "question", noCandidate)).status).toBe(201);
+  const waiting = await getCase(noCandidate);
+  expect(waiting).toMatchObject({ assigneeId: null, handoffPending: true, schoolOnly: true });
+  expect((await patch(school, waiting, { status: "closed" })).status).toBe(200);
+
+  await database.client.query("UPDATE community_users SET school_manager = true WHERE user_id = $1", [userId(staff)]);
+  try {
+    const questionId = await addQuestion();
+    expect((await post(school, "question", questionId)).status).toBe(201);
+    expect(await getCase(questionId)).toMatchObject({ assigneeId: userId(staff), handoffPending: false, schoolOnly: false });
+  } finally {
+    await database.client.query("UPDATE community_users SET school_manager = false WHERE user_id = $1", [userId(staff)]);
+  }
+});
+
+it("受付の利用者ロック待ちで初期担当候補が資格を失ったら、別の学校管理者に割り当てる", async () => {
+  const questionId = await addQuestion();
+  const secondSchoolManager = userId(staff);
+  await database.client.query("UPDATE community_users SET school_manager = true WHERE user_id = $1", [secondSchoolManager]);
+  const { rows: [first, second] } = await database.client.query<{ user_id: string }>(
+    "SELECT user_id FROM community_users WHERE school_manager ORDER BY user_id",
+  );
+  let pending: ReturnType<typeof post> | undefined;
+  let inTransaction = false;
+  try {
+    await database.client.query("BEGIN");
+    inTransaction = true;
+    await database.client.query("SELECT user_id FROM community_users WHERE user_id = $1 FOR UPDATE", [first.user_id]);
+    pending = post(reporter, "question", questionId);
+    let blocked = false;
+    const deadline = Date.now() + 1500;
+    while (!blocked && Date.now() < deadline) {
+      const { rows: [row] } = await database.client.query<{ blocked: boolean }>(`
+        SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pg_backend_pid() = ANY(pg_blocking_pids(pid))) AS blocked
+      `);
+      blocked = row.blocked;
+      if (!blocked) await delay(15);
+    }
+    expect(blocked).toBe(true);
+    await database.client.query("UPDATE community_users SET eligibility_status = 'pending' WHERE user_id = $1", [first.user_id]);
+    await database.client.query("COMMIT");
+    inTransaction = false;
+    expect((await pending).status).toBe(201);
+    expect(await getCase(questionId)).toMatchObject({ assigneeId: second.user_id, handoffPending: false, schoolOnly: false });
+  } finally {
+    if (inTransaction) await database.client.query("ROLLBACK");
+    await pending;
+    await database.client.query("UPDATE community_users SET eligibility_status = 'verified' WHERE user_id = $1", [first.user_id]);
+    await database.client.query("UPDATE community_users SET school_manager = false WHERE user_id = $1", [secondSchoolManager]);
+  }
+});
+
 it("AC-02 プロフィールとアカウントの証拠を公開項目に限定し、回答は親の本文を含めない", async () => {
   const questionId = await addQuestion(author, true);
   const { rows: [answer] } = await database.client.query<{ id: string }>(`
@@ -292,6 +353,47 @@ it("AC-03 / SEC-19 / SEC-20 通常案件だけをアプリ管理者に公開し�
   expect((await readCase(school, schoolOnly.id)).status).toBe(200);
 });
 
+it("通報案件一覧では未対応が既定で、status=all なら対応中と対応済みも含む", async () => {
+  const unhandled = await fileCase(await addQuestion());
+  const inProgress = await fileCase(await addQuestion());
+  const closed = await fileCase(await addQuestion());
+  expect((await patch(school, unhandled, { priority: "high" })).status).toBe(200);
+  expect((await patch(school, inProgress, { status: "in_progress", priority: "high" })).status).toBe(200);
+  expect((await patch(school, closed, { status: "closed", priority: "high" })).status).toBe(200);
+  const getList = async (query: string) => read<{ items: { id: string }[] }>(
+    await list(request(school, `${cases}?targetType=question&priority=high${query}`), undefined),
+  );
+  const defaultList = await getList("");
+  expect(defaultList.body.data?.items.map(({ id }) => id)).toEqual([unhandled.id]);
+  expect(defaultList.body.meta?.page?.totalCount).toBe(1);
+  const all = await getList("&status=all");
+  expect(all.body.data?.items.map(({ id }) => id)).toEqual([closed.id, inProgress.id, unhandled.id]);
+  expect(all.body.meta?.page?.totalCount).toBe(3);
+});
+
+it("引継ぎ待ちは未対応と対応中を作成日時・IDの昇順で取得し、カーソルで次の案件へ進む", async () => {
+  const rows = [];
+  for (let i = 0; i < 3; i++) rows.push(await fileCase(await addQuestion()));
+  const tied = [rows[1].id, rows[2].id].sort();
+  const expected = [rows[0].id, ...tied];
+  for (const [index, id] of expected.entries()) {
+    await database.client.query(`UPDATE report_cases
+      SET created_at = $2, updated_at = $3, status = $4, priority = 'high', handoff_pending = true, assignee_id = null
+      WHERE id = $1`, [id, index === 0 ? "2026-01-01T00:00:00.000001Z" : "2026-01-01T00:00:00.000002Z",
+      `2026-01-0${5 - index}T00:00:00Z`, index === 1 ? "in_progress" : "unhandled"]);
+  }
+  let cursor: string | undefined;
+  for (const [index, id] of expected.entries()) {
+    const path = `${cases}/handoffs?priority=high&limit=1${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;
+    const page = await read<{ items: { id: string }[] }>(await handoffs(request(school, path), undefined));
+    expect(page.status).toBe(200);
+    expect(page.body.data?.items.map((item) => item.id)).toEqual([id]);
+    expect(page.body.meta?.page?.totalCount).toBe(3);
+    cursor = page.body.meta?.page?.nextCursor;
+    expect(Boolean(cursor)).toBe(index < expected.length - 1);
+  }
+});
+
 it("AC-04 版が競合した更新を拒否し、措置・メモ・案件完了と履歴を確定する", async () => {
   const questionId = await addQuestion();
   const row = await fileCase(questionId);
@@ -319,6 +421,20 @@ it("AC-04 版が競合した更新を拒否し、措置・メモ・案件完了�
   expect(rowCount).toBe(1);
 });
 
+it("現在の担当者が資格を失っていても、別の有資格者は担当を変えずにメモ・状態更新・完了ができる", async () => {
+  const questionId = await addQuestion();
+  const initial = await fileCase(questionId);
+  await database.client.query("UPDATE community_users SET eligibility_status = 'pending' WHERE user_id = $1", [userId(school)]);
+  try {
+    expect((await addNote(manager, initial)).status).toBe(200);
+    expect((await patch(manager, await getCase(questionId), { status: "in_progress", priority: "high" })).status).toBe(200);
+    expect((await patch(manager, await getCase(questionId), { status: "closed" })).status).toBe(200);
+    expect(await getCase(questionId)).toMatchObject({ assigneeId: userId(school), status: "closed", handoffPending: false });
+  } finally {
+    await database.client.query("UPDATE community_users SET eligibility_status = 'verified' WHERE user_id = $1", [userId(school)]);
+  }
+});
+
 it("AC-05 / SEC-16 / SEC-27 削除した対象の案件を引き継ぎ、再割当と直接完了を学校管理者に限定する", async () => {
   for (const direct of [false, true]) {
     const questionId = await addQuestion();
@@ -343,7 +459,7 @@ it("AC-05 / SEC-16 / SEC-27 削除した対象の案件を引き継ぎ、再割�
       expect((await patch(school, waiting, { status: "closed" })).status).toBe(200);
       expect(await getCase(questionId)).toMatchObject({ status: "closed", handoffPending: false, assigneeId: userId(school), closedAt: expect.any(Date) });
     } else {
-      expect((await assignment(school, waiting, manager)).body.error?.code).toBe("STATE_CONFLICT");
+      expect((await assignment(school, waiting, manager)).body.error?.code).toBe("ASSIGNEE_INELIGIBLE");
       expect((await assignment(school, waiting, school)).status).toBe(200);
       expect(await getCase(questionId)).toMatchObject({ status: "in_progress", handoffPending: false, assigneeId: userId(school) });
       const history = await readCase<{ items: { actionType: string }[] }>(school, waiting.id, actions, "/actions");
@@ -443,6 +559,6 @@ it("SEC-17 担当管理者のプロフィール非表示を案件一覧・引継
   expect(hiddenManager.text).not.toContain(userId(reporter));
   const handoffList = await read<{ items: { id: string }[] }>(await handoffs(request(school, `${cases}/handoffs`), undefined));
   expect(handoffList.body.data?.items.map(({ id }) => id)).toContain(row.id);
-  expect((await assignment(school, waiting, otherManager)).body.error?.code).toBe("STATE_CONFLICT");
+  expect((await assignment(school, waiting, otherManager)).body.error?.code).toBe("ASSIGNEE_INELIGIBLE");
   expect((await assignment(school, waiting, manager)).status).toBe(200);
 });

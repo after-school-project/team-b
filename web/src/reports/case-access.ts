@@ -14,7 +14,7 @@ const sourceState = sql<"public" | "hidden" | "deleted">`CASE
     OR (${reportTargets.kind} = 'profile' AND ${communityUsers.profileState} = 'hidden') THEN 'hidden'
   ELSE 'public' END`;
 
-export function caseSource(reader: AccessReader) {
+export function caseSource(reader: AccessReader, dateColumn = reportCases.updatedAt) {
   return reader.select({
     ...getTableColumns(reportCases), targetType: reportTargets.kind, subjectUserId: communityUsers.userId,
     subjectAppManager: communityUsers.appManager, questionId: reportTargets.questionId, responseId: reportTargets.responseId,
@@ -25,7 +25,7 @@ export function caseSource(reader: AccessReader) {
     assigneeName: publicDisplayName(reader, reportCases.assigneeId).as("assignee_name"),
     reportCount: sql<number>`(${reader.select({ total: sql`count(*)::int` }).from(reports)
       .where(eq(reports.caseId, reportCases.id))})`.as("report_count"),
-    cursorAt: cursorTimestamp(reportCases.updatedAt).as("cursor_at"),
+    cursorAt: cursorTimestamp(dateColumn).as("cursor_at"),
   }).from(reportCases)
     .innerJoin(reportTargets, eq(reportTargets.id, reportCases.targetId))
     .leftJoin(qaQuestions, eq(qaQuestions.id, reportTargets.questionId))

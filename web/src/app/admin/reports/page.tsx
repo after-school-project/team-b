@@ -30,7 +30,7 @@ export default async function ReportCasesPage({ searchParams }: { searchParams: 
       if (Array.isArray(value)) throw new ApiError("BAD_REQUEST");
       if (name !== "tab" && value) filters.set(name, value);
     }
-    const query = parseCaseList(new URL(`http://app${path}?${filters}`));
+    const query = parseCaseList(new URL(`http://app${path}?${filters}`), handoffs);
     result = await readForScreen((db) => readCases(db, viewer.userId,
       (reader, current) => listCases(reader, current, query, handoffs), scope));
   } catch (error) {
@@ -64,9 +64,10 @@ export default async function ReportCasesPage({ searchParams }: { searchParams: 
           <form action={path} className={reportStyles.filters} aria-label="通報案件の絞り込み">
             {handoffs ? <input type="hidden" name="tab" value="handoff" /> : null}
             <label className={styles.field}>対応状態
-              <select className={reportStyles.input} name="status" defaultValue={filters.get("status") ?? ""}>
-                <option value="">すべて</option>
-                {caseStatuses.map((status) => <option key={status} value={status}>{caseStatusLabels[status]}</option>)}
+              <select className={reportStyles.input} name="status" defaultValue={filters.get("status") ?? (handoffs ? "all" : "unhandled")}>
+                <option value="all">すべて</option>
+                {caseStatuses.filter((status) => !handoffs || status !== "closed")
+                  .map((status) => <option key={status} value={status}>{caseStatusLabels[status]}</option>)}
               </select>
             </label>
             <label className={styles.field}>優先度
@@ -100,7 +101,9 @@ export default async function ReportCasesPage({ searchParams }: { searchParams: 
                       {reportTargetLabels[item.target.type]} · {item.target.label ?? (item.target.sourceState === "deleted" ? "削除済み" : item.target.subjectUserId)}
                     </Link>
                     <p className={styles.meta}>優先度 {casePriorityLabels[item.priority]} · 担当 {item.assignee?.displayName ?? "未割当"} · 通報 {item.reportCount}件</p>
-                    <time className={styles.meta} dateTime={item.updatedAt}>{formatDateTime(item.updatedAt)}</time>
+                    <time className={styles.meta} dateTime={handoffs ? item.createdAt : item.updatedAt}>
+                      {formatDateTime(handoffs ? item.createdAt : item.updatedAt)}
+                    </time>
                   </li>
                 ))}
               </ul>}

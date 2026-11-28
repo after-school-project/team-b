@@ -85,7 +85,7 @@ function toPublicProfile(viewer: Viewer, row: ProfileRow): PublicProfile {
       // 本人を含め、他人向けの表示では公開を許可した項目だけを返す。
       optionalFields: projectOptionalProfileFields(row, "member"),
     },
-    capabilities: { canReport: canReportOther(viewer.userId, row.userId, row.schoolManager) },
+    capabilities: { canReport: canReportOther(viewer, row.userId, row.schoolManager) },
   };
 }
 

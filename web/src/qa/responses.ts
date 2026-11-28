@@ -100,7 +100,7 @@ function toResponseView(viewer: Viewer, row: ResponseRow): ResponseView {
       canRespond: writable && publicationState === "public",
       canHide: manageable && publicationState === "public",
       canRestore: manageable && publicationState === "hidden",
-      ...(publicationState === "public" && canReportOther(viewer.userId, row.authorId, row.authorSchoolManager)
+      ...(publicationState === "public" && canReportOther(viewer, row.authorId, row.authorSchoolManager)
         ? { canReport: true as const } : {}),
     },
   };

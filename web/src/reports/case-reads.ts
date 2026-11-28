@@ -1,4 +1,4 @@
-import { and, count, desc, eq, getTableColumns, ne, sql, type SQLWrapper } from "drizzle-orm";
+import { and, asc, count, desc, eq, getTableColumns, ne, sql, type SQLWrapper } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { z } from "zod";
 import { createCursorCodec, cursorTimestamp, parseListQuery, queryListPage } from "@/api/pagination";
@@ -26,9 +26,9 @@ export function readCases<T>(database: Pick<typeof db, "transaction">, actorId: 
   }, { isolationLevel: "repeatable read", accessMode: "read only" });
 }
 
-export function parseCaseList(url: URL) {
+export function parseCaseList(url: URL, handoffs = false) {
   return parseListQuery(url, {
-    status: z.enum(caseStatuses).optional(), priority: z.enum(casePriorities).optional(),
+    status: z.enum([...caseStatuses, "all"]).default(handoffs ? "all" : "unhandled"), priority: z.enum(casePriorities).optional(),
     assigneeId: userId.optional(), targetType: z.enum(reportTargetTypes).optional(),
   });
 }
@@ -38,13 +38,14 @@ export type CaseListQuery = ReturnType<typeof parseCaseList>;
 type ItemQuery = ReturnType<typeof parseCaseItems>;
 
 function datePage(viewer: Viewer, list: string, filters: Record<string, string | undefined>, cursor: string | undefined,
-  dateColumn: SQLWrapper, idColumn: SQLWrapper, dateField: string,
+  dateColumn: SQLWrapper, idColumn: SQLWrapper, dateField: string, direction: "asc" | "desc" = "desc",
 ) {
-  const codec = createCursorCodec({ actorId: viewer.userId, list, filters, sort: `${dateField}:desc,id:desc` },
+  const codec = createCursorCodec({ actorId: viewer.userId, list, filters, sort: `${dateField}:${direction},id:${direction}` },
     z.tuple([z.string(), uuid]));
   const last = codec.decode(cursor);
+  const compare = direction === "asc" ? sql`>` : sql`<`;
   return {
-    after: last ? sql`(${dateColumn}, ${idColumn}) < (${last[0]}::timestamptz, ${last[1]}::uuid)` : undefined,
+    after: last ? sql`(${dateColumn}, ${idColumn}) ${compare} (${last[0]}::timestamptz, ${last[1]}::uuid)` : undefined,
     cursorFor: (row: { cursorAt: string; id: string }) => codec.encode([row.cursorAt, row.id]),
   };
 }
@@ -68,19 +69,21 @@ function toCaseSummary(row: Awaited<ReturnType<typeof requireViewableCase>>) {
 export async function listCases(reader: AccessReader, viewer: Viewer, query: CaseListQuery, handoffs = false) {
   if (handoffs) requireAdmin(viewer, "school");
   const { status, priority, assigneeId, targetType } = query;
+  const dateColumn = handoffs ? reportCases.createdAt : reportCases.updatedAt;
+  const orderBy = handoffs ? asc : desc;
   return queryListPage({
     ...datePage(viewer, handoffs ? "report-handoffs" : "report-cases", { status, priority, assigneeId, targetType },
-      query.cursor, reportCases.updatedAt, reportCases.id, "updatedAt"),
+      query.cursor, dateColumn, reportCases.id, handoffs ? "createdAt" : "updatedAt", handoffs ? "asc" : "desc"),
     authorized: viewableCases(viewer),
     filters: and(
-      status === undefined ? undefined : eq(reportCases.status, status),
+      status === "all" ? undefined : eq(reportCases.status, status),
       priority === undefined ? undefined : eq(reportCases.priority, priority),
       assigneeId === undefined ? undefined : eq(reportCases.assigneeId, assigneeId),
       targetType === undefined ? undefined : eq(reportTargets.kind, targetType),
       handoffs ? and(eq(reportCases.handoffPending, true), ne(reportCases.status, "closed")) : undefined,
     ),
     limit: query.limit,
-    rows: (where, take) => caseSource(reader).where(where).orderBy(desc(reportCases.updatedAt), desc(reportCases.id)).limit(take),
+    rows: (where, take) => caseSource(reader, dateColumn).where(where).orderBy(orderBy(dateColumn), orderBy(reportCases.id)).limit(take),
     count: async (where) => (await reader.select({ total: count() }).from(caseSource(reader).where(where).as("visible_cases")))[0].total,
     toItem: toCaseSummary,
   });

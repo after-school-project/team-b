@@ -1,9 +1,10 @@
 import { and, eq } from "drizzle-orm";
-import type { AccessReader } from "@/auth/access";
+import type { AccessReader, Viewer } from "@/auth/access";
 import { communityUsers, profileRevisions, profiles } from "@/db/schema";
 
-export function canReportOther(actorId: string, userId: string, schoolManager: boolean): boolean {
-  return actorId !== userId && !schoolManager;
+/** Viewer は共通認可で利用資格と停止状態を確認済み。プロフィール非表示中も通報できる。 */
+export function canReportOther(viewer: Viewer, userId: string, schoolManager: boolean): boolean {
+  return viewer.userId !== userId && !schoolManager;
 }
 
 export async function findReportableUser(reader: AccessReader, actorId: string, userId: string, publicProfile: boolean) {

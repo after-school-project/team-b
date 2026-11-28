@@ -32,7 +32,6 @@ export function changeReportCase(
     const viewer = requireActive(await loadAccessState(tx, actorId));
     const row = await requireViewableCase(tx, viewer, caseId, now);
     requireLockedUsers(row.subjectUserId);
-    if (row.assigneeId) requireLockedUsers(row.assigneeId);
     return row;
   }
 
@@ -41,7 +40,7 @@ export function changeReportCase(
     authorizeEntry: authorizeAdminEntry(actorId, "any"),
     async resolveUserIds(tx) {
       const [row] = await caseSource(tx).where(eq(reportCases.id, caseId));
-      return [row?.subjectUserId, row?.assigneeId, candidateId].filter((id): id is string => typeof id === "string");
+      return [row?.subjectUserId, candidateId].filter((id): id is string => typeof id === "string");
     },
     async targets() {
       return [{ stage: "case", table: reportCases, idColumn: reportCases.id, ids: [caseId] }];
@@ -62,11 +61,11 @@ export function changeReportCase(
       const changed = status !== row.status || priority !== row.priority || assigneeId !== row.assigneeId;
       if (!changed && change.kind !== "note") throw new ApiError("STATE_CONFLICT");
 
-      if (assigneeId !== null) {
+      if (assigneeId !== null && (candidateId !== undefined || assigneeId !== row.assigneeId)) {
         const [eligible] = await tx.select({ id: communityUsers.userId }).from(communityUsers).where(and(
           eq(communityUsers.userId, assigneeId), eligibleManager(requiresSchoolAssignee(row)),
         ));
-        if (!eligible || assigneeId === row.subjectUserId) throw new ApiError("STATE_CONFLICT");
+        if (!eligible || assigneeId === row.subjectUserId) throw new ApiError("ASSIGNEE_INELIGIBLE");
         requireLockedUsers(assigneeId);
       }
 

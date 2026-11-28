@@ -77,12 +77,22 @@ test("Issue #15 モバイル幅で通報の最終確認から案件対応・証�
     await admin.getByRole("button", { name: "メニュー", exact: true }).click();
     await admin.getByRole("link", { name: "管理エリアへ" }).click();
     await expect(admin.getByRole("heading", { name: "通報案件", exact: true })).toBeVisible();
-    await admin.getByRole("combobox", { name: "対応状態" }).selectOption("unhandled");
+    const status = admin.getByRole("combobox", { name: "対応状態" });
+    await expect(status).toHaveValue("unhandled");
+    await status.selectOption("all");
     await admin.getByRole("button", { name: "絞り込む" }).click();
+    await expect(admin).toHaveURL(/[?&]status=all(?:&|$)/);
     await admin.getByRole("link", { name: `質問 · ${title}` }).click();
     await expect(admin.getByRole("heading", { name: "通報案件の詳細" })).toBeVisible();
     expect(await admin.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(375);
     await expect(admin.getByText("通報受付の確認用です。", { exact: true })).toBeVisible();
+    let patches = 0;
+    admin.on("request", (request) => {
+      if (request.method() === "PATCH" && new URL(request.url()).pathname.startsWith("/api/v1/admin/report-cases/")) patches++;
+    });
+    await admin.getByRole("button", { name: "状態・優先度を保存" }).click();
+    await expect(admin.getByRole("status").filter({ hasText: "変更はありません。" })).toBeVisible();
+    expect(patches).toBe(0);
     await admin.getByRole("link", { name: /取得日時.*の証拠/ }).click();
     const snapshot = admin.locator("#evidence-content");
     await expect(snapshot.getByRole("heading", { name: title })).toBeVisible();
@@ -104,5 +114,23 @@ test("Issue #15 モバイル幅で通報の最終確認から案件対応・証�
     await admin.close();
     await removeQuestionReports(questionId);
     await removeQuestions(marker);
+  }
+});
+
+test("停止中は通報画面に入れず、プロフィール非表示中は通報フォームを利用できる", async ({ page, browser, baseURL }) => {
+  const profilePath = `/users/${encodeURIComponent(await userIdOf("poc_a001"))}`;
+  await signIn(page, baseURL!, "poc_suspended");
+  await page.goto(profilePath);
+  await expect(page).toHaveURL("/login");
+  await expect(page.getByRole("button", { name: /を通報/ })).toHaveCount(0);
+
+  const hidden = await browser.newPage({ baseURL });
+  try {
+    await signIn(hidden, baseURL!, "poc_hidden");
+    await hidden.goto(profilePath);
+    await hidden.getByRole("button", { name: "プロフィールを通報" }).click();
+    await expect(hidden.getByRole("dialog").getByRole("combobox", { name: /通報理由/ })).toBeFocused();
+  } finally {
+    await hidden.close();
   }
 });
